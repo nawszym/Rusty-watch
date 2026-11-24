@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>RustyWatch</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Katalogi języków + instrukcja są kopiowane do %APPDATA% przy pierwszym starcie. -->
+    <Content Include="Localization\*.json;Localization\README.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Domyślna czcionka tarczy (SIL OFL 1.1) + jej licencja. -->
+    <Content Include="Assets\Fonts\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Logo aplikacji: ikona okna/exe oraz znak na stronie HOME. -->
+    <Content Include="Assets\AppIcon.ico;Assets\Logo.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Wbudowany zestaw wskazówek zegara analogowego. -->
+    <Content Include="Assets\Hands\**\*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.7.0" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
+  </ItemGroup>
+
+  <Target Name="BuildRustFfi" BeforeTargets="Build">
+    <Exec Command="cargo build -p rusty-ffi" WorkingDirectory="$(MSBuildThisFileDirectory)..\.." />
+  </Target>
+
+  <!-- Kopiujemy jawnie po kompilacji: PreserveNewest potrafi pominąć świeżo zbudowany DLL. -->
+  <Target Name="CopyRustFfi" AfterTargets="Build">
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\..\target\debug\rusty_ffi.dll"
+          DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" />
+  </Target>
+</Project>

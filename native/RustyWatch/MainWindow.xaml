@@ -1,0 +1,1334 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="RustyWatch.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
+    xmlns:local="using:RustyWatch"
+    Title="Rusty Watch — Amazfit Active 2 (Round)">
+
+    <Grid x:Name="RootGrid" Background="#1C1C20"
+          DoubleTapped="RootGrid_DoubleTapped">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <muxc:InfoBar x:Name="StatusInfoBar" Grid.Row="0" IsOpen="False"
+                      Severity="Success" Message="{Binding Strings[StatusReady]}" />
+
+        <muxc:NavigationView x:Name="NavView" Grid.Row="1"
+                             PaneDisplayMode="Left"
+                             IsPaneOpen="True"
+                             IsSettingsVisible="False"
+                             OpenPaneLength="210"
+                             CompactPaneLength="52"
+                             SelectionChanged="NavView_SelectionChanged"
+                             Background="#1C1C20">
+
+            <muxc:NavigationView.MenuItems>
+                <muxc:NavigationViewItem x:Name="HomeNavItem" Content="{Binding Strings[NavHome]}"
+                                         Tag="home" IsSelected="True">
+                    <muxc:NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE80F;" />
+                    </muxc:NavigationViewItem.Icon>
+                </muxc:NavigationViewItem>
+                <muxc:NavigationViewItem x:Name="EditorNavItem" Content="{Binding Strings[NavEditor]}"
+                                         Tag="editor" Visibility="Collapsed">
+                    <muxc:NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE8A9;" />
+                    </muxc:NavigationViewItem.Icon>
+                </muxc:NavigationViewItem>
+                <!-- Widoczna zawsze: pozwala zapoznać się z katalogiem widgetów jeszcze przed otwarciem projektu. -->
+                <muxc:NavigationViewItem x:Name="WidgetsNavItem" Content="{Binding Strings[NavWidgets]}"
+                                         Tag="widgets">
+                    <muxc:NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE710;" />
+                    </muxc:NavigationViewItem.Icon>
+                </muxc:NavigationViewItem>
+                <muxc:NavigationViewItem x:Name="AssetsNavItem" Content="{Binding Strings[NavAssets]}" Tag="assets">
+                    <muxc:NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE8B7;" />
+                    </muxc:NavigationViewItem.Icon>
+                </muxc:NavigationViewItem>
+                <!-- Niewidoczna karta „puste zaznaczenie" dla stron z PaneFooter. -->
+                <muxc:NavigationViewItem x:Name="BlankNavItem" Tag="none" Visibility="Collapsed" />
+            </muxc:NavigationView.MenuItems>
+
+            <muxc:NavigationView.PaneFooter>
+                <!-- Elementy stopki to zwykłe NavigationViewItem — dzięki temu NavigationView
+                     stosuje im natywny wygląd, stan zwinięty (tylko ikona) i zaznaczenie. -->
+                <StackPanel HorizontalAlignment="Stretch">
+                    <muxc:NavigationViewItem x:Name="ProjectSettingsNavItem"
+                                             Content="{Binding Strings[NavProjectSettings]}"
+                                             Tag="project-settings" Visibility="Collapsed"
+                                             HorizontalAlignment="Stretch">
+                        <muxc:NavigationViewItem.Icon>
+                            <FontIcon Glyph="&#xE8B8;" />
+                        </muxc:NavigationViewItem.Icon>
+                    </muxc:NavigationViewItem>
+                    <muxc:NavigationViewItem x:Name="AppSettingsNavItem"
+                                             Content="{Binding Strings[NavAppSettings]}" Tag="settings"
+                                             HorizontalAlignment="Stretch">
+                        <muxc:NavigationViewItem.Icon>
+                            <FontIcon Glyph="&#xE713;" />
+                        </muxc:NavigationViewItem.Icon>
+                    </muxc:NavigationViewItem>
+                </StackPanel>
+            </muxc:NavigationView.PaneFooter>
+
+            <Grid>
+                <!-- ============================ Home ============================ -->
+                <Grid x:Name="HomeView" Background="#1C1C20">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel MaxWidth="1000" HorizontalAlignment="Center" Margin="0,32,0,40">
+                            <StackPanel Orientation="Horizontal" Spacing="16" Margin="0,0,0,28">
+                                <Image Source="ms-appx:///Assets/Logo.png" Width="64" Height="64"
+                                       VerticalAlignment="Center" />
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Strings[HomeWelcome]}" FontSize="28" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding Strings[HomeSubtitle]}"
+                                               FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               Margin="0,6,0,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <Button Grid.Column="0" Padding="16" HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left" Click="NewProject_Click">
+                                    <StackPanel Spacing="8">
+                                        <FontIcon Glyph="&#xE8B9;" FontSize="24" Foreground="#5AA7FF" />
+                                        <TextBlock Text="{Binding Strings[NewProject]}" FontSize="14" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Strings[NewProjectDesc]}"
+                                                   FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Button>
+
+                                <Button Grid.Column="1" Padding="16" HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left" Click="OpenProject_Click">
+                                    <StackPanel Spacing="8">
+                                        <FontIcon Glyph="&#xE8E5;" FontSize="24" Foreground="#5AA7FF" />
+                                        <TextBlock Text="{Binding Strings[OpenProject]}" FontSize="14" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Strings[OpenProjectDesc]}"
+                                                   FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+
+                            <Grid Margin="0,30,0,12">
+                                <TextBlock Text="{Binding Strings[RecentProjects]}" FontSize="18" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <HyperlinkButton x:Name="ClearRecentButton" Content="{Binding Strings[ClearList]}"
+                                                 HorizontalAlignment="Right" Click="ClearRecent_Click" />
+                            </Grid>
+
+                            <Border Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1" CornerRadius="6" MinHeight="120">
+                                <Grid>
+                                    <StackPanel x:Name="RecentEmptyState" Padding="20" Spacing="6"
+                                                HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <FontIcon Glyph="&#xE8B7;" FontSize="28"
+                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Text="{Binding Strings[NoRecent]}" FontSize="14"
+                                                   FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                        <TextBlock Text="{Binding Strings[NoRecentDesc]}"
+                                                   FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   HorizontalAlignment="Center" TextWrapping="Wrap" />
+                                    </StackPanel>
+
+                                    <ListView x:Name="RecentList" Visibility="Collapsed" Padding="4"
+                                              Background="Transparent" SelectionMode="Single"
+                                              IsItemClickEnabled="True" ItemClick="RecentList_ItemClick"
+                                              SelectionChanged="RecentList_SelectionChanged">
+                                        <ListView.ContextFlyout>
+                                            <MenuFlyout>
+                                                <MenuFlyoutItem Text="{Binding Strings[RemoveFromList]}"
+                                                                Click="RemoveRecent_Click">
+                                                    <MenuFlyoutItem.Icon>
+                                                        <FontIcon Glyph="&#xE711;" />
+                                                    </MenuFlyoutItem.Icon>
+                                                </MenuFlyoutItem>
+                                            </MenuFlyout>
+                                        </ListView.ContextFlyout>
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Padding="10,8" ColumnSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="34" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.Column="0" Width="34" Height="34"
+                                                            CornerRadius="6" Background="#2B3A55">
+                                                        <FontIcon Glyph="&#xE8B7;" FontSize="16"
+                                                                  Foreground="#9CC6FF"
+                                                                  HorizontalAlignment="Center"
+                                                                  VerticalAlignment="Center" />
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                                        <TextBlock Text="{Binding Name}" FontSize="13"
+                                                                   FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding Folder}" FontSize="11"
+                                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                                                Spacing="12" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding OpenedText}" FontSize="11"
+                                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                        <FontIcon Glyph="&#xE76C;" FontSize="11"
+                                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                </Grid>
+                            </Border>
+
+                            <Border Margin="0,28,0,0" Padding="16" CornerRadius="6"
+                                    Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <Grid ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon Glyph="&#xE9A5;" FontSize="22" Foreground="#5AA7FF"
+                                              VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Strings[TargetDevice]}" FontSize="12" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Strings[DeviceSpec]}" FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock x:Name="HomeVersionText" Text="" FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+
+                <!-- =========================== Editor =========================== -->
+                <Grid x:Name="EditorView" Visibility="Collapsed" Background="#161619">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="320" />
+                    </Grid.ColumnDefinitions>
+
+                    <Grid Grid.Column="0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="34" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="34" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                BorderThickness="0,0,0,1" Padding="14,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Strings[Preview]}" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" FontSize="12" />
+                                <Button Grid.Column="1" x:Name="AddWidgetButton" Click="AddWidgetButton_Click"
+                                        AutomationProperties.Name="{Binding Strings[AddWidget]}"
+                                        VerticalAlignment="Center" Padding="8,4">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE710;" FontSize="12" />
+                                        <TextBlock Text="{Binding Strings[AddWidget]}" FontSize="12" />
+                                    </StackPanel>
+                                    <Button.Flyout>
+                                        <muxc:Flyout x:Name="AddWidgetFlyout" Placement="Bottom">
+                                            <StackPanel x:Name="WidgetFlyoutRoot" Width="300" Spacing="8">
+                                                <StackPanel.Resources>
+                                                    <DataTemplate x:Key="WidgetFlyoutItemTemplate"
+                                                                  x:DataType="local:WidgetCatalogItem">
+                                                        <Grid ColumnSpacing="10" Padding="6,8">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="30" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <Border Width="30" Height="30" CornerRadius="6"
+                                                                    Background="{ThemeResource AccentFillColorDefaultBrush}">
+                                                                <FontIcon Glyph="{Binding Glyph}" FontSize="14"
+                                                                          Foreground="White"
+                                                                          HorizontalAlignment="Center"
+                                                                          VerticalAlignment="Center" />
+                                                            </Border>
+                                                            <StackPanel Grid.Column="1" Spacing="2">
+                                                                <TextBlock Text="{Binding Title}" FontSize="12"
+                                                                           FontWeight="SemiBold" />
+                                                                <TextBlock Text="{Binding Description}" FontSize="10"
+                                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                           TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </StackPanel.Resources>
+                                                <TextBlock Text="{Binding Strings[AddWidget]}" FontSize="14"
+                                                           FontWeight="SemiBold" />
+                                                <TextBox x:Name="WidgetSearchBox"
+                                                         PlaceholderText="{Binding Strings[SearchWidgets]}"
+                                                         TextChanged="WidgetSearchBox_TextChanged" />
+                                                <ScrollViewer MaxHeight="280" VerticalScrollBarVisibility="Auto">
+                                                    <StackPanel x:Name="WidgetFlyoutGroups" Spacing="6" />
+                                                </ScrollViewer>
+                                                <TextBlock x:Name="WidgetFlyoutEmpty" Visibility="Collapsed"
+                                                           Text="{Binding Strings[NoWidgetsFound]}" FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+                                        </muxc:Flyout>
+                                    </Button.Flyout>
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <Viewbox Grid.Row="1" Stretch="Uniform" Margin="24">
+                            <Grid Width="466" Height="466">
+                                <Ellipse Fill="Black" />
+                                <!-- Okrągły Border przycina warstwy do kształtu ekranu zegarka. -->
+                                <Border Width="466" Height="466" CornerRadius="233" Background="Black">
+                                    <Grid>
+                                        <Canvas x:Name="WatchCanvas" Width="466" Height="466" />
+                                        <!-- Siatka i prowadnice wyrównania nad podglądem; nie przejmują wskaźnika. -->
+                                        <Canvas x:Name="OverlayCanvas" Width="466" Height="466" IsHitTestVisible="False">
+                                            <Canvas x:Name="GridLinesCanvas" Visibility="Collapsed" />
+                                            <Line x:Name="GuideVertical" Stroke="#FFFF4040" StrokeThickness="1.5"
+                                                  StrokeDashArray="4,3" Visibility="Collapsed" />
+                                            <Line x:Name="GuideHorizontal" Stroke="#FFFF4040" StrokeThickness="1.5"
+                                                  StrokeDashArray="4,3" Visibility="Collapsed" />
+                                        </Canvas>
+                                    </Grid>
+                                </Border>
+                                <Ellipse Stroke="#2E2E35" StrokeThickness="1" IsHitTestVisible="False" />
+                                <!-- Ramki widgetów rysujemy osobno, poza okrągłym klipem ekranu.
+                                     Uchwyty na rogach są dzięki temu zawsze dostępne, nawet gdy
+                                     wystają poza obszar roboczy tarczy. -->
+                                <Canvas x:Name="OutlineCanvas" Width="466" Height="466" />
+                            </Grid>
+                        </Viewbox>
+
+                        <Border Grid.Row="2" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                BorderThickness="0,1,0,0" Padding="14,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Orientation="Horizontal" Spacing="18" VerticalAlignment="Center">
+                                    <TextBlock Text="466 × 466" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               FontSize="10" VerticalAlignment="Center" />
+                                    <TextBlock Text="Active 2 (Round)" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               FontSize="10" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="PreviewPatternText" Text="" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                               FontSize="10" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <Button Grid.Column="1" x:Name="PreviewOptionsButton"
+                                        VerticalAlignment="Center" Padding="8,4"
+                                        AutomationProperties.Name="{Binding Strings[PreviewOptions]}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE712;" FontSize="12" />
+                                        <TextBlock Text="{Binding Strings[PreviewOptions]}" FontSize="12" />
+                                    </StackPanel>
+                                    <Button.Flyout>
+                                        <muxc:MenuFlyout Placement="Bottom">
+                                            <muxc:ToggleMenuFlyoutItem x:Name="PreviewGridToggle"
+                                                                       Click="PreviewGridToggle_Click" />
+                                            <muxc:ToggleMenuFlyoutItem x:Name="UnselectedOutlineToggle"
+                                                                       Click="UnselectedOutlineToggle_Click" />
+                                        </muxc:MenuFlyout>
+                                    </Button.Flyout>
+                                </Button>
+                            </Grid>
+                        </Border>
+                    </Grid>
+
+                    <Border Grid.Column="1" Padding="16"
+                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                            BorderThickness="1,0,0,0"
+                            Background="{ThemeResource ControlFillColorDefaultBrush}">
+                        <!-- Prawy margines rezerwuje miejsce dla nakładanej scrollbaru,
+                             żeby nie zasłaniał kontrolek po prawej stronie inspektora. -->
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel Spacing="4" Margin="0,0,14,8">
+                                <!-- Warstwy: kolejność rysowania zgodna z generowanym watchface/index.js. -->
+                                <TextBlock Text="{Binding Strings[LayersTitle]}" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding Strings[LayersDesc]}" FontSize="11"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap" Margin="0,2,0,8" />
+                                <Border Padding="6" CornerRadius="6" Margin="0,0,0,16"
+                                        Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                        BorderThickness="1">
+                                    <ListView x:Name="LayersList" SelectionMode="Single" Padding="0"
+                                              SelectionChanged="LayersList_SelectionChanged"
+                                              ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                        <ListView.ItemContainerStyle>
+                                            <Style TargetType="ListViewItem">
+                                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                                <Setter Property="MinHeight" Value="0" />
+                                                <Setter Property="Padding" Value="0" />
+                                            </Style>
+                                        </ListView.ItemContainerStyle>
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate x:DataType="local:LayerRow">
+                                                <Grid ColumnSpacing="4" Padding="6,5">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="20" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <FontIcon Glyph="{Binding Glyph}" FontSize="13"
+                                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                              Opacity="{Binding ContentOpacity}"
+                                                              VerticalAlignment="Center" />
+                                                    <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center"
+                                                                Opacity="{Binding ContentOpacity}">
+                                                        <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding Subtitle}" FontSize="10"
+                                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                    <!-- Wszystkie akcje w jednym poziomym stosie — wcześniej przycisk usuwania
+                                                         nakładał się na strzałki i zasłaniał przesuwanie warstw. -->
+                                                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2"
+                                                                VerticalAlignment="Center">
+                                                        <!-- Tło jest zablokowane: zamiast przycisków jest native lock. -->
+                                                        <FontIcon Glyph="&#xE72E;" FontSize="11"
+                                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                  Visibility="{Binding LockVisibility}"
+                                                                  AutomationProperties.Name="{Binding LockText}"
+                                                                  ToolTipService.ToolTip="{Binding LockText}"
+                                                                  VerticalAlignment="Center" />
+                                                        <Button Tag="{Binding Id}" Click="ToggleLayerVisibility_Click"
+                                                                Visibility="{Binding VisibilityButtonVisibility}"
+                                                                AutomationProperties.Name="{Binding VisibilityText}"
+                                                                ToolTipService.ToolTip="{Binding VisibilityText}"
+                                                                Padding="6,4" MinWidth="0">
+                                                            <FontIcon Glyph="{Binding VisibilityGlyph}" FontSize="11" />
+                                                        </Button>
+                                                        <Button Tag="{Binding Id}" Click="LayerUp_Click"
+                                                                Visibility="{Binding ArrowsVisibility}"
+                                                                IsEnabled="{Binding CanMoveUp}"
+                                                                AutomationProperties.Name="{Binding MoveUpText}"
+                                                                ToolTipService.ToolTip="{Binding MoveUpText}"
+                                                                Padding="6,4" MinWidth="0">
+                                                            <FontIcon Glyph="&#xE70E;" FontSize="11" />
+                                                        </Button>
+                                                        <Button Tag="{Binding Id}" Click="LayerDown_Click"
+                                                                Visibility="{Binding ArrowsVisibility}"
+                                                                IsEnabled="{Binding CanMoveDown}"
+                                                                AutomationProperties.Name="{Binding MoveDownText}"
+                                                                ToolTipService.ToolTip="{Binding MoveDownText}"
+                                                                Padding="6,4" MinWidth="0">
+                                                            <FontIcon Glyph="&#xE70D;" FontSize="11" />
+                                                        </Button>
+                                                        <Button Tag="{Binding Id}" Click="RemoveWidget_Click"
+                                                                Visibility="{Binding RemoveVisibility}"
+                                                                AutomationProperties.Name="{Binding RemoveText}"
+                                                                ToolTipService.ToolTip="{Binding RemoveText}"
+                                                                Padding="6,4" MinWidth="0">
+                                                            <FontIcon Glyph="&#xE74D;" FontSize="11" />
+                                                        </Button>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                </Border>
+
+                                <TextBlock x:Name="InspectorTitle" Text="" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock x:Name="BackgroundLockedPanel" Visibility="Collapsed"
+                                           Text="{Binding Strings[BackgroundLockedText]}"
+                                           FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap" Margin="0,2,0,14" />
+
+                                <!-- Ustawienia warstwy tła (warstwa jest zablokowana, ale obraz można zmienić). -->
+                                 <StackPanel x:Name="BackgroundSettingsPanel" Visibility="Collapsed"
+                                             Spacing="4" Margin="0,4,0,14">
+                                    <TextBlock Text="{Binding Strings[BackgroundImageLabel]}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <ComboBox x:Name="BackgroundComboBox" HorizontalAlignment="Stretch"
+                                              DisplayMemberPath="Name"
+                                              SelectionChanged="BackgroundComboBox_SelectionChanged" />
+                                    <CheckBox x:Name="BackgroundAutoScaleCheckBox"
+                                              Content="{Binding Strings[BackgroundAutoScale]}"
+                                              Checked="BackgroundAutoScaleCheckBox_Changed"
+                                              Unchecked="BackgroundAutoScaleCheckBox_Changed"
+                                              Margin="0,8,0,0" />
+                                    <TextBlock Text="{Binding Strings[BackgroundAutoScaleDesc]}" FontSize="10"
+                                               TextWrapping="Wrap"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <Button x:Name="ClearBackgroundButton"
+                                            Content="{Binding Strings[BackgroundReset]}"
+                                            Click="ClearBackgroundButton_Click" Margin="0,8,0,0" />
+                                 </StackPanel>
+
+                                 <!-- Ustawienia zegara analogowego. -->
+                                 <StackPanel x:Name="AnalogSettingsPanel" Visibility="Collapsed"
+                                             Spacing="4" Margin="0,4,0,0">
+                                    <TextBlock Text="{Binding Strings[AnalogHandSetLabel]}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <ComboBox x:Name="HandsComboBox" HorizontalAlignment="Stretch"
+                                              DisplayMemberPath="Name"
+                                              SelectionChanged="HandsComboBox_SelectionChanged" />
+                                    <TextBlock Text="{Binding Strings[AnalogHandSetDesc]}" FontSize="10"
+                                               TextWrapping="Wrap" Margin="0,4,0,0"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <!-- Checkboxy pojawiają się tylko dla plików, które ma wybrany zestaw. -->
+                                    <CheckBox x:Name="HourHandCheckBox"
+                                              Content="{Binding Strings[AnalogShowHour]}"
+                                              Visibility="Collapsed" Click="OptionalHand_Click"
+                                              Margin="0,6,0,0" />
+                                    <CheckBox x:Name="MinuteHandCheckBox"
+                                              Content="{Binding Strings[AnalogShowMinute]}"
+                                              Visibility="Collapsed" Click="OptionalHand_Click" />
+                                    <CheckBox x:Name="SecondHandCheckBox"
+                                              Content="{Binding Strings[AnalogShowSecond]}"
+                                              Visibility="Collapsed" Click="OptionalHand_Click" />
+                                    <CheckBox x:Name="CapHandCheckBox"
+                                              Content="{Binding Strings[AnalogShowCap]}"
+                                              Visibility="Collapsed" Click="OptionalHand_Click" />
+                                 </StackPanel>
+
+                                 <!-- Ustawienia widgetu IMAGES: obrazek z magazynu Images i dopasowanie do ramki. -->
+                                 <StackPanel x:Name="ImagesSettingsPanel" Visibility="Collapsed"
+                                             Spacing="4" Margin="0,4,0,0">
+                                    <TextBlock Text="{Binding Strings[WidgetImageLabel]}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <ComboBox x:Name="WidgetImageComboBox" HorizontalAlignment="Stretch"
+                                              DisplayMemberPath="Name"
+                                              SelectionChanged="WidgetImageComboBox_SelectionChanged" />
+                                    <TextBlock Text="{Binding Strings[ImageFitLabel]}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               Margin="0,8,0,0" />
+                                    <ComboBox x:Name="ImageFitComboBox" HorizontalAlignment="Stretch"
+                                              DisplayMemberPath="Name"
+                                              SelectionChanged="ImageFitComboBox_SelectionChanged" />
+                                    <TextBlock Text="{Binding Strings[ImageFitDesc]}" FontSize="10"
+                                               TextWrapping="Wrap" Margin="0,4,0,0"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                 </StackPanel>
+
+                                 <!-- Inspektor zaznaczonego widgetu (na razie wyświetlacz czasu). -->
+                                <StackPanel x:Name="WidgetInspector" Spacing="4">
+                                    <StackPanel x:Name="DigitalSettingsPanel" Spacing="4">
+                                            <TextBlock Text="{Binding Strings[WidgetSettingsDesc]}"
+                                                       FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                       TextWrapping="Wrap" Margin="0,2,0,10" />
+
+                                            <!-- Wzorzec jest wspólny dla czasu i daty — presety i podpowiedź
+                                                 ustawia LoadWidgetSettings w zależności od typu warstwy. -->
+                                            <StackPanel x:Name="FormatPanel" Spacing="4">
+                                                <TextBlock Text="{Binding Strings[Preset]}" FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <ComboBox x:Name="FormatPreset" HorizontalAlignment="Stretch"
+                                                          SelectionChanged="FormatPreset_SelectionChanged" />
+
+                                                <TextBlock Text="{Binding Strings[Format]}" FontSize="11" Margin="0,12,0,4"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBox x:Name="FormatBox" Text="HH:MM:SS" TextChanged="FormatBox_TextChanged" />
+                                                <TextBlock x:Name="FormatHintText" Text="{Binding Strings[FormatHint]}"
+                                                           FontSize="10" TextWrapping="Wrap" Margin="0,4,0,12"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+
+                                            <!-- Tylko dla widgetu tekstu wpisanego przez użytkownika. -->
+                                            <StackPanel x:Name="UserTextPanel" Spacing="4" Visibility="Collapsed">
+                                                <TextBlock Text="{Binding Strings[UserTextLabel]}" FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBox x:Name="UserTextBox" TextWrapping="Wrap"
+                                                         TextChanged="UserTextBox_TextChanged" />
+                                                <TextBlock Text="{Binding Strings[UserTextHint]}"
+                                                           FontSize="10" TextWrapping="Wrap" Margin="0,4,0,12"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+
+                                            <!-- Tylko dla licznika kroków: wartość czyta czujnik zegarka. -->
+                                            <StackPanel x:Name="StepInfoPanel" Spacing="4" Visibility="Collapsed">
+                                                <TextBlock Text="{Binding Strings[StepCounterHint]}"
+                                                           FontSize="10" TextWrapping="Wrap" Margin="0,4,0,12"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+
+                                            <!-- Tylko dla dystansu: własny system jednostek. -->
+                                            <StackPanel x:Name="DistanceUnitPanel" Spacing="4" Visibility="Collapsed">
+                                                <CheckBox x:Name="OwnMeasurementSystemCheckBox"
+                                                          Content="{Binding Strings[OwnDistanceUnit]}"
+                                                          Click="OwnMeasurementSystemCheckBox_Click" />
+                                                <ComboBox x:Name="DistanceUnitCombo" HorizontalAlignment="Stretch"
+                                                          DisplayMemberPath="Name" IsEnabled="False"
+                                                          SelectionChanged="DistanceUnitCombo_SelectionChanged" />
+                                                <TextBlock Text="{Binding Strings[DistanceUnitDesc]}"
+                                                           FontSize="10" TextWrapping="Wrap" Margin="0,4,0,12"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+
+                                            <!-- Tylko dla widgetów zdrowotnych z jednostką: bpm, °C, kcal, %. -->
+                                            <StackPanel x:Name="ShowUnitPanel" Spacing="4" Visibility="Collapsed">
+                                                <CheckBox x:Name="ShowUnitCheckBox"
+                                                          Content="{Binding Strings[ShowUnitLabel]}"
+                                                          Click="ShowUnitCheckBox_Click" />
+                                            </StackPanel>
+
+                                            <TextBlock Text="{Binding Strings[FontSize]}" FontSize="11"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="42" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Grid.Column="0" Height="28" CornerRadius="4"
+                                                        Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                                        BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                                        BorderThickness="1">
+                                                    <TextBlock x:Name="FontSizeValue" Text="64" FontSize="11"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <Slider x:Name="SizeSlider" Grid.Column="1" Minimum="8" Maximum="160"
+                                                        Value="64" ValueChanged="SizeSlider_ValueChanged" />
+                                            </Grid>
+
+                                            <TextBlock Text="{Binding Strings[WidgetFont]}" FontSize="11" Margin="0,12,0,4"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <ComboBox x:Name="FontComboBox" HorizontalAlignment="Stretch"
+                                                      DisplayMemberPath="Name"
+                                                      SelectionChanged="FontComboBox_SelectionChanged" />
+                                            <TextBlock Text="{Binding Strings[WidgetFontHint]}"
+                                                       FontSize="10" TextWrapping="Wrap" Margin="0,4,0,12"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                                            <TextBlock Text="{Binding Strings[TextFit]}" FontSize="11" Margin="0,12,0,4"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <ComboBox x:Name="FitComboBox" HorizontalAlignment="Stretch"
+                                                      DisplayMemberPath="Name"
+                                                      SelectionChanged="FitComboBox_SelectionChanged" />
+
+                                            <TextBlock Text="{Binding Strings[FrameHint]}" FontSize="10" Margin="0,10,0,4"
+                                                       TextWrapping="Wrap"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <Button x:Name="ScaleModeButton" Click="ScaleModeButton_Click"
+                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                    AutomationProperties.Name="{Binding Strings[ScaleModeTitle]}">
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <FontIcon Glyph="&#xE8B4;" FontSize="12" />
+                                                    <TextBlock x:Name="ScaleModeButtonText" Text="" FontSize="11" />
+                                                </StackPanel>
+                                            </Button>
+
+                                            <TextBlock Text="{Binding Strings[Color]}" FontSize="11" Margin="0,12,0,4"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <Button x:Name="ColorButton" Click="ColorButton_Click"
+                                                    HorizontalContentAlignment="Left"
+                                                    AutomationProperties.Name="{Binding Strings[ChooseColor]}">
+                                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                                    <Border x:Name="ColorSwatch" Width="34" Height="18" CornerRadius="3"
+                                                            Background="White"
+                                                            BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                                            BorderThickness="1" />
+                                                    <TextBlock x:Name="ColorValue" Text="#FFFFFFFF" FontSize="11"
+                                                               VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </Button>
+                                    </StackPanel>
+
+                                    <!-- Pozycja X i Y obok siebie. Wartość: jedno kliknięcie kopiuje,
+                                         podwójne włącza edycję liczby. -->
+                                    <Grid ColumnSpacing="12" Margin="0,12,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0" Spacing="2">
+                                            <Grid>
+                                                <TextBlock Text="{Binding Strings[PositionX]}" FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <TextBlock x:Name="XPositionValue" Text="23" FontSize="11"
+                                                           FontWeight="SemiBold" HorizontalAlignment="Right"
+                                                           VerticalAlignment="Center"
+                                                           Tapped="PositionValue_Tapped"
+                                                           DoubleTapped="PositionValue_DoubleTapped"
+                                                           ToolTipService.ToolTip="{Binding Strings[PositionHint]}"
+                                                           AutomationProperties.Name="{Binding Strings[PositionHint]}" />
+                                                <TextBox x:Name="XPositionBox" Width="56" Height="26"
+                                                         HorizontalAlignment="Right" Visibility="Collapsed"
+                                                         InputScope="Number"
+                                                         KeyDown="PositionBox_KeyDown"
+                                                         LostFocus="PositionBox_LostFocus" />
+                                            </Grid>
+                                            <Slider x:Name="XSlider" Minimum="0" Maximum="46" Value="23"
+                                                    ValueChanged="PositionSlider_ValueChanged" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Column="1" Spacing="2">
+                                            <Grid>
+                                                <TextBlock Text="{Binding Strings[PositionY]}" FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                           VerticalAlignment="Center" />
+                                                <TextBlock x:Name="YPositionValue" Text="183" FontSize="11"
+                                                           FontWeight="SemiBold" HorizontalAlignment="Right"
+                                                           VerticalAlignment="Center"
+                                                           Tapped="PositionValue_Tapped"
+                                                           DoubleTapped="PositionValue_DoubleTapped"
+                                                           ToolTipService.ToolTip="{Binding Strings[PositionHint]}"
+                                                           AutomationProperties.Name="{Binding Strings[PositionHint]}" />
+                                                <TextBox x:Name="YPositionBox" Width="56" Height="26"
+                                                         HorizontalAlignment="Right" Visibility="Collapsed"
+                                                         InputScope="Number"
+                                                         KeyDown="PositionBox_KeyDown"
+                                                         LostFocus="PositionBox_LostFocus" />
+                                            </Grid>
+                                            <Slider x:Name="YSlider" Minimum="0" Maximum="366" Value="183"
+                                                    ValueChanged="PositionSlider_ValueChanged" />
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <Button HorizontalAlignment="Stretch" Margin="0,8,0,0"
+                                            Content="{Binding Strings[CenterOnCanvas]}"
+                                            Click="CenterOnCanvasButton_Click" />
+
+                                    <Grid ColumnSpacing="8" Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Button Grid.Column="0" HorizontalAlignment="Stretch"
+                                                Content="{Binding Strings[CenterHorizontalShort]}"
+                                                Click="CenterHorizontallyButton_Click"
+                                                AutomationProperties.Name="{Binding Strings[CenterHorizontally]}"
+                                                ToolTipService.ToolTip="{Binding Strings[CenterHorizontally]}" />
+                                        <Button Grid.Column="1" HorizontalAlignment="Stretch"
+                                                Content="{Binding Strings[CenterVerticalShort]}"
+                                                Click="CenterVerticallyButton_Click"
+                                                AutomationProperties.Name="{Binding Strings[CenterVertically]}"
+                                                ToolTipService.ToolTip="{Binding Strings[CenterVertically]}" />
+                                    </Grid>
+
+                                    <StackPanel x:Name="DigitalAlignPanel" Spacing="4">
+                                            <TextBlock Text="{Binding Strings[Alignment]}" FontSize="11" Margin="0,12,0,4"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <!-- Strzałki z grotem i kółko zamiast ikon wyrównania tekstu. -->
+                                                <Button Tag="left" Width="40" Click="AlignButton_Click"
+                                                        AutomationProperties.Name="{Binding Strings[AlignLeft]}"
+                                                        ToolTipService.ToolTip="{Binding Strings[AlignLeft]}">
+                                                    <TextBlock Text="←" FontSize="18" FontFamily="Segoe UI" />
+                                                </Button>
+                                                <Button Tag="center" Width="40" Click="AlignButton_Click"
+                                                        AutomationProperties.Name="{Binding Strings[AlignCenter]}"
+                                                        ToolTipService.ToolTip="{Binding Strings[AlignCenter]}">
+                                                    <TextBlock Text="●" FontSize="14" FontFamily="Segoe UI" />
+                                                </Button>
+                                                <Button Tag="right" Width="40" Click="AlignButton_Click"
+                                                        AutomationProperties.Name="{Binding Strings[AlignRight]}"
+                                                        ToolTipService.ToolTip="{Binding Strings[AlignRight]}">
+                                                    <TextBlock Text="→" FontSize="18" FontFamily="Segoe UI" />
+                                                </Button>
+                                                <Rectangle Width="1" Height="20" Margin="4,0" VerticalAlignment="Center"
+                                                           Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                                <Button Tag="top" Width="40" Click="VAlignButton_Click"
+                                                        AutomationProperties.Name="{Binding Strings[AlignTop]}"
+                                                        ToolTipService.ToolTip="{Binding Strings[AlignTop]}">
+                                                    <TextBlock Text="↑" FontSize="18" FontFamily="Segoe UI" />
+                                                </Button>
+                                                <Button Tag="center" Width="40" Click="VAlignButton_Click"
+                                                        AutomationProperties.Name="{Binding Strings[AlignCenter]}"
+                                                        ToolTipService.ToolTip="{Binding Strings[AlignCenter]}">
+                                                    <TextBlock Text="●" FontSize="14" FontFamily="Segoe UI" />
+                                                </Button>
+                                                <Button Tag="bottom" Width="40" Click="VAlignButton_Click"
+                                                        AutomationProperties.Name="{Binding Strings[AlignBottom]}"
+                                                        ToolTipService.ToolTip="{Binding Strings[AlignBottom]}">
+                                                    <TextBlock Text="↓" FontSize="18" FontFamily="Segoe UI" />
+                                                </Button>
+                                            </StackPanel>
+                                    </StackPanel>
+
+                                    <TextBlock x:Name="EditorStatusText" Text="" FontSize="10" Margin="0,16,0,0"
+                                               TextWrapping="Wrap"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+
+                <!-- ========================= Widgets ========================= -->
+                <Grid x:Name="WidgetsView" Visibility="Collapsed" Background="#1C1C20">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel MaxWidth="760" HorizontalAlignment="Center" Margin="0,32,0,40" Spacing="12">
+                            <TextBlock Text="{Binding Strings[WidgetsTitle]}" FontSize="28"
+                                       FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding Strings[WidgetsDesc]}" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap" />
+
+                            <!-- Katalog widgetów obsługiwanych przez aplikację — bez dodawania. -->
+                            <Border Padding="12" CornerRadius="6" Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1">
+                                <StackPanel x:Name="WidgetsCatalogGroups" Spacing="6">
+                                    <StackPanel.Resources>
+                                        <DataTemplate x:Key="WidgetsCatalogItemTemplate"
+                                                      x:DataType="local:WidgetCatalogItem">
+                                            <Grid ColumnSpacing="14" Padding="8,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="42" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="42" Height="42" CornerRadius="8"
+                                                        Background="{ThemeResource AccentFillColorDefaultBrush}">
+                                                    <FontIcon Glyph="{Binding Glyph}" FontSize="20" Foreground="White"
+                                                              HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Title}" FontSize="14"
+                                                               FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding Description}" FontSize="11"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                               TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </StackPanel.Resources>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+
+                <!-- ========================== Assets ========================= -->
+                <Grid x:Name="AssetsView" Visibility="Collapsed" Background="#1C1C20">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel MaxWidth="760" HorizontalAlignment="Center" Margin="0,32,0,40" Spacing="12">
+                            <TextBlock Text="{Binding Strings[AssetsTitle]}" FontSize="28"
+                                       FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding Strings[AssetsDesc]}" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap" />
+
+                            <TextBlock Text="{Binding Strings[AssetsFontsCategory]}" FontSize="18"
+                                       FontWeight="SemiBold" Margin="0,14,0,0" />
+                            <TextBlock Text="{Binding Strings[AssetsFontsDesc]}" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap" />
+
+                            <Border Padding="12" CornerRadius="6"
+                                    Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <ListView x:Name="FontsList" SelectionMode="Single"
+                                          SelectionChanged="FontsList_SelectionChanged"
+                                          Padding="0"
+                                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="MinHeight" Value="0" />
+                                            <Setter Property="Padding" Value="0" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="local:FontItem">
+                                            <Grid ColumnSpacing="14" Padding="10,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="44" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="44" Height="44" CornerRadius="8"
+                                                        Background="{ThemeResource AccentFillColorDefaultBrush}">
+                                                    <TextBlock Text="Aa" FontSize="19" FontWeight="SemiBold"
+                                                               Foreground="White" FontFamily="{Binding PreviewFontFamily}"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Family}" FontSize="14"
+                                                               FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding File}" FontSize="11"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                               TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding Badge}"
+                                                           FontSize="11" VerticalAlignment="Center"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="AddFontButton" Content="{Binding Strings[AssetsAddFont]}"
+                                        Click="AddFontButton_Click" />
+                                <Button x:Name="RemoveFontButton" Content="{Binding Strings[AssetsRemoveFont]}"
+                                        Click="RemoveFontButton_Click" IsEnabled="False" />
+                                <Button x:Name="OpenFontsFolderButton" Content="{Binding Strings[AssetsOpenFontsFolder]}"
+                                        Click="OpenFontsFolderButton_Click" />
+                            </StackPanel>
+                            <TextBlock x:Name="AssetsStatusText" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                            <TextBlock Text="{Binding Strings[AssetsBackgroundCategory]}" FontSize="18"
+                                       FontWeight="SemiBold" Margin="0,18,0,0" />
+                            <TextBlock Text="{Binding Strings[AssetsBackgroundDesc]}" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap" />
+
+                            <Border Padding="12" CornerRadius="6"
+                                    Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <ListView x:Name="BackgroundsList" SelectionMode="Single"
+                                          SelectionChanged="BackgroundsList_SelectionChanged"
+                                          Padding="0"
+                                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="MinHeight" Value="0" />
+                                            <Setter Property="Padding" Value="0" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="local:ImageItem">
+                                            <Grid ColumnSpacing="14" Padding="10,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="76" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="76" Height="50" CornerRadius="6">
+                                                    <Border.Background>
+                                                        <ImageBrush ImageSource="{Binding Preview}"
+                                                                    Stretch="UniformToFill" />
+                                                    </Border.Background>
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Spacing="4"
+                                                            VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding DisplayName}" FontSize="14"
+                                                               FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding Dimensions}" FontSize="11"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding SizeText}"
+                                                           FontSize="11" VerticalAlignment="Center"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="AddBackgroundButton"
+                                        Content="{Binding Strings[AssetsAddBackground]}"
+                                        Click="AddBackgroundButton_Click" />
+                                <Button x:Name="RemoveBackgroundButton"
+                                        Content="{Binding Strings[AssetsRemoveBackground]}"
+                                        Click="RemoveBackgroundButton_Click" IsEnabled="False" />
+                                <Button x:Name="UseBackgroundButton"
+                                        Content="{Binding Strings[AssetsUseBackground]}"
+                                        Click="UseBackgroundButton_Click" IsEnabled="False" />
+                                <Button x:Name="OpenBackgroundsFolderButton"
+                                        Content="{Binding Strings[AssetsOpenBackgroundsFolder]}"
+                                        Click="OpenBackgroundsFolderButton_Click" />
+                            </StackPanel>
+                            <TextBlock x:Name="BackgroundStatusText" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                            <TextBlock Text="{Binding Strings[AssetsImagesCategory]}" FontSize="18"
+                                       FontWeight="SemiBold" Margin="0,18,0,0" />
+                            <TextBlock Text="{Binding Strings[AssetsImagesDesc]}" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap" />
+
+                            <Border Padding="12" CornerRadius="6"
+                                    Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <ListView x:Name="ImagesList" SelectionMode="Single"
+                                          SelectionChanged="ImagesList_SelectionChanged"
+                                          Padding="0"
+                                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="MinHeight" Value="0" />
+                                            <Setter Property="Padding" Value="0" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="local:ImageItem">
+                                            <Grid ColumnSpacing="14" Padding="10,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="76" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="76" Height="50" CornerRadius="6">
+                                                    <Border.Background>
+                                                        <ImageBrush ImageSource="{Binding Preview}"
+                                                                    Stretch="Uniform" />
+                                                    </Border.Background>
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Spacing="4"
+                                                            VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Name}" FontSize="14"
+                                                               FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding Dimensions}" FontSize="11"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding SizeText}"
+                                                           FontSize="11" VerticalAlignment="Center"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="AddImageButton"
+                                        Content="{Binding Strings[AssetsAddImage]}"
+                                        Click="AddImageButton_Click" />
+                                <Button x:Name="RemoveImageButton"
+                                        Content="{Binding Strings[AssetsRemoveImage]}"
+                                        Click="RemoveImageButton_Click" IsEnabled="False" />
+                                <Button x:Name="OpenImagesFolderButton"
+                                        Content="{Binding Strings[AssetsOpenImagesFolder]}"
+                                        Click="OpenImagesFolderButton_Click" />
+                            </StackPanel>
+                            <TextBlock x:Name="ImagesStatusText" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                            <TextBlock Text="{Binding Strings[AssetsHandsCategory]}" FontSize="18"
+                                       FontWeight="SemiBold" Margin="0,18,0,0" />
+                            <TextBlock Text="{Binding Strings[AssetsHandsDesc]}" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap" />
+
+                            <Border Padding="12" CornerRadius="6"
+                                    Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <ListView x:Name="HandsList" SelectionMode="Single"
+                                          SelectionChanged="HandsList_SelectionChanged"
+                                          Padding="0"
+                                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="MinHeight" Value="0" />
+                                            <Setter Property="Padding" Value="0" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="local:HandSetItem">
+                                            <Grid ColumnSpacing="14" Padding="10,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="52" Height="52" CornerRadius="6" Background="#1C1C20">
+                                                    <Image Source="{Binding HourPreview}" Width="52" Height="52"
+                                                           Stretch="Uniform" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Name}" FontSize="14"
+                                                               FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding Details}" FontSize="11"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding Badge}" FontSize="11"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="AddHandsButton" Content="{Binding Strings[AssetsAddHands]}"
+                                        Click="AddHandsButton_Click" />
+                                <Button x:Name="RemoveHandsButton" Content="{Binding Strings[AssetsRemoveHands]}"
+                                        Click="RemoveHandsButton_Click" IsEnabled="False" />
+                                <Button x:Name="OpenHandsFolderButton"
+                                        Content="{Binding Strings[AssetsOpenHandsFolder]}"
+                                        Click="OpenHandsFolderButton_Click" />
+                            </StackPanel>
+                            <TextBlock x:Name="HandsStatusText" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+
+                <!-- ==================== Project settings ==================== -->
+                <Grid x:Name="ProjectSettingsView" Visibility="Collapsed" Background="#1C1C20">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel MaxWidth="760" HorizontalAlignment="Center" Margin="0,32,0,40" Spacing="12">
+                            <TextBlock Text="{Binding Strings[ProjectSettingsTitle]}" FontSize="28"
+                                       FontWeight="SemiBold" />
+
+                            <Border Padding="20" CornerRadius="6" Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{Binding Strings[ProjectIdentityLabel]}" FontSize="14"
+                                               FontWeight="SemiBold" />
+
+                                    <TextBlock Text="{Binding Strings[WatchfaceName]}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <!-- Wyszarzona nazwa: projekt (i jego folder) zachowuje obecną nazwę. -->
+                                    <TextBox x:Name="ProjectNameBox" IsEnabled="False" HorizontalAlignment="Left"
+                                             MinWidth="360" />
+                                    <TextBlock Text="{Binding Strings[NameReadOnlyDesc]}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap" />
+
+                                    <TextBlock Text="{Binding Strings[Author]}" FontSize="11" Margin="0,12,0,0"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBox x:Name="ProjectAuthorBox" HorizontalAlignment="Left" MinWidth="360" />
+
+                                    <TextBlock Text="{Binding Strings[VersionLabel]}" FontSize="11" Margin="0,12,0,0"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBox x:Name="ProjectVersionBox" HorizontalAlignment="Left" MinWidth="360" />
+
+                                    <TextBlock Text="{Binding Strings[ProjectSettingsDesc]}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap" Margin="0,6,0,0" />
+
+                                    <TextBlock x:Name="ProjectSettingsErrorText" Text="" FontSize="11"
+                                               TextWrapping="Wrap" Visibility="Collapsed"
+                                               Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+
+                                    <Button Content="{Binding Strings[SaveProjectSettings]}"
+                                            Click="SaveProjectSettings_Click" HorizontalAlignment="Left"
+                                            Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+
+                <!-- ======================= App Settings ======================== -->
+                <Grid x:Name="SettingsView" Visibility="Collapsed" Background="#1C1C20">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel MaxWidth="760" HorizontalAlignment="Center" Margin="0,32,0,40" Spacing="12">
+                            <TextBlock Text="{Binding Strings[AppSettingsTitle]}" FontSize="28"
+                                       FontWeight="SemiBold" />
+
+                            <Border Padding="20" CornerRadius="6" Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{Binding Strings[LanguageLabel]}" FontSize="14"
+                                               FontWeight="SemiBold" />
+                                    <ComboBox x:Name="LanguageCombo" HorizontalAlignment="Left" MinWidth="240"
+                                              DisplayMemberPath="DisplayName"
+                                              SelectionChanged="LanguageCombo_SelectionChanged" />
+                                    <TextBlock Text="{Binding Strings[LanguageDesc]}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                                        <Button Content="{Binding Strings[OpenLanguagesFolder]}"
+                                                Click="OpenLanguagesFolderButton_Click" />
+                                        <Button Content="{Binding Strings[ReloadLanguages]}"
+                                                Click="ReloadLanguagesButton_Click" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Padding="20" CornerRadius="6" Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{Binding Strings[WatchfaceLanguageLabel]}" FontSize="14"
+                                               FontWeight="SemiBold" />
+                                    <ComboBox x:Name="WatchfaceLanguageCombo" HorizontalAlignment="Left"
+                                              MinWidth="240" DisplayMemberPath="Name"
+                                              SelectionChanged="WatchfaceLanguageCombo_SelectionChanged" />
+                                    <TextBlock Text="{Binding Strings[WatchfaceLanguageDesc]}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap" />
+                                 </StackPanel>
+                             </Border>
+
+                             <Border Padding="20" CornerRadius="6" Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                     BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1">
+                                 <StackPanel Spacing="8">
+                                     <TextBlock Text="{Binding Strings[MeasurementSystemLabel]}" FontSize="14"
+                                                FontWeight="SemiBold" />
+                                     <ComboBox x:Name="MeasurementSystemCombo" HorizontalAlignment="Left"
+                                               MinWidth="240" DisplayMemberPath="Name"
+                                               SelectionChanged="MeasurementSystemCombo_SelectionChanged" />
+                                     <TextBlock Text="{Binding Strings[MeasurementSystemDesc]}" FontSize="11"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                TextWrapping="Wrap" />
+                                 </StackPanel>
+                             </Border>
+
+                             <Border Padding="20" CornerRadius="6" Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                     BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1">
+                                 <StackPanel Spacing="8">
+                                     <TextBlock Text="{Binding Strings[FirstDayOfWeekLabel]}" FontSize="14"
+                                                FontWeight="SemiBold" />
+                                     <ComboBox x:Name="FirstDayOfWeekCombo" HorizontalAlignment="Left"
+                                               MinWidth="240" DisplayMemberPath="Name"
+                                               SelectionChanged="FirstDayOfWeekCombo_SelectionChanged" />
+                                     <TextBlock Text="{Binding Strings[FirstDayOfWeekDesc]}" FontSize="11"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                TextWrapping="Wrap" />
+                                 </StackPanel>
+                             </Border>
+
+                             <Border Padding="20" CornerRadius="6" Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                     BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1">
+                                 <StackPanel Spacing="8">
+                                    <TextBlock Text="{Binding Strings[DefaultAuthorLabel]}" FontSize="14"
+                                               FontWeight="SemiBold" />
+                                    <TextBox x:Name="DefaultAuthorBox" HorizontalAlignment="Left" MinWidth="360"
+                                             TextChanged="DefaultAuthorBox_TextChanged" />
+                                    <TextBlock Text="{Binding Strings[DefaultAuthorDesc]}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Padding="20" CornerRadius="6" Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{Binding Strings[ProjectsFolderLabel]}" FontSize="14"
+                                               FontWeight="SemiBold" />
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="ProjectsFolderBox" MinWidth="360"
+                                                 TextChanged="ProjectsFolderBox_TextChanged" />
+                                        <Button Grid.Column="1" Content="{Binding Strings[Browse]}"
+                                                Click="BrowseProjectsFolder_Click" VerticalAlignment="Stretch" />
+                                    </Grid>
+                                    <TextBlock Text="{Binding Strings[ProjectsFolderDesc]}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Grid>
+        </muxc:NavigationView>
+
+        <Border Grid.Row="2" Padding="12,8"
+                Background="{ThemeResource ControlFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0">
+            <Grid>
+                <TextBlock x:Name="ProjectNameText" Text="" FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                    <Button x:Name="SaveButton" Content="{Binding Strings[Save]}" Click="Save_Click"
+                            IsEnabled="False" />
+                    <Button x:Name="SaveAsButton" Content="{Binding Strings[SaveAs]}" Click="SaveAs_Click"
+                            IsEnabled="False" />
+                    <Button x:Name="ExportButton" Content="{Binding Strings[Export]}" Click="Export_Click"
+                            IsEnabled="False" />
+                    <Button x:Name="TestEmulatorButton" Content="{Binding Strings[TestInEmulator]}"
+                            AutomationProperties.Name="{Binding Strings[TestInEmulator]}"
+                            Click="TestEmulator_Click" IsEnabled="False" />
+                    <Button Content="{Binding Strings[SyncToWatch]}" Style="{ThemeResource AccentButtonStyle}"
+                            Click="Sync_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <muxc:ContentDialog x:Name="NewProjectDialog"
+                            Title="{Binding DialogTitle}"
+                            PrimaryButtonText="{Binding DialogPrimary}"
+                            CloseButtonText="{Binding Strings[Cancel]}"
+                            DefaultButton="Primary"
+                            PrimaryButtonClick="NewProjectDialog_PrimaryButtonClick">
+            <StackPanel Spacing="10" MinWidth="360">
+                <TextBlock Text="{Binding Strings[WatchfaceName]}" FontSize="12"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBox x:Name="NewNameBox" PlaceholderText="{Binding Strings[PlaceholderName]}" />
+
+                <TextBlock Text="{Binding Strings[Author]}" FontSize="12"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBox x:Name="NewAuthorBox" PlaceholderText="{Binding Strings[PlaceholderAuthor]}" />
+
+                <TextBlock Text="{Binding Strings[AppIdLabel]}" FontSize="12"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="NewAppIdBox" PlaceholderText="12345678" />
+                    <Button Grid.Column="1" Content="{Binding Strings[Randomize]}" Click="RandomizeAppId_Click"
+                            ToolTipService.ToolTip="{Binding Strings[RandomizeHint]}" />
+                </Grid>
+
+                <TextBlock x:Name="NewProjectErrorText" Text="" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                           Visibility="Collapsed" />
+            </StackPanel>
+        </muxc:ContentDialog>
+
+        <!-- Okno eksportu nad edytorem — tylko dane projektu i przycisk ZIP. -->
+        <muxc:ContentDialog x:Name="ExportDialog"
+                            Title="{Binding Strings[ExportDialogTitle]}"
+                            CloseButtonText="{Binding Strings[Close]}"
+                            DefaultButton="Close">
+            <StackPanel Spacing="12" MinWidth="340" HorizontalAlignment="Center">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="{Binding Strings[ProjectIdentityLabel]}"
+                               FontWeight="SemiBold" FontSize="13" />
+                    <Grid ColumnSpacing="14" RowSpacing="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Strings[WatchfaceName]}"
+                                   FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock x:Name="ExportProjectName" Grid.Row="0" Grid.Column="1" FontSize="12" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding Strings[Author]}"
+                                   FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock x:Name="ExportProjectAuthor" Grid.Row="1" Grid.Column="1" FontSize="12" />
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding Strings[VersionLabel]}"
+                                   FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock x:Name="ExportProjectVersion" Grid.Row="2" Grid.Column="1" FontSize="12" />
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="{Binding Strings[AppIdLabel]}"
+                                   FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock x:Name="ExportProjectAppId" Grid.Row="3" Grid.Column="1" FontSize="12" />
+                    </Grid>
+                </StackPanel>
+
+                <Button x:Name="DialogExportZipButton" Content="{Binding Strings[ExportZip]}"
+                        Click="DialogExportZip_Click" HorizontalAlignment="Center" />
+            </StackPanel>
+        </muxc:ContentDialog>
+    </Grid>
+</Window>

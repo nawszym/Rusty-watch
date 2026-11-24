@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-labelledby="title desc">
+  <title id="title">Approved settings — logo mark</title>
+  <desc id="desc">Transparent-background variant of the logo.</desc>
+  <g transform="translate(512 512)">
+    <!-- broken outer ring -->
+    <path d="M 167.000 -289.252 A 334 334 0 1 0 300.197 146.416 L 246.270 120.114 A 274 274 0 1 1 137.000 -237.291 Z" fill="#783215"/>
+    <!-- toothed gear segment -->
+    <path d="M 169.307 -216.703 L 188.392 -241.131 A 346 346 0 0 1 240.352 -248.892 L 223.794 -208.691 A 306 306 0 0 1 250.661 -175.514 L 293.425 -183.352 A 346 346 0 0 1 320.806 -129.614 L 289.329 -99.624 A 306 306 0 0 1 301.351 -53.136 L 343.421 -42.167 A 346 346 0 0 1 345.526 18.108 L 304.324 31.986 A 306 306 0 0 1 291.023 94.559 L 261.541 84.980 A 275 275 0 0 0 169.307 -216.703 Z" fill="#BC5F28"/>
+    <!-- central disc -->
+    <circle r="246" fill="#BC5F28"/>
+    <!-- checkmark -->
+    <path d="M -117 -61 L 0 47 L 158 -131" fill="none" stroke="#DE9641"
+          stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

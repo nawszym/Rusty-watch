@@ -1,0 +1,1210 @@
+pub mod backgrounds;
+pub mod codegen;
+pub mod date_format;
+pub mod fonts;
+pub mod hands;
+pub mod image_fit;
+pub mod images;
+pub mod layers;
+pub mod locale;
+pub mod model;
+pub mod package;
+pub mod project;
+pub mod recent;
+pub mod time_format;
+pub mod validate;
+pub mod widgets;
+
+pub use model::{DeviceId, Project, Widget, WidgetKind, SCREEN_SIZE, SCHEMA_VERSION};
+pub use package::{export_zip, export_zip_bytes, inspect_zip, prepare_emulator_workspace, EmulatorWorkspace};
+pub use project::{
+    create_project, create_project_in, create_project_with, load_project, random_app_id,
+    save_project, save_project_as, update_project_metadata, watchface_folder_name, NewProject,
+};
+pub use recent::RecentProject;
+pub use validate::validate;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Cursor, Read};
+    use std::path::Path;
+    use zip::ZipArchive;
+
+    #[test]
+    fn starter_project_is_valid() {
+        let project = Project::starter("Test Face");
+        let errors = validate(&project);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+    }
+
+    #[test]
+    fn generated_json_has_active2_device_source() {
+        let project = Project::starter("Test");
+        let json = codegen::generate_app_json(&project);
+        assert!(json.contains("8913153"));
+        assert!(json.contains("\"designWidth\": 466"));
+        assert!(json.contains("\"lockscreen\": 1"));
+        // Wymagane przez schemat app.json v3 — bez tego zeus build/install odrzuca pakiet.
+        assert!(json.contains("\"defaultLanguage\": \"en-US\""));
+        // `type: 2` oznacza bytecode (.bin) — zablokowałoby ładowanie naszych plików .js.
+        assert!(!json.contains("\"type\":"));
+        // Klasyczne API hmUI wymaga wersji 1.x — przy 3.x globalny hmUI jest undefined.
+        assert!(json.contains("\"compatible\": \"1.0.0\""));
+    }
+
+
+    #[test]
+    fn generated_js_uses_watchface_api() {
+        let project = Project::starter("Test");
+        let js = codegen::generate_index_js(&project);
+        // Tarcza używa API hmUI, nie modułu @zos/ui przeznaczonego dla Mini Program.
+        assert!(js.contains("hmUI.createWidget(hmUI.widget.IMG"));
+        assert!(js.contains("hmSensor.createSensor(hmSensor.id.TIME)"));
+        assert!(!js.contains("@zos/ui"));
+        assert!(!js.contains("@zos/sensor"));
+        assert!(js.contains("const s = t.second"));
+        assert!(js.contains("timer.createTimer(0, 1000, tick)"));
+        assert!(js.contains("timer.stopTimer(tickTimer)"));
+    }
+
+    #[test]
+    fn generated_js_respects_time_format() {
+        let mut project = Project::starter("Test");
+        project.widgets[0].time_format = Some("h:mm A".to_string());
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("(h % 12) || 12"));
+        assert!(js.contains("(h < 12) ? L.amUp : L.pmUp"));
+        assert!(!js.contains("timer.createTimer(0, 1000, tick)"));
+        assert!(js.contains("MINUTEEND"));
+    }
+
+    #[test]
+    fn hidden_widget_stays_in_project_but_is_not_exported() {
+        let mut project = Project::starter("Widoczność");
+        let mut extra = project.widgets[0].clone();
+        extra.id = "hidden".to_string();
+        extra.name = "Hidden".to_string();
+        extra.kind = model::WidgetKind::Text;
+        extra.data_source = None;
+        extra.time_format = None;
+        extra.text = Some("UNIKATOWY_TEKST".to_string());
+        extra.visible = false;
+        project.widgets.push(extra);
+
+        let js = codegen::generate_index_js(&project);
+        assert!(!js.contains("UNIKATOWY_TEKST"));
+        // Tło + widget czasu; ukryta warstwa nie trafia do generatora JS.
+        assert_eq!(layers::ordered_widgets(&project).len(), 2);
+
+        let described = layers::describe(&project);
+        let hidden = described.iter().find(|layer| layer.id == "hidden").unwrap();
+        assert!(!hidden.visible, "ukryta warstwa musi być widoczna na liście");
+        let shown = described.iter().find(|layer| layer.id == "time").unwrap();
+        assert!(shown.visible);
+
+        layers::set_widget_visibility(&mut project, "hidden", true).unwrap();
+        assert!(codegen::generate_index_js(&project).contains("UNIKATOWY_TEKST"));
+        assert_eq!(layers::ordered_widgets(&project).len(), 3);
+    }
+
+    #[test]
+    fn widget_without_visible_field_defaults_to_visible() {
+        let project = Project::starter("Test");
+        let mut value = serde_json::to_value(&project.widgets[0]).unwrap();
+        value.as_object_mut().unwrap().remove("visible");
+        let widget: model::Widget = serde_json::from_value(value).unwrap();
+        assert!(widget.visible);
+    }
+
+    #[test]
+    fn generated_js_detects_polish_language() {
+        let mut project = Project::starter("Język");
+        project.widgets[0].time_format = Some("hh A".to_string());
+        let mut date = project.widgets[0].clone();
+        date.id = "date".to_string();
+        date.data_source = Some(model::DataSource::Date);
+        project.widgets.push(date);
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("hmSetting.getLanguage()"));
+        assert!(js.contains("const IS_POLISH = _watchLanguage() === 9"));
+        assert!(js.contains("'Paź'"));
+        assert!(js.contains("amUp: 'PRZEDP.'"));
+        assert!(js.contains("? L.amUp : L.pmUp"));
+        assert!(js.contains("L.months[d"));
+    }
+
+    #[test]
+    fn generated_js_hides_disabled_optional_hands() {
+        let mut project = Project::starter("Analog");
+        project.widgets[0].kind = model::WidgetKind::AnalogTime;
+        project.widgets[0].data_source = None;
+        project.widgets[0].time_format = None;
+        project.widgets[0].hour_src = Some("hands/Classic/hour.png".to_string());
+        project.widgets[0].minute_src = Some("hands/Classic/minute.png".to_string());
+        project.widgets[0].second_src = Some("hands/Classic/second.png".to_string());
+        project.widgets[0].cap_src = Some("hands/Classic/cap.png".to_string());
+
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("second: "));
+        assert!(js.contains("cap: "));
+        assert!(js.contains("timer.createTimer(0, 1000, tick)"));
+
+        project.widgets[0].hour_src = None;
+        project.widgets[0].minute_src = None;
+        project.widgets[0].second_src = None;
+        project.widgets[0].cap_src = None;
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("hour: null"));
+        assert!(js.contains("minute: null"));
+        assert!(js.contains("second: null"));
+        assert!(js.contains("cap: null"));
+        assert!(!js.contains("(h % 12) * 30 + m * 0.5"));
+        assert!(!js.contains("m * 6 + s * 0.1"));
+        assert!(!js.contains("timer.createTimer(0, 1000, tick)"));
+        assert!(js.contains("MINUTEEND"));
+    }
+
+    #[test]
+    fn project_roundtrip_preserves_widgets() {
+        let project = Project::starter("Roundtrip");
+        let json = serde_json::to_string(&project).unwrap();
+        let loaded: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.widgets.len(), 1);
+        assert_eq!(loaded.widgets[0].kind, WidgetKind::TimeText);
+        assert_eq!(loaded.widgets[0].time_format.as_deref(), Some("HH:MM:SS"));
+    }
+
+    #[test]
+    fn export_bytes_contains_expected_entries() {
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-watch-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_project(&dir, "Zip Test").unwrap();
+        let file = project::project_file(&dir);
+        let bytes = export_zip_bytes(&file).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        assert!(archive.by_name("app.json").is_ok());
+        assert!(archive.by_name("app.js").is_ok());
+        assert!(archive.by_name("watchface/index.js").is_ok());
+        assert!(archive.by_name("assets/active2round/bg.png").is_ok());
+        assert!(archive.by_name("assets/active2round/icon.png").is_ok());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn new_project_metadata_is_used_on_the_watch() {
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-watch-meta-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let input = NewProject {
+            name: "My Face".to_string(),
+            author: "Jane Doe".to_string(),
+            app_id: 12_345_678,
+        };
+        create_project_with(&dir, &input).unwrap();
+        let file = project::project_file(&dir);
+        let project = load_project(&file).unwrap();
+        assert_eq!(project.metadata.name, "My Face");
+        assert_eq!(project.metadata.author, "Jane Doe");
+        assert_eq!(project.metadata.app_id, 12_345_678);
+
+        let json = codegen::generate_app_json(&project);
+        assert!(json.contains("\"appId\": 12345678"));
+        assert!(json.contains("\"appName\": \"My Face\""));
+        assert!(json.contains("\"vender\": \"Jane Doe\""));
+
+        let bytes = export_zip_bytes(&file).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut app_json = String::new();
+        archive
+            .by_name("app.json")
+            .unwrap()
+            .read_to_string(&mut app_json)
+            .unwrap();
+        assert!(app_json.contains("12345678"));
+        assert!(app_json.contains("My Face"));
+        assert!(app_json.contains("Jane Doe"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn random_app_ids_are_valid() {
+        for _ in 0..50 {
+            let id = random_app_id();
+            assert!((10_000_000..100_000_000).contains(&id));
+        }
+    }
+
+    #[test]
+    fn new_project_rejects_invalid_input() {
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-watch-invalid-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(create_project_with(
+            &dir,
+            &NewProject {
+                name: "".to_string(),
+                author: "Jane".to_string(),
+                app_id: 1,
+            }
+        )
+        .is_err());
+        assert!(create_project_with(
+            &dir,
+            &NewProject {
+                name: "Face".to_string(),
+                author: "".to_string(),
+                app_id: 1,
+            }
+        )
+        .is_err());
+        assert!(create_project_with(
+            &dir,
+            &NewProject {
+                name: "Face".to_string(),
+                author: "Jane".to_string(),
+                app_id: 0,
+            }
+        )
+        .is_err());
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn create_project_in_makes_watchface_folder() {
+        let root = std::env::temp_dir().join(format!(
+            "rusty-watch-folder-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let input = NewProject {
+            name: "My: Face? /".to_string(),
+            author: "Jane".to_string(),
+            app_id: 22_222_222,
+        };
+        assert_eq!(watchface_folder_name(&input.name), "My_ Face_ _");
+
+        let (dir, project) = create_project_in(&root, &input).unwrap();
+        assert_eq!(dir.file_name().unwrap(), "My_ Face_ _");
+        assert!(dir.join("project.json").exists());
+        assert!(dir.join("assets/icon.png").exists());
+        assert_eq!(project.metadata.name, "My: Face? /");
+        assert!(create_project_in(&root, &input).is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn save_project_as_copies_project_and_assets() {
+        let root = std::env::temp_dir().join(format!(
+            "rusty-watch-saveas-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let source_dir = root.join("original");
+        create_project(&source_dir, "Original").unwrap();
+        let source_file = project::project_file(&source_dir);
+
+        let input = NewProject {
+            name: "Copy".to_string(),
+            author: "Jane Doe".to_string(),
+            app_id: 33_333_333,
+        };
+        let (file, project) = save_project_as(&source_file, &root, &input).unwrap();
+        assert_eq!(file, root.join("Copy/project.json"));
+        assert_eq!(project.metadata.author, "Jane Doe");
+        assert_eq!(project.metadata.app_id, 33_333_333);
+        assert!(root.join("Copy/assets/bg.png").exists());
+        assert!(root.join("Copy/assets/icon.png").exists());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn update_metadata_keeps_name_and_changes_author_and_version() {
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-watch-metadata-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_project(&dir, "Stable Name").unwrap();
+        let file = project::project_file(&dir);
+
+        let project = update_project_metadata(&file, "  Jane Doe  ", " 1.2.3 ").unwrap();
+        assert_eq!(project.metadata.name, "Stable Name");
+        assert_eq!(project.metadata.author, "Jane Doe");
+        assert_eq!(project.metadata.version, "1.2.3");
+
+        let reloaded = load_project(&file).unwrap();
+        assert_eq!(reloaded.metadata.name, "Stable Name");
+        assert_eq!(reloaded.metadata.author, "Jane Doe");
+        assert_eq!(reloaded.metadata.version, "1.2.3");
+        assert!(codegen::generate_app_json(&reloaded).contains("\"name\": \"1.2.3\""));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn update_metadata_rejects_invalid_author_or_version() {
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-watch-metadata-invalid-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_project(&dir, "Face").unwrap();
+        let file = project::project_file(&dir);
+
+        assert!(update_project_metadata(&file, "", "1.0.0").is_err());
+        assert!(update_project_metadata(&file, "Jane", "").is_err());
+        assert!(update_project_metadata(&file, "Jane", "1.0 beta").is_err());
+        assert!(update_project_metadata(&file, "Jane", &"x".repeat(33)).is_err());
+        assert_eq!(load_project(&file).unwrap().metadata.version, "0.1.0");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn default_layer_order_has_background_at_the_bottom() {
+        let project = Project::starter("Layers");
+        assert_eq!(layers::order(&project), vec!["background", "time"]);
+        let layers = layers::describe(&project);
+        assert_eq!(layers.len(), 2);
+        assert_eq!(layers[0].kind, "background");
+        assert_eq!(layers[0].src.as_deref(), Some("bg.png"));
+        assert_eq!(layers[1].kind, "time");
+    }
+
+    #[test]
+    fn moving_a_widget_updates_z_and_generated_js_order() {
+        let mut project = Project::starter("Layers");
+        widgets::add_widget(&mut project, "time").unwrap();
+        let js_before = codegen::generate_index_js(&project);
+        assert_eq!(js_before.matches("hmUI.createWidget(hmUI.widget.TEXT").count(), 2);
+
+        let order = layers::move_layer(&mut project, "time-2", -1).unwrap();
+        assert_eq!(order, vec!["background", "time-2", "time"]);
+        assert_eq!(
+            project.widgets.iter().find(|w| w.id == "time-2").unwrap().z,
+            1
+        );
+        assert_eq!(project.layer_order, vec!["background", "time-2", "time"]);
+
+        let drawn: Vec<String> = layers::ordered_widgets(&project)
+            .into_iter()
+            .map(|w| w.id)
+            .collect();
+        assert_eq!(drawn, vec!["background", "time-2", "time"]);
+    }
+
+    #[test]
+    fn reorder_is_persisted_in_project_json() {
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-watch-layers-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_project(&dir, "Layer Face").unwrap();
+        let file = project::project_file(&dir);
+
+        let mut project = load_project(&file).unwrap();
+        widgets::add_widget(&mut project, "time").unwrap();
+        layers::move_layer(&mut project, "time-2", -1).unwrap();
+        save_project(&file, &project).unwrap();
+
+        let reloaded = load_project(&file).unwrap();
+        assert_eq!(
+            layers::order(&reloaded),
+            vec!["background", "time-2", "time"]
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn background_is_locked_at_the_bottom() {
+        let mut project = Project::starter("Locked");
+        assert!(layers::move_layer(&mut project, "background", 1).is_err());
+        assert!(layers::move_layer(&mut project, "background", -1).is_err());
+        assert!(layers::remove_widget(&mut project, "background").is_err());
+
+        // Widget tuż nad tłem nie może zejść poniżej tła.
+        assert!(layers::move_layer(&mut project, "time", -1).is_err());
+        assert_eq!(layers::order(&project), vec!["background", "time"]);
+    }
+
+    #[test]
+    fn add_and_remove_widget_updates_layers() {
+        let mut project = Project::starter("Widgets");
+        let second = widgets::add_widget(&mut project, "time").unwrap();
+        let third = widgets::add_widget(&mut project, "time").unwrap();
+        assert_eq!(second.id, "time-2");
+        assert_eq!(third.id, "time-3");
+        assert_eq!(
+            layers::order(&project),
+            vec!["background", "time", "time-2", "time-3"]
+        );
+
+        layers::remove_widget(&mut project, "time-2").unwrap();
+        assert_eq!(
+            layers::order(&project),
+            vec!["background", "time", "time-3"]
+        );
+        layers::remove_widget(&mut project, "time-3").unwrap();
+        layers::remove_widget(&mut project, "time").unwrap_err(); // ostatni widget chroniony
+        assert_eq!(layers::order(&project), vec!["background", "time"]);
+    }
+
+    #[test]
+    fn add_date_widget_creates_localized_date_text() {
+        let mut project = Project::starter("Date Face");
+        let date = widgets::add_widget(&mut project, "date").unwrap();
+        assert_eq!(date.id, "date");
+        assert_eq!(date.kind, WidgetKind::DateText);
+        assert_eq!(date.data_source, Some(model::DataSource::Date));
+        assert_eq!(
+            date.time_format.as_deref(),
+            Some(crate::date_format::DEFAULT_PATTERN)
+        );
+        assert_eq!(layers::order(&project), vec!["background", "time", "date"]);
+        assert_eq!(layers::describe(&project).last().unwrap().kind, "date");
+
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("L.months[d"), "generated JS: {js}");
+        assert!(js.contains(".getMonth()]"));
+
+        // Zmiana wzorca daty trafia zarówno do podglądu (przez `date_format`),
+        // jak i do wygenerowanego JS.
+        let settings = serde_json::json!({
+            "id": "date",
+            "x": 23, "y": 250, "w": 420, "h": 80,
+            "textSize": 48, "color": "0xFFFFFFFF", "align": "center",
+            "timeFormat": "DD.MM.YYYY"
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.time_format.as_deref(), Some("DD.MM.YYYY"));
+        assert_eq!(updated.text.as_deref(), Some("01.01.2026"));
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("p2((d2.getDate()))"), "generated JS: {js}");
+        assert!(js.contains("p2((d2.getMonth() + 1))"));
+    }
+
+    #[test]
+    fn add_user_text_widget_creates_static_text() {
+        let mut project = Project::starter("Text Face");
+        let text = widgets::add_widget(&mut project, "text").unwrap();
+        assert_eq!(text.id, "text");
+        assert_eq!(text.kind, WidgetKind::Text);
+        assert_eq!(text.data_source, None);
+        assert_eq!(text.time_format, None);
+        assert_eq!(text.text.as_deref(), Some("Text"));
+        assert_eq!(layers::order(&project), vec!["background", "time", "text"]);
+        assert_eq!(layers::describe(&project).last().unwrap().kind, "text");
+
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("text: \"Text\""), "generated JS: {js}");
+
+        // Treść wpisana w inspektorze trafia do projektu i do wygenerowanego JS.
+        // Pole `timeFormat` jest dla tego typu ignorowane.
+        let settings = serde_json::json!({
+            "id": "text",
+            "x": 23, "y": 350, "w": 420, "h": 60,
+            "textSize": 32, "color": "0xFFFFFFFF", "align": "center",
+            "timeFormat": "HH:MM:SS", "text": "Witaj, świecie!"
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.text.as_deref(), Some("Witaj, świecie!"));
+        assert_eq!(updated.time_format, None);
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("text: \"Witaj, świecie!\""), "generated JS: {js}");
+    }
+
+    #[test]
+    fn add_step_widget_reads_step_sensor() {
+        assert!(widgets::supported_widgets()
+            .iter()
+            .any(|item| item.kind == "steps" && item.category == "distance"));
+
+        let mut project = Project::starter("Step Face");
+        let steps = widgets::add_widget(&mut project, "steps").unwrap();
+        assert_eq!(steps.id, "steps");
+        assert_eq!(steps.kind, WidgetKind::StepText);
+        assert_eq!(steps.data_source, Some(model::DataSource::Step));
+        assert_eq!(steps.text.as_deref(), Some("0"));
+        assert_eq!(steps.time_format, None);
+        assert_eq!(layers::order(&project), vec!["background", "time", "steps"]);
+        assert_eq!(layers::describe(&project).last().unwrap().kind, "steps");
+        assert!(validate(&project).is_empty());
+
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("hmSensor.createSensor(hmSensor.id.STEP)"), "JS: {js}");
+        assert!(js.contains("_stepSensor.event.CHANGE"), "JS: {js}");
+        assert!(js.contains("refs[2].setProperty(hmUI.prop.TEXT, _steps)"), "JS: {js}");
+        assert!(js.contains("removeEventListener(stepSensor.event.CHANGE, stepTick)"), "JS: {js}");
+        assert!(js.contains("text: \"0\""), "JS: {js}");
+
+        // Inspektor nie wysyła wzorca dla kroków — a nawet gdyby wysłał,
+        // nie może nadpisać wartości z czujnika.
+        let settings = serde_json::json!({
+            "id": "steps",
+            "x": 23, "y": 320, "w": 420, "h": 60,
+            "textSize": 40, "color": "0xFFFFFFFF", "align": "center",
+            "timeFormat": "HH:MM:SS"
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.time_format, None);
+        assert_eq!(updated.text.as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn add_distance_widget_uses_project_unit_and_widget_override() {
+        assert!(widgets::supported_widgets()
+            .iter()
+            .any(|item| item.kind == "distance" && item.category == "distance"));
+
+        let mut project = Project::starter("Distance Face");
+        let distance = widgets::add_widget(&mut project, "distance").unwrap();
+        assert_eq!(distance.id, "distance");
+        assert_eq!(distance.kind, WidgetKind::DistanceText);
+        assert_eq!(distance.data_source, Some(model::DataSource::Distance));
+        assert_eq!(distance.text.as_deref(), Some("0.00 km"));
+        assert_eq!(distance.measurement_system, None);
+        assert_eq!(layers::describe(&project).last().unwrap().kind, "distance");
+        assert!(validate(&project).is_empty());
+
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("hmSensor.createSensor(hmSensor.id.DISTANCE)"), "JS: {js}");
+        assert!(js.contains("addEventListener(_distanceSensor.event.CHANGE, distanceTick)"), "JS: {js}");
+        // Domyślnie jednostka pochodzi z zegarka (hmSetting.getMileageUnit()).
+        assert!(js.contains("hmSetting.getMileageUnit() === 1"), "JS: {js}");
+        assert!(js.contains("(_meters / (autoMileage ? 1609.344 : 1000)).toFixed(2)) + ' ' + (autoMileage ? 'mi' : 'km')"), "JS: {js}");
+        assert!(js.contains("removeEventListener(distanceSensor.event.CHANGE, distanceTick)"), "JS: {js}");
+
+        // Ustawienie aplikacji zmienia domyślną jednostkę całego projektu.
+        project::set_measurement_system(&mut project, model::MeasurementSystem::Imperial);
+        let widget = project.widgets.iter().find(|w| w.id == "distance").unwrap();
+        assert_eq!(widget.text.as_deref(), Some("0.00 mi"));
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("(_meters / 1609.344).toFixed(2)) + ' mi'"), "JS: {js}");
+
+        // Własny system widgetu nadpisuje domyślny z projektu.
+        let settings = serde_json::json!({
+            "id": "distance",
+            "x": 23, "y": 260, "w": 420, "h": 60,
+            "textSize": 32, "color": "0xFFFFFFFF", "align": "center",
+            "measurementSystem": "metric"
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.measurement_system, Some(model::MeasurementSystem::Metric));
+        assert_eq!(updated.text.as_deref(), Some("0.00 km"));
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("(_meters / 1000).toFixed(2)) + ' km'"), "JS: {js}");
+
+        // Pusty string wraca do systemu projektu.
+        let settings = serde_json::json!({
+            "id": "distance",
+            "x": 23, "y": 260, "w": 420, "h": 60,
+            "textSize": 32, "color": "0xFFFFFFFF", "align": "center",
+            "measurementSystem": ""
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.measurement_system, None);
+        assert_eq!(updated.text.as_deref(), Some("0.00 mi"));
+    }
+
+    #[test]
+    fn date_widgets_live_in_date_category_and_generate_js() {
+        let cases = [
+            ("date", "date", "new Date()"),
+            ("weekday-number", "weekday-number", "_weekdayNumber(t)"),
+            ("week-number", "week-number", "_isoWeek()"),
+            ("day-of-year", "day-of-year", "_dayOfYear()"),
+            ("lunar-date", "lunar-date", "lunar_month"),
+            ("festival", "festival", "solar_festival"),
+            ("world-clock", "world-clock", "WORLD_CLOCK"),
+        ];
+        for (kind, layer_kind, needle) in cases {
+            assert!(
+                widgets::supported_widgets()
+                    .iter()
+                    .any(|item| item.kind == kind && item.category == "date"),
+                "kind={kind}"
+            );
+            let mut project = Project::starter("Dates");
+            let widget = widgets::add_widget(&mut project, kind).unwrap();
+            if kind != "date" {
+                assert_eq!(widget.time_format, None, "kind={kind}");
+            }
+            assert_eq!(
+                layers::describe(&project).last().unwrap().kind,
+                layer_kind,
+                "kind={kind}"
+            );
+            assert!(validate(&project).is_empty(), "kind={kind}");
+            let js = codegen::generate_index_js(&project);
+            assert!(js.contains(needle), "kind={kind} JS: {js}");
+        }
+
+        // Algorytmy podglądu i JS muszą dawać te same wartości.
+        assert_eq!(date_format::iso_week(3, 11, 2026), 45);
+        // 2026-11-03 to wtorek: poniedziałek jako pierwszy dzień daje 2, niedziela daje 3.
+        assert_eq!(
+            date_format::weekday_number(3, 11, 2026, model::FirstDayOfWeek::Monday),
+            2
+        );
+        assert_eq!(
+            date_format::weekday_number(3, 11, 2026, model::FirstDayOfWeek::Sunday),
+            3
+        );
+        assert_eq!(date_format::day_of_year(3, 11, 2026), 307);
+    }
+
+    #[test]
+    fn health_widgets_generate_sensor_js() {
+        let cases = [
+            ("heart", "HEART", "-- bpm", "heart"),
+            ("stress", "STRESS", "--", "stress"),
+            ("pai", "PAI", "--", "pai"),
+            ("skin-temp", "BODY_TEMP", "-- °C", "skin-temp"),
+            ("sleep", "SLEEP", "--:--", "sleep"),
+            ("calories", "CALORIE", "-- kcal", "calories"),
+            ("spo2", "SPO2", "--%", "spo2"),
+        ];
+        for (kind, _, _, _) in cases {
+            assert!(
+                widgets::supported_widgets()
+                    .iter()
+                    .any(|item| item.kind == kind && item.category == "health"),
+                "kind={kind}"
+            );
+        }
+        for (kind, sensor_id, initial, layer_kind) in cases {
+            let mut project = Project::starter("Health Face");
+            let widget = widgets::add_widget(&mut project, kind).unwrap();
+            assert_eq!(widget.text.as_deref(), Some(initial), "kind={kind}");
+            assert_eq!(widget.time_format, None, "kind={kind}");
+            assert_eq!(
+                layers::describe(&project).last().unwrap().kind,
+                layer_kind,
+                "kind={kind}"
+            );
+            assert!(validate(&project).is_empty(), "kind={kind}");
+
+            let js = codegen::generate_index_js(&project);
+            assert!(
+                js.contains(&format!("hmSensor.id.{sensor_id}")),
+                "kind={kind} JS: {js}"
+            );
+            assert!(js.contains("healthTick"), "kind={kind} JS: {js}");
+            assert!(js.contains("healthSensors"), "kind={kind} JS: {js}");
+            assert!(
+                js.contains("removeEventListener"),
+                "kind={kind} JS: {js}"
+            );
+        }
+    }
+
+    #[test]
+    fn health_widget_can_hide_its_unit() {
+        let mut project = Project::starter("Units");
+        let heart = widgets::add_widget(&mut project, "heart").unwrap();
+        assert!(heart.show_unit);
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("+ ' bpm'"), "JS: {js}");
+
+        let settings = serde_json::json!({
+            "id": heart.id,
+            "x": 23, "y": 150, "w": 420, "h": 60,
+            "textSize": 40, "color": "0xFFFFFFFF", "align": "center",
+            "showUnit": false
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert!(!updated.show_unit);
+        let js = codegen::generate_index_js(&project);
+        assert!(!js.contains("' bpm'"), "JS: {js}");
+        assert!(js.contains("if (_hHeart)"), "JS: {js}");
+        assert_eq!(
+            layers::describe(&project).last().unwrap().show_unit,
+            false
+        );
+
+        // Brak klucza zachowuje poprzedni wybór.
+        let settings = serde_json::json!({
+            "id": heart.id,
+            "x": 23, "y": 150, "w": 420, "h": 60,
+            "textSize": 40, "color": "0xFFFFFFFF", "align": "center"
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert!(!updated.show_unit);
+        assert!(validate(&project).is_empty());
+    }
+
+    #[test]
+    fn distance_widget_follows_watch_unit_by_default() {
+        let mut project = Project::starter("Watch Unit");
+        assert_eq!(project.measurement_system, model::MeasurementSystem::Watch);
+        let distance = widgets::add_widget(&mut project, "distance").unwrap();
+        assert_eq!(distance.text.as_deref(), Some("0.00 km"));
+        assert_eq!(
+            layers::describe(&project).last().unwrap().measurement_system,
+            None
+        );
+
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("function _initMileageUnit()"), "JS: {js}");
+        assert!(js.contains("_initMileageUnit()"), "JS: {js}");
+        assert!(js.contains("hmSetting.getMileageUnit() === 1"), "JS: {js}");
+        assert!(js.contains("autoMileage ? 'mi' : 'km'"), "JS: {js}");
+
+        // „Zgodnie z zegarkiem" działa też jako jawne nadpisanie widgetu.
+        let settings = serde_json::json!({
+            "id": "distance",
+            "x": 23, "y": 260, "w": 420, "h": 60,
+            "textSize": 32, "color": "0xFFFFFFFF", "align": "center",
+            "measurementSystem": "watch"
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(
+            updated.measurement_system,
+            Some(model::MeasurementSystem::Watch)
+        );
+        assert_eq!(
+            layers::describe(&project).last().unwrap().measurement_system.as_deref(),
+            Some("watch")
+        );
+
+        // Wyłączenie nadpisania wraca do systemu projektu (imperial) bez odczytu z zegarka.
+        let settings = serde_json::json!({
+            "id": "distance",
+            "x": 23, "y": 260, "w": 420, "h": 60,
+            "textSize": 32, "color": "0xFFFFFFFF", "align": "center",
+            "measurementSystem": ""
+        });
+        project::set_measurement_system(&mut project, model::MeasurementSystem::Imperial);
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.measurement_system, None);
+        assert_eq!(updated.text.as_deref(), Some("0.00 mi"));
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("(_meters / 1609.344).toFixed(2)) + ' mi'"), "JS: {js}");
+        assert!(!js.contains("autoMileage"), "JS: {js}");
+    }
+
+    #[test]
+    fn update_widget_changes_settings_of_selected_widget() {
+        let mut project = Project::starter("Inspector");
+        widgets::add_widget(&mut project, "time").unwrap();
+        let settings = serde_json::json!({
+            "id": "time-2",
+            "x": 30,
+            "y": 200,
+            "w": 300,
+            "h": 80,
+            "textSize": 42,
+            "color": "0xFF00FF00",
+            "align": "left",
+            "timeFormat": "HH:MM"
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.x, 30);
+        assert_eq!(updated.text_size, Some(42));
+        assert_eq!(updated.time_format.as_deref(), Some("HH:MM"));
+        assert_eq!(updated.text.as_deref(), Some("00:00"));
+        assert_eq!(project.widgets[0].x, 23); // oryginalny widget nietknięty
+
+        let mut bad = settings.clone();
+        bad["x"] = serde_json::json!(400);
+        bad["w"] = serde_json::json!(200);
+        assert!(widgets::update_widget(&mut project, &bad).is_err());
+    }
+
+    #[test]
+    fn frame_fields_default_and_survive_roundtrip() {
+        let project = Project::starter("Ramka");
+        assert!(!project.widgets[0].auto_scale);
+        assert_eq!(project.widgets[0].text_style, model::TextStyle::Ellipsis);
+        assert_eq!(project.widgets[0].v_align, model::VAlign::Center);
+
+        let json = serde_json::to_string(&project).unwrap();
+        let loaded: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.widgets[0].text_style, model::TextStyle::Ellipsis);
+        assert!(codegen::generate_index_js(&loaded).contains("text_style: hmUI.text_style.ELLIPSIS"));
+
+        // Stary projekt bez nowych pól też się wczyta.
+        let legacy = json.replace(",\"autoScale\":false", "").replace(",\"textStyle\":\"ellipsis\"", "");
+        let legacy: Project = serde_json::from_str(&legacy).unwrap();
+        assert!(!legacy.widgets[0].auto_scale);
+        assert_eq!(legacy.widgets[0].text_style, model::TextStyle::Ellipsis);
+    }
+
+    #[test]
+    fn update_widget_sets_frame_mode_and_text_fit() {
+        let mut project = Project::starter("Ramka");
+        let settings = serde_json::json!({
+            "id": "time",
+            "x": 23,
+            "y": 183,
+            "w": 420,
+            "h": 100,
+            "textSize": 64,
+            "color": "0xFFFFFFFF",
+            "align": "center",
+            "timeFormat": "HH:MM:SS",
+            "autoScale": true,
+            "textStyle": "slide",
+            "vAlign": "bottom",
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert!(updated.auto_scale);
+        assert_eq!(updated.text_style, model::TextStyle::None);
+        assert_eq!(updated.v_align, model::VAlign::Bottom);
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("text_style: hmUI.text_style.NONE"));
+        assert!(js.contains("align_v: hmUI.align.BOTTOM"));
+
+        let described = layers::describe(&project);
+        assert_eq!(described[1].auto_scale, true);
+        assert_eq!(described[1].text_style, "none");
+        assert_eq!(described[1].v_align, "bottom");
+
+        let mut invalid = settings.clone();
+        invalid["textStyle"] = serde_json::json!("bogus");
+        assert!(widgets::update_widget(&mut project, &invalid).is_err());
+    }
+
+    #[test]
+    fn frame_geometry_respects_screen_and_minimum_size() {
+        use widgets::{frame_geometry, FrameInput};
+
+        let move_input = FrameInput {
+            x: 23,
+            y: 183,
+            w: 420,
+            h: 100,
+            text_size: 64,
+            handle: "move".to_string(),
+            dx: -9999,
+            dy: -9999,
+            auto_scale: false,
+            snap: false,
+            align_x: vec![],
+            align_y: vec![],
+            square: false,
+        };
+        let moved = frame_geometry(&move_input);
+        assert_eq!((moved.x, moved.y), (0, 0));
+        assert_eq!((moved.w, moved.h), (420, 100));
+
+        let resize = FrameInput {
+            handle: "nw".to_string(),
+            dx: -500,
+            dy: -500,
+            ..move_input
+        };
+        let resized = frame_geometry(&resize);
+        assert_eq!((resized.x, resized.y), (0, 0));
+        // Lewy/górny brzeg dociera do zera, prawy i dolny zostają na miejscu.
+        assert_eq!((resized.w, resized.h), (443, 283));
+
+        let tiny = FrameInput {
+            x: 20,
+            y: 20,
+            w: 100,
+            h: 100,
+            text_size: 16,
+            handle: "se".to_string(),
+            dx: -500,
+            dy: -500,
+            auto_scale: true,
+            snap: false,
+            align_x: vec![],
+            align_y: vec![],
+            square: false,
+        };
+        let tiny = frame_geometry(&tiny);
+        assert_eq!((tiny.w, tiny.h), (widgets::MIN_FRAME_SIZE, widgets::MIN_FRAME_SIZE));
+        assert_eq!(tiny.text_size, widgets::MIN_TEXT_SIZE);
+    }
+
+    #[test]
+    fn frame_geometry_snaps_edges_to_grid() {
+        use widgets::{frame_geometry, FrameInput, SNAP_GRID};
+
+        let base = FrameInput {
+            x: 111,
+            y: 139,
+            w: 274,
+            h: 134,
+            text_size: 64,
+            handle: "move".to_string(),
+            dx: 0,
+            dy: 0,
+            auto_scale: false,
+            snap: true,
+            align_x: vec![],
+            align_y: vec![],
+            square: false,
+        };
+
+        // Przesunięcie: x=111 → 112 (7*16), y=139 → 144 (9*16).
+        let moved = frame_geometry(&base);
+        assert_eq!((moved.x, moved.y), (112, 144));
+
+        // Bez przyciągania wartości zostają nietknięte.
+        let free = frame_geometry(&FrameInput { snap: false, ..base.clone() });
+        assert_eq!((free.x, free.y), (111, 139));
+
+        // Zachód: lewa krawędź 111 → 112, prawa (385) zostaje na miejscu.
+        let west = frame_geometry(&FrameInput {
+            handle: "nw".to_string(),
+            dx: -1,
+            dy: 0,
+            ..base.clone()
+        });
+        assert_eq!(west.x % SNAP_GRID, 0);
+        assert_eq!(west.x + west.w, 111 + 274);
+
+        // Wschód: prawa krawędź (385) → 384, lewa zostaje na miejscu.
+        let east = frame_geometry(&FrameInput {
+            handle: "se".to_string(),
+            dx: -1,
+            dy: 0,
+            ..base.clone()
+        });
+        assert_eq!((east.x + east.w) % SNAP_GRID, 0);
+        assert_eq!(east.x, 111);
+
+        // Skala podąża za przyciągniętą szerokością, nie za surową (dx=60 → 209px).
+        let scaled = frame_geometry(&FrameInput {
+            handle: "se".to_string(),
+            dx: -60,
+            dy: 0,
+            auto_scale: true,
+            ..base
+        });
+        assert_eq!(scaled.w, 209);
+        let expected = (64i64 * scaled.w as i64 + 274 / 2) / 274;
+        assert_eq!(scaled.text_size, expected as u32);
+        assert!(scaled.text_size < 64);
+    }
+
+    #[test]
+    fn frame_geometry_aligns_to_canvas_and_other_widgets() {
+        use widgets::{frame_geometry, FrameInput};
+
+        let mut input = FrameInput {
+            x: 100,
+            y: 100,
+            w: 100,
+            h: 80,
+            text_size: 32,
+            handle: "move".to_string(),
+            dx: 29,
+            dy: -38,
+            auto_scale: false,
+            snap: false,
+            align_x: vec![233], // środek płótna
+            align_y: vec![64],  // góra innego widgetu
+            square: false,
+        };
+        let aligned = frame_geometry(&input);
+        // Prawa krawędź 229 → 233 (środek), góra 62 → 64.
+        assert_eq!((aligned.x, aligned.y), (133, 64));
+        assert_eq!(aligned.guide_x, Some(233));
+        assert_eq!(aligned.guide_y, Some(64));
+
+        // Poza zasięgiem prowadnicy nie ma wyrównania.
+        input.align_x = vec![400];
+        input.align_y = vec![400];
+        let free = frame_geometry(&input);
+        assert_eq!(free.guide_x, None);
+        assert_eq!(free.guide_y, None);
+        assert_eq!((free.x, free.y), (129, 62));
+
+        // Wyrównanie wygrywa z siatką, gdy obie są blisko.
+        input.snap = true;
+        input.align_x = vec![233];
+        input.align_y = vec![64];
+        let both = frame_geometry(&input);
+        assert_eq!(both.guide_x, Some(233));
+        assert_eq!(both.guide_y, Some(64));
+    }
+
+    #[test]
+    fn frame_geometry_aligns_widget_center_to_canvas_center_even_with_grid_on() {
+        use widgets::{frame_geometry, FrameInput};
+
+        // Szeroki widget: środek musi trafić w 233. Z włączoną siatką x=20
+        // zostało by przyciągnięte do 16 (środek 226) i prowadnica by nie zadziałała.
+        let input = FrameInput {
+            x: 20,
+            y: 100,
+            w: 420,
+            h: 100,
+            text_size: 64,
+            handle: "move".to_string(),
+            dx: 0,
+            dy: 0,
+            auto_scale: false,
+            snap: true,
+            align_x: vec![233],
+            align_y: vec![],
+            square: false,
+        };
+        let aligned = frame_geometry(&input);
+        assert_eq!(aligned.x, 23);
+        assert_eq!(aligned.guide_x, Some(233));
+    }
+
+    #[test]
+    fn frame_geometry_aligns_widget_center_to_other_widget_center_with_grid_on() {
+        use widgets::{frame_geometry, FrameInput};
+
+        // Środek innego widgetu w x=150 (nie jest to środek tarczy).
+        let input = FrameInput {
+            x: 105,
+            y: 40,
+            w: 100,
+            h: 60,
+            text_size: 32,
+            handle: "move".to_string(),
+            dx: 0,
+            dy: 0,
+            auto_scale: false,
+            snap: true,
+            align_x: vec![150],
+            align_y: vec![],
+            square: false,
+        };
+        let aligned = frame_geometry(&input);
+        assert_eq!(aligned.x, 100);
+        assert_eq!(aligned.guide_x, Some(150));
+    }
+
+    #[test]
+    fn emulator_workspace_contains_installable_project() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("rw-emulator-{unique}"));
+        let source = root.join("source");
+        std::fs::create_dir_all(source.join("assets")).unwrap();
+        let project = Project::starter("Emulator");
+        let project_file = source.join("project.json");
+        std::fs::write(&project_file, serde_json::to_vec_pretty(&project).unwrap()).unwrap();
+        for asset in ["bg.png", "icon.png"] {
+            std::fs::write(source.join("assets").join(asset), b"fake-png").unwrap();
+        }
+
+        let workspace = prepare_emulator_workspace(&project_file, &root).unwrap();
+        assert_eq!(workspace.app_dir, workspace.dir.join("app"));
+        assert!(workspace.zip.is_file());
+        assert!(workspace.app_dir.join("app.json").is_file());
+        assert!(workspace.app_dir.join("app.js").is_file());
+        assert!(workspace.app_dir.join("watchface/index.js").is_file());
+        assert!(workspace
+            .app_dir
+            .join("assets/active2round/bg.png")
+            .is_file());
+        let app_json = std::fs::read_to_string(workspace.app_dir.join("app.json")).unwrap();
+        assert!(app_json.contains("8913153"));
+        // Log jest tworzony przez zeus, nie przez generator.
+        assert!(!workspace.log.exists());
+
+        // Ponowne przygotowanie czyści poprzedni katalog (brak narastających kopii).
+        std::fs::write(workspace.app_dir.join("stale.txt"), b"old").unwrap();
+        let again = prepare_emulator_workspace(&project_file, &root).unwrap();
+        assert_eq!(again.app_dir, workspace.app_dir);
+        assert!(!again.app_dir.join("stale.txt").exists());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn validator_catches_out_of_bounds_widget() {
+        let mut project = Project::starter("Bad");
+        project.widgets[0].x = 400;
+        project.widgets[0].w = 200;
+        let errors = validate(&project);
+        assert!(errors.iter().any(|e| e.contains("wykracza")));
+    }
+
+    #[test]
+    fn default_font_is_installed_attached_and_exported() {
+        let root = std::env::temp_dir().join(format!("rusty-fonts-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../native/RustyWatch/Assets/Fonts");
+        fonts::ensure_default(&root, &bundled).unwrap();
+
+        let list = fonts::list(&root).unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(list[0].is_default);
+        assert_eq!(list[0].family, "Inter");
+
+        let project_dir = root.join("project");
+        let (dir, _) = create_project_in(&root, &NewProject {
+            name: "project".into(),
+            author: "Dev".into(),
+            app_id: 42,
+        }).unwrap();
+        assert_eq!(dir, project_dir);
+        let file = dir.join("project.json");
+        let mut project = load_project(&file).unwrap();
+        fonts::apply_default_font(&mut project, &dir, &root).unwrap();
+        save_project(&file, &project).unwrap();
+
+        assert_eq!(project.widgets[0].font.as_deref(), Some(fonts::DEFAULT_FONT_FILE));
+        assert!(dir.join("assets/fonts/Inter-Regular.ttf").is_file());
+        assert!(validate(&project).is_empty());
+
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("font: \"fonts/Inter-Regular.ttf\""));
+        assert!(js.contains("Podgrzanie glif"));
+
+        let output = root.join("out.zip");
+        export_zip(&file, &output).unwrap();
+        let archive = std::fs::File::open(&output).unwrap();
+        let mut zip = ZipArchive::new(archive).unwrap();
+        assert!(zip.by_name("assets/active2round/fonts/Inter-Regular.ttf").is_ok());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn default_font_is_added_only_to_widgets_without_font() {
+        let root = std::env::temp_dir().join(format!("rw-font-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../native/RustyWatch/Assets/Fonts");
+        fonts::ensure_default(&root, &bundled).unwrap();
+        let (dir, _) = create_project_in(&root, &NewProject {
+            name: "FontFace".into(),
+            author: "Dev".into(),
+            app_id: 43,
+        }).unwrap();
+        let file = dir.join("project.json");
+        let mut project = load_project(&file).unwrap();
+        widgets::add_widget(&mut project, "date").unwrap();
+        project.widgets[0].font = Some("Custom.ttf".to_string());
+        save_project(&file, &project).unwrap();
+
+        let mut project = load_project(&file).unwrap();
+        fonts::apply_default_font_to_missing(&mut project, &dir, &root).unwrap();
+        save_project(&file, &project).unwrap();
+
+        assert_eq!(project.widgets[0].font.as_deref(), Some("Custom.ttf"));
+        assert!(project.widgets[1..]
+            .iter()
+            .all(|w| w.font.as_deref() == Some(fonts::DEFAULT_FONT_FILE)));
+        assert!(dir.join("assets/fonts/Inter-Regular.ttf").is_file());
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("font: \"fonts/Inter-Regular.ttf\""));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+}

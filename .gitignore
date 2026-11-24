@@ -1,0 +1,111 @@
+# ==============================================================================
+# Rusty Watch — .gitignore
+# Cel: czysty, bezpieczny push przez GitHub Desktop — bez buildów, logów,
+# danych prywatnych, kluczy i lokalnych śmieci.
+# ==============================================================================
+
+# --- Rust / Cargo -------------------------------------------------------------
+/target/
+**/target/
+*.rs.bk
+# Uwaga: główny Cargo.lock jest częścią repozytorium i powinien być commitowany.
+
+# --- .NET / WinUI 3: build i pakowanie ---------------------------------------
+native/**/bin/
+native/**/obj/
+**/AppPackages/
+**/BundleArtifacts/
+**/packages/
+*.appx
+*.appxbundle
+*.msix
+*.msixbundle
+*.nupkg
+*.pdb
+*.cache
+project.lock.json
+
+# --- Node / narzędzia front-endowe (na wypadek przyszłych eksperymentów) -----
+**/node_modules/
+**/.vite/
+**/dist/
+
+# --- Projekty użytkownika, eksporty i lokalne śmieci --------------------------
+# Tarcze użytkownika powstają w %APPDATA%\RustyWatch\Projects — nigdy w repo.
+/examples/
+/porownanie/
+/temporary/
+*.zip
+# Eksport wyłącznie do .zip — pliki .zpk nie powinny tu w ogóle trafić.
+*.zpk
+
+# --- Lokalny stan aplikacji i logi symulatora/emulatora ----------------------
+/recent.bak
+/recent.json
+/settings.json
+/Emulator/
+/Simulator/
+zeus.log
+simulator.log
+*.log
+*.etl
+*.dmp
+crash-*.txt
+*.bak
+*.old
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+~$*
+
+# --- Sekrety, klucze i materiał podpisowy -------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.snk
+*.cer
+*.crt
+*.der
+*.p7s
+*.jks
+*.keystore
+*.asc
+id_rsa*
+id_ed25519*
+*.pub
+.npmrc
+.pypirc
+credentials*.json
+*credentials*.json
+
+# --- Edytory, IDE i system operacyjny ----------------------------------------
+.vs/
+.vscode/
+.idea/
+*.code-workspace
+.history/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.sublime-workspace
+*.pyc
+__pycache__/
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.DS_Store
+._*
+Icon?
+@eaDir/
+$RECYCLE.BIN/
+System Volume Information/
+
+# --- Materiał referencyjny trzeciej strony (nie publikujemy cudzego UI) ------
+/reference-ui.png

@@ -1,0 +1,153 @@
+<!--
+  Readme.base — bazowa, szczegółowa dokumentacja projektu (zachowana treść
+  historycznego README.md). To tutaj wprowadzamy zmiany treści w pierwszej
+  kolejności; dopiero na końcu aktualizujemy README.md w wersji „pod GitHuba",
+  żeby zachować jego stylistykę (hero, badge'e, podział na dwie części).
+
+  Plik jest bezpieczny do publikacji — nie zawiera danych prywatnych.
+-->
+
+# Rusty Watch (dokumentacja bazowa)
+
+> 📌 **Uwaga:** ten plik jest źródłem bazowym dokumentacji. Poniżej znajduje się
+> niezmieniona treść poprzedniego `README.md`. Nową, dopracowaną wersję pokazywaną na
+> GitHubie znajdziesz w [`README.md`](README.md). Zmiany opisu aktualizuj **najpierw tutaj**,
+> a dopiero potem przenieś je do `README.md`.
+
+---
+
+# Rusty Watch
+
+Edytor tarcz dla **Amazfit Active 2 (Round)** (466×466, ZeppOS 4.x). Projekt nauczony na edytorze [SashaCX75](https://github.com/SashaCX75/Watch-face-editor-for-Amazfit-watch-on-ZeppOS), ale z własną implementacją.
+
+> Status: fundamenty (v0.1.0). Działają: CLI, generator poprawnego `.zip` oraz natywny shell WinUI 3 z mostem FFI do Rust.
+
+## Technologie
+
+- `rusty-core` — model projektu, walidacja, generator `app.json` / `app.js` / `watchface/index.js`, pakowanie `.zip`
+- `rusty-cli` — narzędzia wiersza polecenia (`new`, `validate`, `export`, `inspect`)
+- `rusty-ffi` — biblioteka `cdylib` z funkcjami `rw_*` dla natywnego UI
+- `native/RustyWatch/` — **jedyny frontend**: WinUI 3 (Windows App SDK 2.7, C#/XAML), natywne kontrolki Fluent, Mica, ciemny pasek tytułu
+
+## Szybki start (CLI)
+
+```powershell
+cargo test --workspace
+cargo run -p rusty-cli -- new .\moja-tarcza --name "Moja Tarcza" --author "Jan Kowalski" --app-id 12345678
+cargo run -p rusty-cli -- validate .\moja-tarcza\project.json
+cargo run -p rusty-cli -- export .\moja-tarcza\project.json
+cargo run -p rusty-cli -- inspect .\moja-tarcza\Moja_Tarcza.zip
+```
+
+Wynikiem jest plik `.zip` z strukturą:
+
+```
+app.json
+app.js
+watchface/index.js
+assets/active2round/bg.png
+assets/active2round/icon.png
+```
+
+Taki plik można wgrać na zegarek przez tryb deweloperski Zepp / katalog amazwatchfaces.
+
+`--author` i `--app-id` są opcjonalne: domyślnie autorem jest „Rusty Watch", a App ID jest losowany (8 cyfr). Nazwa, autor i App ID trafiają do `app.json` jako `appName`, `vender` i `appId` (oraz `i18n.*.appName`), czyli to, co Zepp pokazuje na zegarku i w menedżerze tarcz.
+
+## Format projektu `.rwf`
+
+`project.json` zawiera wersję schematu, metadane, profil urządzenia, listę widgetów i zasobów. Pliki graficzne leżą w `assets/`. Model jest projektowany tak, żeby eksport → otwarcie → eksport zachowywał wszystkie dane.
+
+Szczegóły: `docs/FORMAT.md` (powstaje wraz z kolejnymi funkcjami).
+
+## UI (WinUI 3 — główny frontend)
+
+Wymagania: .NET SDK 10 (do zbudowania), .NET Runtime 8, Rust. Windows App SDK 2.7 jest ściągany jako pakiet NuGet i aplikacja jest **self-contained**.
+
+```powershell
+$env:PATH = 'C:\Program Files\dotnet;' + $env:PATH
+dotnet build .\native\RustyWatch\RustyWatch.csproj
+.\native\RustyWatch\bin\Debug\net8.0-windows10.0.26100.0\win-x64\RustyWatch.exe
+```
+
+`dotnet build` najpierw woła `cargo build -p rusty-ffi` i kopiuje `rusty_ffi.dll` do katalogu wyjściowego.
+
+Aplikacja startuje na stronie **Home** z akcjami New project / Open project i listą **ostatnio otwartych projektów** — kliknięcie wpisu otwiera edytor, a menu kontekstowe pozwala usunąć wpis. Listę czyści też link „Clear list". Historia jest zapisywana w `%APPDATA%\RustyWatch\recent.json` przez `rusty-core` (maks. 10 wpisów).
+
+„New project" otwiera okno z trzema polami: **Watchface name**, **Author** oraz **App ID** z przyciskiem **Randomize** (losowanie przez `rusty-core`). Po zatwierdzeniu wybierany jest **katalog główny projektów**, a w nim tworzony jest nowy folder nazwany według tarczy (np. `Moje Projekty/Moja Tarcza/project.json`). Nazwa folderu jest oczyszczana z niedozwolonych znaków; jeśli taki folder już istnieje, tworzenie kończy się błędem zamiast nadpisywania. Wpisywalne dane trafiają do `project.json` i generowanego `app.json` (`appName`, `vender`, `appId` oraz `i18n.*.appName`), więc na zegarku tarcza widnieje pod wybraną nazwą i autorem. Unikalny App ID chroni przed nadpisaniem innej tarczy w Zepp.
+
+Nawigacja po lewej zawiera **Home**, **Editor** i **Project settings** (pojawiają się po otwarciu projektu), zawsze widoczną zakładkę **Widgets**, oraz **Assets** i **App Settings**. Zakładka **Widgets** jest dostępna także bez projektu — to tylko katalog widgetów obsługiwanych przez aplikację (na razie **Wyświetlacz czasu**), więc można się z nią zapoznać przed utworzeniem tarczy; nie dodaje się z niej widgetów. Dodawanie odbywa się przyciskiem „+ Dodaj widget" po prawej stronie paska **PODGLĄD** w edytorze: otwiera flyout z polem wyszukiwania i listą widgetów; wybór dodaje warstwę, zaznacza ją i zamyka flyout. Edytor pokazuje podgląd 1:1 w skali tarczy (okrąg 466 × 466) z prawdziwym obrazem tła i panel **Warstwy**. **Background jest na stałe zablokowany jako najniższa warstwa** (native ikona kłódki, bez strzałek i usuwania); widgety można przesuwać strzałkami i usuwać (ostatniego widgetu nie da się usunąć). Kliknięcie warstwy wyświetla w panelu po prawej jej ustawienia: wzorzec (`HH:MM:SS` domyślnie; tokeny `HH/H/hh/h`, `MM/M`, `SS/S`, `A/a` oraz literalne znaki poprzedzone `\`), rozmiar, kolor, pozycję X/Y i wyrównanie. Suwaki **X** i **Y** są obok siebie, a nad każdym z nich jest aktualna wartość — **kliknięcie jej kopiuje do schowka**, **dwuklik pozwala wpisać liczbę** (Enter zatwierdza, Escape anuluje). Pod przyciskiem „Wyśrodkuj na tarczy" są dwa przyciski obok siebie: „W poziomie" i „W pionie", które wyśrodkowują tylko wybraną oś. Każdy widget tekstowy ma w podglądzie **ramkę** pokazującą zajmowany obszar: przeciągnięcie wnętrza ramki przesuwa widget, przeciągnięcie rogu zmienia jego rozmiar (suwaki X/Y i rozmiar czcionki nadal działają). **Podwójne kliknięcie ramki** włącza tryb skalowania — ramka robi się czerwona, a rozmiar czcionki zmienia się proporcjonalnie do zmiany szerokości ramki. W inspektorze **Dopasowanie tekstu** wybierasz *Utnij* (`hmUI.text_style.ELLIPSIS`), *Przewijaj* / *Zawijaj* (`hmUI.text_style.NONE`) albo **Pozycja pionowa** ustawia tekst przy górnej krawędzi, w środku lub przy dole ramki (`hmUI.align.TOP` / `hmUI.align.CENTER_V` / `hmUI.align.BOTTOM`). Tekst jest umieszczony w kontenerze o wymiarach ramki, więc wyrównanie pionowe działa identycznie w podglądzie i na zegarku. Tryb skalowania zapisuje rzeczywisty `textSize` w `project.json`, więc podgląd i wyeksportowana tarcza używają identycznej geometrii i czcionki. W prawym dolnym rogu paska podglądu (w tej samej linii co „466 × 466" i „Active 2 (Round)") znajduje się pole wyboru **Przyciągaj do siatki** — po włączeniu w podglądzie widać kratkę co 16 pikseli, a przesuwanie i zmiana rozmiaru ramki przyciągają jej krawędzie do tej kratki (`rw_frame_geometry` z `snap: true`). Ustawienie jest zapamiętywane w `%APPDATA%\RustyWatch\settings.json`. Podczas przeciągania działa też wyrównowanie: gdy krawędź lub środek ramki znajdzie się w promieniu 5 px od środka/krawędzi płótna albo krawędzi/środka innego widgetu, widget przywiera do tej linii, a na podglądzie pojawia się przerywana czerwona prowadnica. Wyrównanie ma priorytet nad siatką. Sekcja **Wyrównanie tekstu** ma w jednym rzędzie strzałki z grotem w lewo/prawo i kółko na środku oraz analogicznie strzałki w górę/dół i kółko dla pozycji pionowej. Przycisk **Wyśrodkuj na tarczy** pod suwakami X/Y ustawia wybrany widget dokładnie na środku tarczy w obu osiach (`(466−w)/2`, `(466−h)/2`) — działa dla każdego typu widgetu. Zmiany zapisują się automatycznie przez FFI (`rw_set_widget`, `rw_frame_geometry`). Kolejność warstw jest zapisywana w `project.json` (`layerOrder` i `z`) i używana zarówno przez podgląd, jak i generator `watchface/index.js`, więc to, co widać w edytorze, odpowiada wyeksportowanej tarczy. Dla wzorców z sekundami generator JS używa `setInterval(tick, 1000)`, w przeciwnym razie `Time.onPerMinute`.
+
+Prawy koniec paska **PODGLĄD** ma przycisk **Opcje podglądu** (wielokropek) z flyoutem dwóch opcji do zaznaczenia: **Siatka podglądu** (pokazuje kratkę 16 px i włącza przyciąganie do niej) oraz **Obrys niezaznaczonych widgetów** (domyślnie włączony — delikatna ramka wokół niezaznaczonych widgetów). Oba wybory zapisują się w `%APPDATA%\RustyWatch\settings.json`.
+
+Dolny pasek zawiera **Save**, **Save as...**, „Eksportuj ZIP", **Przetestuj w emulatorze** i „Sync to Watch". **Save**, **Save as...**, eksport i test są wyszarzone do momentu otwarcia projektu. Przycisk **Przetestuj w emulatorze** eksportuje tarczę do `%APPDATA%\RustyWatch\Emulator\app-<appId>`, rozpakowuje ją i instaluje w oficjalnym symulatorze ZeppOS poleceniem `zeus install --target "Amazfit Active 2 NFC (Round)"`. Wymaga to zainstalowanego [Zepp OS Simulator](https://docs.zepp.com/docs/guides/tools/simulator/download/) oraz pobranego wewnątrz niego obrazu **Active 2 v1.1.0** i otwartego okna zegarka — aplikacja wykrywa braki i otwiera oficjalną stronę pobierania albo prowadzi do odpowiedniego okna. Symulator jest oprogramowaniem Zepp Health na własnej licencji: aplikacja **nie dołącza, nie kopiuje i nie instaluje go potajemnie** — pobiera go wyłącznie użytkownik z oficjalnego źródła i sam akceptuje licencję. Log `zeus.log` z katalogu roboczego zawiera dokładny wynik instalacji; test w emulatorze sprawdza build i runtime JS, ale nie zastępuje ostatecznego testu na fizycznym zegarku. **Save as...** otwiera to samo okno (z danymi aktualnej tarczy), pyta o katalog główny i zapisuje pełną kopię projektu razem z zasobami w nowym folderze. „Otwórz projekt" i „New project" znajdują się na stronie Home; pickery Windows i funkcje Rust są wywoływane przez P/Invoke.
+
+### Zasoby: czcionki
+
+Strona **Assets** ma kategorię **Fonts**: listę zainstalowanych czcionek (każdy wiersz pokazuje żywy przykład „Aa"), przyciski **Dodaj czcionkę...** (wybór pliku `.ttf`), **Usuń czcionkę** oraz **Otwórz folder czcionek**. Magazyn jest współdzielony przez wszystkie projekty i znajduje się w `%APPDATA%\RustyWatch\Fonts`. Domyślnie instalowana jest czcionka **Inter** (licencja **SIL Open Font License 1.1**, plik `native/RustyWatch/Assets/Fonts/OFL-Inter.txt`) — można ją śmiało dołączyć do repozytorium z projektem. Nowe tarcze używają jej automatycznie.
+
+W inspektorze widgetu sekcja **Czcionka** pozwala wybrać czcionkę systemową zegarka albo dowolną zainstalowaną. Wybrany plik jest kopiowany do `<projekt>/assets/fonts/` i wpisywany do `project.json` jako zasób typu `font`, więc eksport ZIP i „Save as..." są samowystarczalne. Zmiana czcionki usuwa nieużywaną kopię z projektu. **Podgląd rysuje tym samym plikiem TTF, który trafia do tarczy** — wyeksportowany `watchface/index.js` ustawia `font: "fonts/<plik>.ttf"` i tworzy poza ekranem widget „podgrzewający" glify, żeby znaki pojawiające się dopiero po aktualizacji czasu nie były puste.
+
+### Zasoby: tło
+
+Kategoria **Background** na stronie **Assets** zarządza obrazkami w osobnym magazynie `%APPDATA%\RustyWatch\Backgrounds` — dodajesz pliki **PNG/JPEG**, możesz je usunąć i ustawić jako tło bieżącego projektu. Obrazy z wcześniejszych wersji (wspólny katalog `Images`) są jednorazowo kopiowane do nowego magazynu przy pierwszym uruchomieniu. Wybrany plik jest kopiowany do `<projekt>/assets/backgrounds/<plik>` oraz przygotowywany jako `<projekt>/assets/bg.png`, więc wyeksportowany ZIP jest samowystarczalny. Osobna kategoria **Images** zarządza grafikami widgetu **Image** w `%APPDATA%\RustyWatch\Images` — wybrany obraz trafia do `<projekt>/assets/images/<id-widgetu>/<plik>` i jest fizycznie dopasowany do ramki (`contain`, `cover` albo `stretch`) przed eksportem.
+
+Wyboru dokonujesz w inspektorze po zaznaczeniu warstwy **Tło** (warstwa nadal jest zablokowana na najniższej pozycji — zmieniać można tylko obraz). Dostępne jest **automatyczne skalowanie do 466 × 466**: obraz jest przycinany do środka ekranu i dopasowywany do rozmiaru tarczy, więc nie pojawiają się białe lub puste krawędzie. Po wyłączeniu opcji tarcza rysuje obraz w oryginalnym rozmiarze — tak jak robi to ZeppOS (`IMG` nie umie skalować zasobu w runtime). Dostępne są dwa wbudowane wzory: **Czarny (domyślnie)** — pełna czerń — oraz **Gwieździste** (dawny domyślny gradient). Są to zwykłe pliki `black.png` i `starry.png` w magazynie teł — widać je na liście **Assets → Tło** obok zaimportowanych obrazów i wybiera się je dokładnie tak samo (nie można ich tylko usunąć). Przycisk **Przywróć czarne tło** wraca do czerni. Podgląd zawsze pokazuje dokładnie ten plik, który trafia do eksportu.
+
+Algorytmy skalowania mieszczą się w `crates/rusty-core/src/image_fit.rs` (`Cover`, `Contain`, `Stretch`) — to współdzielony moduł, z którego skorzystają również przyszłe widgety graficzne (pogoda, alerty).
+
+### Widgety: czas cyfrowy i analogowy
+
+Katalog widgetów jest pogrupowany w kategorie. W flyoucie **Dodaj widget** (nad podglądem) kategorie są zwijalne — domyślnie zamknięte, strzałka rozwija sekcję, a wyszukiwanie znajduje wpisy także w zamkniętych kategoriach (trafienia same je rozwijają). Na zakładce **Widgety** kategorie są zawsze rozwinięte — nagłówek i wszystkie widgety są widoczne bez klikania. Oba zegary — **Czas cyfrowy** i **Czas analogowy** — należą do kategorii **Czas**.
+
+Zegar analogowy to jedna warstwa złożona z obracanych wokół środka obrazów wskazówek. Do wyboru są zestawy w sekcji **Zasoby → Wskazówki**: folder z `hour.png` i `minute.png` (oraz opcjonalnie `second.png`, `cap.png`). Wszystkie pliki muszą być kwadratowymi PNG tego samego rozmiaru. Wbudowany zestaw **Classic** (400 × 400, z delikatnym cieniem) instaluje się przy pierwszym uruchomieniu. Wybrany zestaw jest kopiowany do `<projekt>/assets/hands/<zestaw>/`, więc eksportowany ZIP jest samowystarczalny. W inspektorze analogowego zegara jest osobny przełącznik dla każdej wskazówki: **godzin**, **minut**, **sekund** i **zaślepki na środku**. Te same suwaki **X**/**Y** i przyciski wyśrodkowania (**Wyśrodkuj na tarczy**, **W poziomie**, **W pionie**) co przy czasie cyfrowym są dostępne także tutaj. Przełączniki sekundy i zaślepki pojawiają się tylko wtedy, gdy wybrany zestaw faktycznie zawiera `second.png` / `cap.png`. Wyłączenie wskazówki usuwa jej plik z projektu i z eksportowanego ZIP, a wygenerowany `watchface/index.js` nie tworzy odpowiedniego widgetu `IMG` — włączenie z powrotem kopiuje plik z magazynu. Ramkę wskazówek można przesuwać i skalować — ma cztery uchwyty wstawione do środka (dzięki temu są dostępne także wtedy, gdy rogi dużej ramki wypadają poza okrągły podgląd). Podwójne kliknięcie ramki włącza czerwony tryb skalowania, tak jak przy tekście. Zmiana rozmiaru zachowuje kwadrat, więc wskazówki skalują się równomiernie; rzeczywisty rozmiar trafia do pliku projektu i do wygenerowanego JS. Należy używać obrazów mniejszych niż pełny ekran 466 × 466 (wbudowany zestaw ma 400 × 400).
+
+### Język tarczy na zegarku
+
+Wyeksportowany ZIP **sam wykrywa język zegarka** — nie trzeba nic ustawiać ani robić dwóch wersji tarczy. Wygenerowany `watchface/index.js` odczytuje `hmSetting.getLanguage()` (klasyczne API Watchface). Wartość `9` (`pl-PL`) włącza polskie skróty miesięcy (`Sty, Lut, …, Gru`) i oznaczenia `przedp.` / `pop.` dla tokenów `A`/`a`; **każdy inny język** daje angielski (`Jan, …, Dec`, `AM`/`PM`). Dotyczy to widgetu daty i wzorca czasu z tokenem AM/PM — liczby i znaki czasu są niezależne od języka.
+
+W **App Settings** jest osobna opcja **Język podglądu tarczy**: `Auto (język Windows)`, `Polski` albo `Angielski`. Wybiera tylko wariant pokazywany w edytorze, dzięki czemu podgląd pozostaje 1:1 z tym, co zobaczy zegarek. Na zegarku język jest zawsze wykrywany automatycznie.
+
+### Języki
+
+Strona **App Settings** zawiera selektor języka (domyślnie **English** i **Polski**). Zmiana działa natychmiast — wszystkie napisy (nawigacja, Home, edytor, okna dialogowe, komunikaty statusu, daty „Today/Yesterday") są wiązane z katalogiem tekstów i odświeżane bez restartu. Wybór zapisywany jest w `%APPDATA%\RustyWatch\settings.json`.
+
+**Katalogi tekstów są ładowane z `%APPDATA%\RustyWatch\Localization`, a nie z katalogu programu.** Przy pierwszym uruchomieniu aplikacja kopiuje tam wbudowane `en.json`, `pl.json` i `README.md` — bez instalatora. Aby dodać język, skopiuj `en.json` do `<kod>.json` (np. `de.json`), ustaw `languageName` i przetłumacz wartości w `strings`, po czym kliknij **Odśwież języki** w App Settings: nowy język pojawia się w selektorze bez przebudowy i bez reinstallu. Przycisk **Otwórz folder języków** prowadzi prosto do tego katalogu. Brakujące klucze są uzupełniane angielskim. Usunięcie pliku z `%APPDATA%` przywraca jego wersję wbudowaną przy następnym starcie. Wzór i zasady opisuje `native/RustyWatch/Localization/README.md` (pliki w repozytorium są źródłem seeda, nie są już czytane w runtime). Komunikaty błędów z `rusty-core` są tłumaczone na podstawie mapy wzorców w `LocalizationService.Error`.
+
+Ta sama strona ma pole **Default author** — wpisana nazwa jest używana jako autor w nowych projektach. Puste pole oznacza powrót do nazwy użytkownika Windows (`Environment.UserName`). Jest tam też **Projects folder** z przyciskiem **Browse...** — nowe projekty (oraz „Save as...") są tworzone bezpośrednio w wybranym katalogu (domyślnie `%APPDATA%\RustyWatch\Projects`).
+
+### Dane aplikacji
+
+Wszystkie dane aplikacji są w `%APPDATA%\RustyWatch` (katalog Roaming, dzięki czemu przetrwają aktualizację i podmianę katalogu z programem):
+
+```
+%APPDATA%\RustyWatch\
+├── settings.json       # język, domyślny autor, folder projektów, język podglądu, snap
+├── recent.json         # lista ostatnich projektów (max 10)
+├── Localization\       # katalogi języków czytane w runtime (można dodawać własne)
+├── Fonts\              # współdzielony magazyn czcionek (Inter + własne)
+├── Images\             # współdzielony magazyn grafik widgetu Image
+├── Backgrounds\        # osobny magazyn teł
+├── Hands\              # współdzielony magazyn zestawów wskazówek
+├── Emulator\           # pliki robocze testu w symulatorze
+└── Projects\           # domyślny katalog nowych projektów
+```
+
+Przy pierwszym uruchomieniu `AppPaths.Initialize()` tworzy całą strukturę, kopiuje wbudowane katalogi języków z katalogu programu (tylko brakujące pliki) oraz — przez `rw_ensure_defaults` — domyślną czcionkę i zestaw wskazówek. `settings.json` i `recent.json` są przenoszone ze starej lokalizacji `%LOCALAPPDATA%\RustyWatch`, jeśli pliki w `%APPDATA%` jeszcze nie istnieją (dane z `%APPDATA%` mają pierwszeństwo).
+
+## Licencja
+
+GPL-3.0-or-later z **Generation Exception**: wygenerowane tarcze `.zip` nie są objęte GPL — możesz je swobodnie publikować. Kod źródłowy edytora pozostaje open source i każda jego modyfikacja również musi być open source. Szczegóły w `LICENSE`.
+
+## Dokumentacja źródłowa
+
+- [SashaCX75 — edytor tarcz ZeppOS](https://github.com/SashaCX75/Watch-face-editor-for-Amazfit-watch-on-ZeppOS)
+- [Zepp OS — lista urządzeń](https://docs.zepp.com/docs/v2/reference/related-resources/device-list)
+- [Zepp OS — konfiguracja watchface](https://docs.zepp.com/docs/watchface/app-json)
+- [Zepp OS — createWidget i poziomy wyświetlania](https://docs.zepp.com/docs/watchface/api/hmUI/createWidget)
+- Plan całego projektu: [`PLAN.md`](PLAN.md)
+
+## Dla agentów AI
+
+Zasady pracy w repozytorium (architektura, komendy budowy, pułapki WinUI 3, lokalizacja, kryteria
+akceptacji) znajdują się w [`AGENTS.md`](AGENTS.md). `CLAUDE.md` i
+`.github/copilot-instructions.md` odsyłają do tego samego pliku — aktualizuj `AGENTS.md`.
