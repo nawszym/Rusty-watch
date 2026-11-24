@@ -30,7 +30,7 @@ Historical context and decisions: `PLAN.md` (section 8 = confirmed decisions), `
 | `Cargo.toml` | Rust workspace: `rusty-core`, `rusty-cli`, `rusty-ffi` |
 | `crates/rusty-core/src/` | `model.rs` (Project/Widget/metadata, device constants, starter template), `project.rs` (create/load/save/save-as/folder sanitization/random App ID), `codegen.rs` (generated `app.json`, `app.js`, `watchface/index.js`), `time_format.rs` (shared pattern parser + JS expression builder), `layers.rs` (layer order + editor layer descriptors), `widgets.rs` (add/edit/remove widget), `package.rs` (zip export/inspect), `fonts.rs` (font store, TTF name parser, project attachment/pruning), `recent.rs` (recent-project store), `locale.rs` (watchface language: PL/EN tables + runtime JS detection), `images.rs` (shared image store + background preparation), `image_fit.rs` (reusable Cover/Contain/Stretch scaling), `hands.rs` (shared hand-set store + project attachment), `validate.rs` |
 | `crates/rusty-cli/src/main.rs` | CLI: `new`, `validate`, `export`, `inspect` |
-| `crates/rusty-ffi/src/lib.rs` | C ABI, 43 `rw_*` exports (incl. `rw_free_string`, `rw_ensure_defaults`, `rw_set_hand_visibility`); all take/return UTF-8 JSON; caller frees with `rw_free_string` |
+| `crates/rusty-ffi/src/lib.rs` | C ABI, 54 `rw_*` exports (incl. `rw_free_string`, `rw_ensure_defaults`, `rw_set_hand_visibility`); all take/return UTF-8 JSON; caller frees with `rw_free_string` |
 | `native/RustyWatch/MainWindow.xaml(.cs)` | Shell, HOME, Editor, Assets (Fonts), App Settings, bottom bar, dialogs |
 | `native/RustyWatch/RustNative.cs` | P/Invoke bridge (`DllImport`, `CallingConvention.Cdecl`, `LPUTF8Str`) |
 | `native/RustyWatch/PreviewFonts.cs` | Copies font TTFs next to the .exe and builds `ms-appx:///FontCache/...` families so the preview uses the exact font exported to the watch |
@@ -419,7 +419,7 @@ and no listener leaks.
 
 ## 9. Definition of done for a change
 
-1. `cargo test --workspace` green (currently 82 tests: 65 core + 17 FFI), no new warnings.
+1. `cargo test --workspace` green (currently 109 tests: 84 core + 25 FFI), no new warnings.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. App launches; affected screens verified visually (English **and** Polish if UI changed).
 4. Round-trip `new → export → open → export` preserves data when project model/codegen changes.

@@ -140,6 +140,7 @@ GPL-3.0-or-later z **Generation Exception**: wygenerowane tarcze `.zip` nie są 
 
 ## Dokumentacja źródłowa
 
+- [`docs/TECHNICAL.md`](docs/TECHNICAL.md) — szczegółowe know-how: moduły, struktury danych, przepływ od edytora do tarczy (po angielsku).
 - [SashaCX75 — edytor tarcz ZeppOS](https://github.com/SashaCX75/Watch-face-editor-for-Amazfit-watch-on-ZeppOS)
 - [Zepp OS — lista urządzeń](https://docs.zepp.com/docs/v2/reference/related-resources/device-list)
 - [Zepp OS — konfiguracja watchface](https://docs.zepp.com/docs/watchface/app-json)

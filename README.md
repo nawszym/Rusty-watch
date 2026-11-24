@@ -1,13 +1,13 @@
 <div align="center">
 
-<img src="logo/github-avatar.png" alt="Logo Rusty Watch" width="150" />
+<img src="logo/github-avatar.png" alt="Rusty Watch logo" width="150" />
 
 # Rusty Watch
 
 **Native watchface editor for Amazfit Active 2 (Round) · Zepp OS 4.x**
 
-Natywny edytor tarcz dla **Amazfit Active 2 (Round)**: projektuj na Windows 11,
-sprawdzaj efekt w podglądzie **1:1 (466 × 466)** i eksportuj gotowy plik **`.zip`**.
+Design watchfaces for the **Amazfit Active 2 (Round)** on Windows 11, check the result
+in a **1:1 preview (466 × 466)** and export a ready-to-install **`.zip`** package.
 
 [![Rust](https://img.shields.io/badge/Rust-workspace-DEA584?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![C#](https://img.shields.io/badge/C%23-WinUI%203-9B4F96?logo=csharp&logoColor=white)](https://dotnet.microsoft.com/)
@@ -16,254 +16,271 @@ sprawdzaj efekt w podglądzie **1:1 (466 × 466)** i eksportuj gotowy plik **`.z
 [![Windows](https://img.shields.io/badge/Windows-11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-4B8BBE)](LICENSE)
 
-<a href="docs/FORMAT.md">Format projektu</a> ·
+**[🇵🇱 Read in Polish / Czytaj po polsku](README.pl.md)**
+
+<a href="docs/TECHNICAL.md">🔧 Technical deep-dive</a> ·
+<a href="docs/FORMAT.md">Project format</a> ·
 <a href="PLAN.md">Plan</a> ·
-<a href="AGENTS.md">Dla agentów AI</a> ·
-<a href="Readme.base">Szczegółowa dokumentacja</a>
+<a href="AGENTS.md">For AI agents</a> ·
+<a href="Readme.base">Base documentation</a>
 
 </div>
 
 ---
 
-## 📖 Część opisowa
+## 📖 Overview
 
-### 🎯 Czym jest Rusty Watch?
+### 🎯 What is Rusty Watch?
 
-Rusty Watch to **dedykowany edytor tarcz zegarka** dla modelu **Amazfit Active 2 (Round)**
-(466 × 466 px, Zepp OS 4.x, `deviceSource: 8913153`). Zamiast ręcznie pisać pliki `app.json`
-i JavaScript dla ZeppOS, tworzysz tarczę w natywnym interfejsie Windows, układasz warstwy,
-podłączasz zasoby i jednym kliknięciem eksportujesz paczkę do wgrania na zegarek.
+Rusty Watch is a **dedicated watchface editor** for the **Amazfit Active 2 (Round)**
+(466 × 466 px, Zepp OS 4.x, `deviceSource: 8913153`). Instead of hand-writing
+`app.json` and JavaScript for ZeppOS, you build a watchface in a native Windows UI,
+arrange layers, attach assets and export an installable package with one click.
 
-Projekt powstał jako własna implementacja inspirowana edytorem
-[SashaCX75](https://github.com/SashaCX75/Watch-face-editor-for-Amazfit-watch-on-ZeppOS) —
-żaden kod ani zasoby tego projektu nie zostały skopiowane.
+The project is an independent implementation inspired by the
+[SashaCX75 editor](https://github.com/SashaCX75/Watch-face-editor-for-Amazfit-watch-on-ZeppOS) —
+no code or assets from that project were copied.
 
-### ✨ Główne funkcje
+### ✨ Key features
 
-| Funkcja | Opis |
+| Feature | Description |
 | --- | --- |
-| 🖥️ **Podgląd 1:1** | Okrągła tarcza 466 × 466 z prawdziwym tłem i wszystkimi widgetami w kolejności eksportu. |
-| 🧱 **Warstwy** | Panel z ukrywaniem, przesuwaniem i usuwaniem widgetów. Tło jest na stałe zablokowane na samym dole. |
-| 🖱️ **Ramki i przyciąganie** | Przeciąganie i skalowanie widgetów, kratka 16 px, prowadnice wyrównania do krawędzi i środków. |
-| 🕐 **Zegary** | Cyfrowy (własny wzorzec formatu) oraz analogowy (obracane wskazówki z zestawów PNG). |
-| 📅 **Dane daty i czasu** | Data z edytowalnym wzorcem, dzień tygodnia, tydzień roku, dzień roku, data księżycowa, święta, zegar światowy. |
-| ❤️ **Zdrowie i aktywność** | Kroki, dystans, tętno, stres, PAI, temperatura skóry, sen, kalorie i SpO₂. |
-| 🖼️ **Zasoby** | Czcionki TTF, tła, grafiki widgetu Image i zestawy wskazówek — magazyny współdzielone przez projekty. |
-| 🌐 **Język na zegarku** | Eksportowany ZIP sam wykrywa język (`pl-PL` → polskie nazwy miesięcy i AM/PM). |
-| 📦 **Eksport `.zip`** | Paczka samowystarczalna: zawiera wygenerowany JS i wszystkie użyte zasoby. |
-| 🧪 **Test w symulatorze** | Instalacja eksportu w oficjalnym Zepp OS Simulator jednym przyciskiem. |
+| 🖥️ **1:1 preview** | Round 466 × 466 watchface with the real background and every widget in export order. |
+| 🧱 **Layers** | Panel to hide, reorder and remove widgets. The background is permanently locked at the bottom. |
+| 🖱️ **Frames & snapping** | Drag and resize widgets, 16 px grid, alignment guides to edges and centres. |
+| 🕐 **Clocks** | Digital (custom format pattern) and analog (rotating PNG hand sets). |
+| 📅 **Date & time data** | Date with an editable pattern, weekday number, week of year, day of year, lunar date, festivals, world clock. |
+| ❤️ **Health & activity** | Steps, distance, heart rate, stress, PAI, skin temperature, sleep, calories and SpO₂. |
+| 🖼️ **Assets** | TTF fonts, backgrounds, Image-widget graphics and hand sets — shared stores across projects. |
+| 🌐 **Watch language** | The exported ZIP detects the watch language itself (`pl-PL` → Polish month names and AM/PM). |
+| 📦 **`.zip` export** | Self-contained package: generated JS plus every asset actually used. |
+| 🧪 **Simulator test** | Installs the export in the official Zepp OS Simulator at the click of a button. |
 
-### 🧩 Dostępne widgety
+### 🧩 Available widgets
 
-- **Czas** — Digital time, Analog time
-- **Data** — Date, Day of week (number), Week of year, Day of year, Lunar date, Festival, World clock
-- **Tekst** — Text (user defined)
-- **Obraz** — Image (dopasowanie `cover` / `contain` / `stretch`)
-- **Dystans** — Step counter, Distance
-- **Zdrowie** — Heart rate, Stress, PAI, Skin temperature, Sleep, Calories, SpO₂
+- **Time** — Digital time, Analog time
+- **Date** — Date, Day of week (number), Week of year, Day of year, Lunar date, Festival, World clock
+- **Text** — Text (user defined)
+- **Image** — Image (`cover` / `contain` / `stretch` fit)
+- **Distance** — Step counter, Distance
+- **Health** — Heart rate, Stress, PAI, Skin temperature, Sleep, Calories, SpO₂
 
-Nowy widget dodajesz przyciskiem **+ Add widget** na pasku podglądu; katalog po lewej
-to tylko podgląd obsługiwanych typów. Numeracja dnia tygodnia domyślnie przyjmuje
-**poniedziałek jako 1** (wtorek = 2); wariant „niedziela pierwsza" ustawiasz w App Settings.
+Add a widget with **+ Add widget** on the preview bar; the left-hand Widgets tab is a
+read-only catalog of supported types. Weekday numbering defaults to **Monday = 1**
+(Tuesday = 2); the Sunday-first variant is an App Settings option.
 
-### 🎨 Zarządzanie zasobami
+### 🎨 Asset management
 
-| Magazyn (`%APPDATA%\RustyWatch\…`) | Zawartość |
+| Store (`%APPDATA%\RustyWatch\…`) | Contents |
 | --- | --- |
-| `Fonts` | Czcionki TTF; domyślnie **Inter** (SIL OFL 1.1). Podgląd używa dokładnie tego samego pliku, który trafia do tarczy. |
-| `Backgrounds` | Tła — w tym wbudowane **Black (default)** (`black.png`) i **Starry** (`starry.png`) oraz obrazy użytkownika. |
-| `Images` | Grafiki dla widgetu **Image**. |
-| `Hands` | Zestawy wskazówek do zegara analogowego (wbudowane **Classic** i **Light**). |
-| `Localization` | Katalogi języków interfejsu — można dodawać własne bez przebudowy aplikacji. |
+| `Fonts` | TTF fonts; bundled **Inter** (SIL OFL 1.1) by default. The preview uses the exact TTF exported to the watch. |
+| `Backgrounds` | Backgrounds — including built-in **Black (default)** (`black.png`) and **Starry** (`starry.png`) plus user imports. |
+| `Images` | Graphics for the **Image** widget. |
+| `Hands` | Analog hand sets (bundled **Classic** and **Light**). |
+| `Localization` | UI language catalogs — add your own without rebuilding the app. |
 
-Wybrane zasoby są kopiowane do katalogu projektu, więc **Save as…** i eksport ZIP nie
-wymagają już magazynu aplikacji. Tło jest przygotowywane do dokładnie 466 × 466
-(tryb `Cover`, bez białych krawędzi), ponieważ ZeppOS nie skaluje zasobów `IMG` w runtime.
+Selected assets are copied into the project folder, so **Save as…** and ZIP export
+never depend on the application store. Backgrounds are prepared at exactly 466 × 466
+(`Cover`, no white edges) because ZeppOS cannot scale an `IMG` resource at runtime.
 
-### 📤 Eksport i symulator
+### 📤 Export and simulator
 
-Eksport tworzy plik `.zip` bezpośrednio w folderze projektu — bez okna zapisu i bez
-kolejnych kroków. Tarczę możesz przetestować w oficjalnym
+Export writes a `.zip` straight into the project folder — no save picker and no extra
+steps. You can test it in the official
 [Zepp OS Simulator](https://docs.zepp.com/docs/guides/tools/simulator/download/)
-przyciskiem **Test in emulator**. Rust eksportuje do `%APPDATA%\RustyWatch\Emulator\app-<appId>`,
-rozpakowuje paczkę i instaluje ją poleceniem `zeus install --target "Amazfit Active 2 NFC (Round)"`.
+with **Test in emulator**: Rust exports to `%APPDATA%\RustyWatch\Emulator\app-<appId>`,
+unpacks the package and installs it with
+`zeus install --target "Amazfit Active 2 NFC (Round)"`.
 
-> Symulator jest oprogramowaniem Zepp Health na własnej licencji. Aplikacja **nie dołącza,
-> nie kopiuje i nie instaluje go potajemnie** — otwiera tylko oficjalną stronę pobierania.
-> Test w symulatorze sprawdza build i runtime JS, ale nie zastępuje testu na fizycznym zegarku.
+> The simulator is Zepp Health software under its own licence. The app **does not bundle,
+> copy or silently install it** — it only opens the official download page. Simulator
+> testing validates the JS build/runtime but does not replace a real-device check.
 
-Eksport obsługuje wyłącznie format **`.zip`** (nigdy `.zpk`).
+Only the **`.zip`** format is exported (never `.zpk`).
 
-### 🌐 Języki interfejsu i tarczy
+### 🌐 Interface and watchface languages
 
-Interfejs edytora ma wbudowane katalogi **EN** i **PL** z natychmiastowym przełączaniem.
-Nowe języki wystarczy dodać jako plik `%APPDATA%\RustyWatch\Localization\<kod>.json`
-i kliknąć **Reload languages** — bez rebuildu i reinstallu. Osobna opcja **Watchface preview
-language** wybiera wariant pokazywany w podglądzie; na zegarku język jest zawsze wykrywany
-automatycznie.
+The editor ships **EN** and **PL** catalogs with instant switching. Add another language
+as `%APPDATA%\RustyWatch\Localization\<code>.json` and click **Reload languages** — no
+rebuild or reinstall. A separate **Watchface preview language** option selects the
+variant shown in the editor; on the watch the language is always detected automatically.
 
-### 👤 Dla kogo?
+### 👤 Who is it for?
 
-Dla osób, które chcą **własną tarczę pod Amazfit Active 2** bez znajomości ZeppOS API —
-od pierwszego projektu po eksport i test w symulatorze. Kod źródłowy edytora jest otwarty,
-więc rozszerzenia (nowe widgety, formaty, języki) możesz dodawać samodzielnie.
+For anyone who wants a **custom watchface for the Amazfit Active 2** without learning
+the ZeppOS API — from the first project through export and simulator testing. The editor
+is open source, so you can extend it yourself with new widgets, formats and languages.
 
 ---
 
-## 🛠️ Część techniczna
+## 🛠️ Technical details
 
-### 🏗️ Architektura
+### 🔧 Technical know-how (start here)
+
+**[`docs/TECHNICAL.md`](docs/TECHNICAL.md)** is a file-by-file deep-dive into how the
+application actually works: the `Project`/`Widget` data model, layer ordering, frame
+geometry and snapping math, all 54 `rw_*` FFI exports, the four asset stores and their
+scaling algorithms, the shared time/date/locale engine, generated `watchface/index.js`
+(with sensors, timers and per-widget updates), ZIP packaging, and the WinUI preview,
+inspector, navigation and simulator integration. It documents the exact path from an
+editor click to a watchface running on the watch.
+
+### 🏗️ Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  native/RustyWatch  — WinUI 3 / C# + XAML (UI, podgląd)     │
+│  native/RustyWatch  — WinUI 3 / C# + XAML (UI, preview)     │
 │  RustNative.cs  — P/Invoke → rw_* (C ABI, JSON UTF-8)       │
 └───────────────────────────┬──────────────────────────────────┘
                             ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  crates/rusty-ffi  — jedyny most C ABI                      │
+│  crates/rusty-ffi  — the only C ABI bridge (54 exports)     │
 └───────────────────────────┬──────────────────────────────────┘
                             ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  crates/rusty-core  — model, walidacja, codegen, ZIP,       │
-│  formaty dat/czasu, warstwy, magazyny zasobów (bez UI)      │
+│  crates/rusty-core  — model, validation, codegen, ZIP,      │
+│  date/time formats, layers, asset stores (no UI deps)       │
 └───────────────────────────┬──────────────────────────────────┘
                             ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  generated watchface: app.json · app.js · watchface/index.js│
-│  klasyczne API: hmUI / hmSensor / timer · WatchFace({...})  │
+│  classic API: hmUI / hmSensor / timer · WatchFace({...})    │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-`rusty-core` nie ma zależności od UI. C# nie zawiera logiki biznesowej — wywołuje
-funkcje `rw_*`, parsuje JSON i odświeża interfejs. Każda funkcja FFI zwraca
-`{"ok":true,"data":…}` albo `{"ok":false,"error":"…"}`, a wywołujący zwalnia string
-przez `rw_free_string`. Podgląd i generator korzystają ze **wspólnego** modułu warstw
-i formatów, dzięki czemu pozostają w 1:1.
+`rusty-core` has zero UI dependencies. C# contains no business logic — it calls `rw_*`,
+parses JSON and updates the UI. Every FFI function returns
+`{"ok":true,"data":…}` or `{"ok":false,"error":"…"}`, and the caller frees the string
+with `rw_free_string`. Preview and code generator share the same layer and formatting
+modules, which is what keeps them 1:1.
 
-### 🧱 Stack technologiczny
+### 🧱 Technology stack
 
-| Warstwa | Technologia |
+| Layer | Technology |
 | --- | --- |
 | 🖥️ UI | Windows 11, WinUI 3 / Windows App SDK **2.7.0**, C#/XAML, self-contained |
-| 🦀 Logika | Rust — `rusty-core`, `rusty-cli`, `rusty-ffi` (cdylib, C ABI) |
-| 🔗 Most | P/Invoke (`DllImport`, `CallingConvention.Cdecl`, UTF-8) |
-| ⌚ Wyjście | Zepp OS 4.x, klasyczne API Watchface (`hmUI`, `hmSensor`, `timer`) |
-| 🌐 Lokalizacja | Katalogi JSON (EN/PL), ładowane z `%APPDATA%\RustyWatch\Localization` |
-| 🧪 Testy | `cargo test --workspace` (Rust), `dotnet build` (MSBuild/XamlCompiler) |
-| 📄 Licencja | GPL-3.0-or-later + Generation Exception |
+| 🦀 Logic | Rust — `rusty-core`, `rusty-cli`, `rusty-ffi` (cdylib, C ABI) |
+| 🔗 Bridge | P/Invoke (`DllImport`, `CallingConvention.Cdecl`, UTF-8) |
+| ⌚ Output | Zepp OS 4.x, classic Watchface API (`hmUI`, `hmSensor`, `timer`) |
+| 🌐 Localization | JSON catalogs (EN/PL) loaded from `%APPDATA%\RustyWatch\Localization` |
+| 🧪 Tests | `cargo test --workspace` (Rust), `dotnet build` (MSBuild/XamlCompiler) |
+| 📄 Licence | GPL-3.0-or-later + Generation Exception |
 
-> 🚫 Nie używamy `@zos/ui` / `@zos/sensor` — to API dla Mini Programs. Generowana tarcza
-> korzysta z klasycznego API, inaczej na zegarku renders black. `runtime.apiVersion` to
-> `1.0.0` / `1.0.1`, bez `runtime.type`.
+> 🚫 We do **not** use `@zos/ui` / `@zos/sensor` — those are Mini Program APIs. The
+> generated watchface uses the classic API, or it renders black. `runtime.apiVersion`
+> is `1.0.0` / `1.0.1`, with no `runtime.type`.
 
-### 📁 Struktura repozytorium
+### 📁 Repository layout
 
 ```
 rusty-watch/
 ├── crates/
-│   ├── rusty-core/src/      # model, project, codegen, widgets, layers, formaty,
-│   │                        #  zasoby (fonts/images/backgrounds/hands), zip, walidacja
+│   ├── rusty-core/src/      # model, project, codegen, widgets, layers, formats,
+│   │                        #  asset stores (fonts/images/backgrounds/hands), zip, validation
 │   ├── rusty-cli/src/       # CLI: new | validate | export | inspect
-│   └── rusty-ffi/src/       # eksporty rw_* (C ABI)
-├── native/RustyWatch/       # główny frontend WinUI 3
-│   ├── MainWindow.xaml(.cs) # shell, HOME, edytor, zasoby, ustawienia, dialogi
-│   ├── RustNative.cs        # P/Invoke do rusty_ffi.dll
-│   ├── PreviewFonts.cs      # podgląd tym samym TTF, co eksport
-│   ├── Assets/              # AppIcon.ico, Logo.png, Inter TTF, wskazówki, licencja czcionki
-│   └── Localization/        # seedy en.json / pl.json + przewodnik formatu
-├── logo/                    # wektorowe źródła logo i wersje PNG/ICO
-├── docs/FORMAT.md           # format pliku projektu i paczki
-├── PLAN.md                  # decyzje i historia projektu
-├── AGENTS.md                # zasady dla agentów AI (źródło prawdy)
-├── Readme.base              # szczegółowa dokumentacja bazowa (źródło zmian opisu)
+│   └── rusty-ffi/src/       # rw_* C exports (54 functions)
+├── native/RustyWatch/       # the only frontend: WinUI 3
+│   ├── MainWindow.xaml(.cs) # shell, HOME, editor, assets, settings, dialogs
+│   ├── RustNative.cs        # P/Invoke bridge to rusty_ffi.dll
+│   ├── PreviewFonts.cs      # preview uses the same TTF as the export
+│   ├── Assets/              # AppIcon.ico, Logo.png, Inter TTF, hand sets, font licence
+│   └── Localization/        # en.json / pl.json seeds + format guide
+├── docs/
+│   ├── TECHNICAL.md         # detailed technical know-how (start here)
+│   └── FORMAT.md            # project and package format
+├── logo/                    # vector sources and PNG/ICO exports
+├── PLAN.md                  # goals and confirmed decisions (historical)
+├── AGENTS.md                # rules for AI agents (source of truth)
+├── README.pl.md             # Polish version of this README
+├── Readme.base              # base documentation — edit this first
 └── LICENSE                  # GPL-3.0-or-later + Generation Exception
 ```
 
-Dane aplikacji (projekty, ustawienia, magazyny zasobów) żyją poza repozytorium,
-w **`%APPDATA%\RustyWatch`** — dzięki czemu przetrwają aktualizacje i podmianę katalogu z programem.
+Application data (projects, settings, asset stores) lives outside the repository in
+**`%APPDATA%\RustyWatch`**, so it survives updates and replacement of the program folder.
 
-### ✅ Wymagania
+### ✅ Requirements
 
 - **Windows 11**
 - Rust (workspace `Cargo.toml`)
-- .NET SDK **10** do zbudowania + .NET Runtime **8**
-- Windows App SDK **2.7.0** (pobierany jako pakiet NuGet, aplikacja jest self-contained)
-- Opcjonalnie: [Zepp OS Simulator](https://docs.zepp.com/docs/guides/tools/simulator/download/)
-  z obrazem **Active 2 v1.1.0** i narzędzie `zeus` do testów
+- .NET SDK **10** to build + .NET Runtime **8**
+- Windows App SDK **2.7.0** (NuGet, self-contained app)
+- Optional: [Zepp OS Simulator](https://docs.zepp.com/docs/guides/tools/simulator/download/)
+  with the **Active 2 v1.1.0** device image and the `zeus` tool
 
-### 🔨 Budowanie i uruchomienie
+### 🔨 Build and run
 
-W PowerShell (w tej powłoce trzeba dodać `dotnet` do `PATH`):
+In PowerShell (this shell needs `dotnet` on `PATH`):
 
 ```powershell
-# Testy całego workspace'u
+# Test the whole workspace
 cargo test --workspace
 
-# Budowa i uruchomienie natywnego UI
+# Build and run the native UI
 $env:PATH = 'C:\Program Files\dotnet;' + $env:PATH
 dotnet build .\native\RustyWatch\RustyWatch.csproj
 .\native\RustyWatch\bin\Debug\net8.0-windows10.0.26100.0\win-x64\RustyWatch.exe
 ```
 
-`dotnet build` najpierw woła `cargo build -p rusty-ffi` i kopiuje `rusty_ffi.dll`
-do katalogu wyjściowego (`SkipUnchangedFiles="false",` aby nie została stara biblioteka).
-Oczekiwany wynik: **0 błędów / 0 ostrzeżeń** na obu toolchainach.
+`dotnet build` first runs `cargo build -p rusty-ffi` and copies `rusty_ffi.dll` to the
+output directory (`SkipUnchangedFiles="false"` so a stale DLL cannot survive).
+Expected result: **0 errors / 0 warnings** on both toolchains.
 
-Szybki start z CLI:
+CLI quick start:
 
 ```powershell
-cargo run -p rusty-cli -- new .\moja-tarcza --name "Moja Tarcza" --author "Jan Kowalski" --app-id 12345678
-cargo run -p rusty-cli -- validate .\moja-tarcza\project.json
-cargo run -p rusty-cli -- export .\moja-tarcza\project.json
-cargo run -p rusty-cli -- inspect .\moja-tarcza\Moja_Tarcza.zip
+cargo run -p rusty-cli -- new .\my-watch --name "My Watch" --author "Jane Doe" --app-id 12345678
+cargo run -p rusty-cli -- validate .\my-watch\project.json
+cargo run -p rusty-cli -- export .\my-watch\project.json
+cargo run -p rusty-cli -- inspect .\my-watch\My_Watch.zip
 ```
 
-`--author` i `--app-id` są opcjonalne (domyślnie autor „Rusty Watch", App ID losowany).
-Nazwa, autor i App ID trafiają do `app.json` jako `appName`, `vender`, `appId` i `i18n.*.appName`.
+`--author` and `--app-id` are optional (default author "Rusty Watch", random App ID).
+Name, author and App ID land in `app.json` as `appName`, `vender`, `appId` and `i18n.*.appName`.
 
-### 🧪 Testy i weryfikacja
+### 🧪 Tests and verification
 
-1. `cargo test --workspace` — testy logiki i FFI.
-2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 błędów, 0 ostrzeżeń.
-3. Uruchom aplikację i sprawdź ekrany w **EN i PL**.
-4. Round-trip `new → export → open → export` musi zachować dane.
-5. Weryfikacja na urządzeniu w symulatorze, potem na fizycznym zegarku.
+1. `cargo test --workspace` — 84 core + 25 FFI tests.
+2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
+3. Launch the app and check affected screens in **EN and PL**.
+4. Round-trip `new → export → open → export` must preserve data.
+5. Verify in the simulator, then on a physical watch.
 
-### 🔄 Workflow: edycja → eksport → zegarek
+### 🔄 Workflow: edit → export → watch
 
-1. **Utwórz projekt** na stronie HOME — folder powstaje w katalogu projektów z App Settings.
-2. **Dodaj widgety** z flyoutu nad podglądem i ustaw ich inspektora (zmiany zapisują się automatycznie).
-3. **Dodaj zasoby** w zakładce Assets (czcionka, tło, obraz, wskazówki).
-4. **Eksportuj ZIP** przyciskiem Export — plik ląduje obok `project.json`.
-5. **Przetestuj** w symulatorze (opcjonalnie) i wgraj na zegarek.
+1. **Create a project** on HOME — the folder is created under the projects root from App Settings.
+2. **Add widgets** from the flyout above the preview and set them in the inspector (edits autosave).
+3. **Add assets** in the Assets tab (font, background, image, hand set).
+4. **Export the ZIP** with Export — it lands next to `project.json`.
+5. **Test** in the simulator (optional) and install on the watch.
 
-### 📦 Zawartość eksportowanego `.zip`
+### 📦 Exported `.zip` layout
 
 ```
-app.json                    # manifest v3 (defaultLanguage),.metadata z projektu
-app.js                      # punkt wejścia
-watchface/index.js          # generowany kod tarcz (hmUI/hmSensor/timer)
-assets/active2round/bg.png  # tło przygotowane do 466 × 466
+app.json                    # v3 manifest with defaultLanguage; metadata from the project
+app.js                      # entry point
+watchface/index.js          # generated watchface code (hmUI/hmSensor/timer)
+assets/active2round/bg.png  # background prepared at 466 × 466
 assets/active2round/icon.png
-assets/active2round/fonts/… # użyte TTF
-assets/active2round/images/…, backgrounds/…, hands/… # użyte zasoby
+assets/active2round/fonts/… # used TTFs
+assets/active2round/images/…, backgrounds/…, hands/… # used assets
 ```
 
-### 🤖 Dokumentacja
+### 🤖 Documentation
 
-- [`Readme.base`](Readme.base) — szczegółowy opis edytora, warstw, zasobów i ustawień.
-  **Zmiany dokumentacji wprowadzaj najpierw tutaj, potem przenieś do tego README.**
-- [`docs/FORMAT.md`](docs/FORMAT.md) — format `project.json` i struktura paczki.
-- [`PLAN.md`](PLAN.md) — cel, zakres i podjęte decyzje.
-- [`AGENTS.md`](AGENTS.md) — architektura, komendy i pułapki WinUI 3; `CLAUDE.md` i
-  `.github/copilot-instructions.md` odsyłają do tego samego pliku.
+- [`docs/TECHNICAL.md`](docs/TECHNICAL.md) — detailed technical know-how. **Update
+  `Readme.base` first when changing documentation, then mirror it into the READMEs.**
+- [`docs/FORMAT.md`](docs/FORMAT.md) — `project.json` and package format.
+- [`PLAN.md`](PLAN.md) — goals, scope and decisions (historical document).
+- [`AGENTS.md`](AGENTS.md) — architecture, commands and WinUI 3 traps; `CLAUDE.md` and
+  `.github/copilot-instructions.md` point to the same file.
+- [`README.pl.md`](README.pl.md) — Polish version of this document.
 
-### 📄 Licencja
+### 📄 Licence
 
-**GPL-3.0-or-later** z **Generation Exception** — pełny tekst w [`LICENSE`](LICENSE).
+**GPL-3.0-or-later** with a **Generation Exception** — full text in [`LICENSE`](LICENSE).
 
-Kod źródłowy edytora i jego pochodne pozostają open source na tej samej licencji
-(copyleft). Wyjątek dotyczy wyłącznie **wygenerowanych tarcz `.zip`**: możesz je
-swobodnie publikować bez obowiązku udostępniania własnych plików projektu.
-Zobacz też [OFL 1.1](native/RustyWatch/Assets/Fonts/OFL-Inter.txt) dla dołączonej czcionki Inter.
+The editor source and its derivatives stay open source under the same licence
+(copyleft). The exception applies only to **generated `.zip` watchfaces**: you may
+publish them freely without releasing your own project files. See also
+[OFL 1.1](native/RustyWatch/Assets/Fonts/OFL-Inter.txt) for the bundled Inter font.
