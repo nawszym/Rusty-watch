@@ -427,24 +427,11 @@ pub fn prune_unused(project: &mut Project, project_dir: &Path) {
 /// Skaluje dane PNG do zadanego rozmiaru, zwracając oryginalne bajty, gdy rozmiar
 /// się zgadza. Filter Lanczos3 zachowuje przezroczystość i delikatny cień wskazówek.
 fn resized_png(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
-    let image =
-        image::load_from_memory(bytes).map_err(|e| format!("Nie można odczytać wskazówki: {e}"))?;
-    if image.dimensions() == (width, height) {
-        return Ok(bytes.to_vec());
-    }
-    let resized = image
-        .resize_exact(width, height, FilterType::Lanczos3)
+    let image = image::load_from_memory(bytes)
+        .map_err(|e| format!("Nie można odczytać wskazówki: {e}"))?
         .to_rgba8();
-    let mut out = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut out)
-        .write_image(
-            resized.as_raw(),
-            width,
-            height,
-            image::ExtendedColorType::Rgba8,
-        )
-        .map_err(|e| format!("Nie można zapisać wskazówki: {e}"))?;
-    Ok(out)
+    let scaled = scale_hand(&image, width, height);
+    encode_png(&scaled)
 }
 
 /// Grafika wskazówki przygotowana do eksportu wraz z jej pozycją i pivotem.
@@ -465,6 +452,56 @@ fn encode_png(image: &RgbaImage) -> Result<Vec<u8>, String> {
         )
         .map_err(|e| format!("Nie można zapisać wskazówki: {e}"))?;
     Ok(out)
+}
+
+/// Wyzerowuje RGB tam, gdzie `alpha == 0`.
+///
+/// Realny firmware nie ignoruje kanału RGB pikseli przezroczystych, gdy obraca
+/// widget `IMG`: wbudowany zestaw `Classic` ma w tle `(255,255,255,0)`, więc
+/// na zegarku pojawiają się białe prostokąty wzdłuż granic przyciętego obrazka.
+/// Działający generator Pythona osiąga to samo przez konwersję do
+/// `QImage.Format_ARGB32_Premultiplied` w `imaging.resize_image()`.
+fn clear_transparent_rgb(image: &mut RgbaImage) {
+    for pixel in image.pixels_mut() {
+        if pixel.0[3] == 0 {
+            *pixel = Rgba([0, 0, 0, 0]);
+        }
+    }
+}
+
+/// Wersja obrazu w przestrzeni premultiplied alpha — odpowiednik
+/// `QImage.Format_ARGB32_Premultiplied` z generatora Pythona. Kolor pikseli
+/// przezroczystych znika, a filtr skalujący nie wciąga białego RGB w krawędzie.
+fn premultiply_alpha(image: &RgbaImage) -> RgbaImage {
+    let mut out = image.clone();
+    for pixel in out.pixels_mut() {
+        let alpha = pixel.0[3] as u32;
+        if alpha == 0 {
+            *pixel = Rgba([0, 0, 0, 0]);
+        } else {
+            pixel.0[0] = ((pixel.0[0] as u32 * alpha + 127) / 255) as u8;
+            pixel.0[1] = ((pixel.0[1] as u32 * alpha + 127) / 255) as u8;
+            pixel.0[2] = ((pixel.0[2] as u32 * alpha + 127) / 255) as u8;
+        }
+    }
+    out
+}
+
+/// Skaluje wskazówkę dokładnie tak jak `imaging.resize_image()` w Pythonie:
+/// przezroczyste piksele mają czarne RGB, a resampling działa na danych
+/// premultiplied (bez jasnej obwódki na krawędziach antyaliasingu).
+/// Zachowujemy premultiplied RGB w zapisie PNG — tak wygląda działająca tarcza
+/// referencyjna; `clear_transparent_rgb` gwarantuje brak białych prostokątów.
+fn scale_hand(image: &RgbaImage, width: u32, height: u32) -> RgbaImage {
+    if image.dimensions() == (width, height) {
+        let mut out = image.clone();
+        clear_transparent_rgb(&mut out);
+        return out;
+    }
+    let premultiplied = premultiply_alpha(image);
+    let mut out = image::imageops::resize(&premultiplied, width, height, FilterType::Lanczos3);
+    clear_transparent_rgb(&mut out);
+    out
 }
 
 /// Margines przezroczystości wokół przyciętej wskazówki — dokładnie jak
@@ -569,18 +606,15 @@ pub fn prepare_hand_assets(
         for (src, decoded) in sources {
             let target_w = ((decoded.width() as f64) * scale).round().max(1.0) as u32;
             let target_h = ((decoded.height() as f64) * scale).round().max(1.0) as u32;
-            let scaled = if decoded.dimensions() == (target_w, target_h) {
-                decoded
-            } else {
-                image::imageops::resize(&decoded, target_w, target_h, FilterType::Lanczos3)
-            };
+            let scaled = scale_hand(&decoded, target_w, target_h);
 
             let (bytes, placement) = match alpha_bbox(&scaled) {
                 Some(bbox) => {
                     let (left, top, crop_w, crop_h) =
                         pad_bbox(bbox, scaled.width(), scaled.height(), HAND_CROP_MARGIN);
-                    let cropped =
+                    let mut cropped =
                         image::imageops::crop_imm(&scaled, left, top, crop_w, crop_h).to_image();
+                    clear_transparent_rgb(&mut cropped);
                     (
                         encode_png(&cropped)?,
                         HandPlacement {
@@ -800,6 +834,18 @@ mod tests {
         crate::project::write_png(&dir.join(name), &image).unwrap();
     }
 
+    /// Odtwarza wadę wbudowanego zestawu `Classic`: przezroczyste tło ma białe RGB.
+    fn make_white_background_hand(dir: &Path, name: &str) {
+        fs::create_dir_all(dir).unwrap();
+        let mut image = RgbaImage::from_pixel(400, 400, Rgba([255, 255, 255, 0]));
+        for y in 180..220 {
+            for x in 195..205 {
+                image.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+            }
+        }
+        crate::project::write_png(&dir.join(name), &image).unwrap();
+    }
+
     #[test]
     fn store_lists_adds_and_removes_hand_sets() {
         let root = std::env::temp_dir().join(format!("rw-hands-store-{}", std::process::id()));
@@ -941,6 +987,82 @@ mod tests {
         assert_eq!((widget.x, widget.y, widget.w, widget.h), (100, 120, 167, 167));
         assert_eq!(widget.hand_set.as_deref(), Some("Small"));
         assert_eq!(widget.hour_src.as_deref(), Some("hands/Small/hour.png"));
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn transparent_hand_pixels_are_black_in_project_and_export() {
+        let root = std::env::temp_dir().join(format!("rw-hands-alpha-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let set = hand_set_dir(&root, "WhiteBg");
+        for file in [HOUR_FILE, MINUTE_FILE, SECOND_FILE, CAP_FILE] {
+            make_white_background_hand(&set, file);
+        }
+
+        let (dir, mut project) = create_project_in(
+            &root,
+            &NewProject {
+                name: "Alpha".into(),
+                author: "Dev".into(),
+                app_id: 13,
+            },
+        )
+        .unwrap();
+        project.widgets[0].kind = WidgetKind::AnalogTime;
+        project.widgets[0].id = "analog".into();
+        attach_to_project(&mut project, &dir, &root, "analog", "WhiteBg").unwrap();
+        project.widgets[0].w = 200;
+        project.widgets[0].h = 200;
+
+        let assert_no_white_transparency = |image: &RgbaImage, label: &str| {
+            for pixel in image.pixels() {
+                if pixel.0[3] == 0 {
+                    assert_eq!(
+                        (pixel.0[0], pixel.0[1], pixel.0[2]),
+                        (0, 0, 0),
+                        "{label}: biały piksel przezroczysty"
+                    );
+                }
+            }
+        };
+
+        // Ścieżka eksportu czyta kopie z projektu — musi oczyścić też stare projekty.
+        let prepared = prepare_hand_assets(&project, &dir).unwrap();
+        assert_eq!(prepared.len(), 4);
+        for (path, hand) in &prepared {
+            let decoded = image::load_from_memory(&hand.bytes).unwrap().to_rgba8();
+            assert_no_white_transparency(&decoded, path);
+        }
+
+        // Kopie w projekcie (podgląd i ponowne włączenie wskazówki) również.
+        scale_project_hands(&project, &dir, &root, "analog").unwrap();
+        for file in [HOUR_FILE, MINUTE_FILE, SECOND_FILE, CAP_FILE] {
+            let path = dir.join("assets/hands/WhiteBg").join(file);
+            let decoded = image::open(&path).unwrap().to_rgba8();
+            assert_no_white_transparency(&decoded, file);
+        }
+
+        // Gotowy ZIP — to właśnie go ładuje firmware.
+        let file = crate::project::project_file(&dir);
+        crate::project::save_project(&file, &project).unwrap();
+        let bytes = crate::package::export_zip_bytes(&file).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut checked = 0;
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).unwrap();
+            if !entry.name().starts_with("assets/hand_") {
+                continue;
+            }
+            let mut raw = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut raw).unwrap();
+            let decoded = image::load_from_memory(&raw).unwrap().to_rgba8();
+            assert_no_white_transparency(&decoded, entry.name());
+            checked += 1;
+        }
+        // Identyczne treści wskazówek są w ZIP-ie składane pod jedną nazwą hashowaną.
+        assert!(checked >= 1, "brak wskazówek w ZIP");
 
         fs::remove_dir_all(&root).ok();
     }
