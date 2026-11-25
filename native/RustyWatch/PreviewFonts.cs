@@ -79,7 +79,7 @@ internal static class PreviewFonts
         return result;
     }
 
-    /// <summary>Czcionka z magazynu aplikacji (używana jako „Aa" na stronie Assets).</summary>
+    /// <summary>Czcionka z magazynu aplikacji (używana jako próbka na stronie Assets (bez pogrubienia i filtrów)).</summary>
     public static FontFamily FromStore(string file) =>
         Get(file, Path.Combine(AppPaths.DataDirectory, "Fonts"));
 }

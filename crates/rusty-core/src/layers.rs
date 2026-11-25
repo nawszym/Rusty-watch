@@ -3,27 +3,14 @@ use std::collections::HashSet;
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
-use crate::model::{
-    Align, AssetRole, DataSource, Project, ShowLevel, Widget, WidgetKind, BACKGROUND_LAYER_ID,
-    SCREEN_SIZE,
-};
+use crate::model::{Align, DataSource, Project, Widget, WidgetKind};
 
-/// Czy projekt ma zasób tła, który można pokazać jako warstwę.
-fn has_background(project: &Project) -> bool {
-    project
-        .assets
-        .iter()
-        .any(|asset| asset.role == AssetRole::Background)
-}
-
-/// Kolejność rysowania od spodu do góry. Domyślnie: tło, potem widgety wg `z`
-/// (stabilne sortowanie zachowuje kolejność z pliku przy równym `z`).
-/// Zapamiętana kolejność jest używana tylko wtedy, gdy opisuje istniejące warstwy.
+/// Kolejność rysowania od spodu do góry (stabilne sortowanie zachowuje
+/// kolejność z pliku przy równym `z`). Tło nie jest warstwą — jest stałym
+/// `FILL_RECT` wyemitowanym przed wszystkimi widgetami, tak jak w tarczy
+/// referencyjnej.
 pub fn order(project: &Project) -> Vec<String> {
-    let mut valid: HashSet<String> = project.widgets.iter().map(|w| w.id.clone()).collect();
-    if has_background(project) {
-        valid.insert(BACKGROUND_LAYER_ID.to_string());
-    }
+    let valid: HashSet<String> = project.widgets.iter().map(|w| w.id.clone()).collect();
 
     let mut result: Vec<String> = Vec::new();
     for id in &project.layer_order {
@@ -38,10 +25,6 @@ pub fn order(project: &Project) -> Vec<String> {
         if !result.contains(&widget.id) {
             result.push(widget.id.clone());
         }
-    }
-
-    if has_background(project) && !result.iter().any(|id| id == BACKGROUND_LAYER_ID) {
-        result.insert(0, BACKGROUND_LAYER_ID.to_string());
     }
     result
 }
@@ -63,20 +46,14 @@ pub fn normalize(project: &mut Project) -> Vec<String> {
 }
 
 /// Przesuwa warstwę o `delta` pozycji: `+1` bliżej góry, `-1` bliżej spodu.
-/// Tło jest zawsze najniższą warstwą i nie daje się przesunąć ani usunąć.
 pub fn move_layer(project: &mut Project, id: &str, delta: i32) -> Result<Vec<String>> {
-    if id == BACKGROUND_LAYER_ID {
-        bail!("Tło jest zablokowane na najniższej warstwie");
-    }
     let mut layers = normalize(project);
     let from = layers
         .iter()
         .position(|item| item == id)
         .with_context(|| format!("warstwa nie istnieje: {id}"))?;
     let to = from as i32 + delta;
-    // Indeks 0 zarezerwowany dla tła — widget nie może zejść poniżej niego.
-    let lowest = if has_background(project) { 1 } else { 0 };
-    if to < lowest || to >= layers.len() as i32 {
+    if to < 0 || to >= layers.len() as i32 {
         bail!("Nie można przesunąć warstwy dalej");
     }
     let layer = layers.remove(from);
@@ -85,11 +62,8 @@ pub fn move_layer(project: &mut Project, id: &str, delta: i32) -> Result<Vec<Str
     Ok(layers)
 }
 
-/// Usuwa widget z projektu. Tło i ostatni widget są chronione przed usunięciem.
+/// Usuwa widget z projektu. Ostatni widget jest chroniony przed usunięciem.
 pub fn remove_widget(project: &mut Project, id: &str) -> Result<Vec<String>> {
-    if id == BACKGROUND_LAYER_ID {
-        bail!("Tło jest zablokowane na najniższej warstwie");
-    }
     let mut layers = normalize(project);
     let at = layers
         .iter()
@@ -140,11 +114,6 @@ pub struct LayerView {
     pub text_style: String,
     /// Ukryta warstwa jest widoczna na liście, ale nie jest rysowana w podglądzie ani w JS.
     pub visible: bool,
-    /// Tylko dla warstwy `background`: wybrany plik z magazynu obrazków.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub background_image: Option<String>,
-    /// Tylko dla warstwy `background`: czy `bg.png` jest automatycznie przycinany do 466×466.
-    pub background_auto_scale: bool,
     /// Tylko dla `distance`: własny system jednostek (`null` = domyślny z projektu).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub measurement_system: Option<String>,
@@ -161,11 +130,26 @@ pub struct LayerView {
     pub second_src: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cap_src: Option<String>,
+    /// Tylko dla `status-*`: wybrana paczka z `%APPDATA%\RustyWatch\Status`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_icon_set: Option<String>,
+    /// Tylko dla `status-*`: `alarm`, `dnd`, `bluetooth` albo `lock`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_type: Option<String>,
 }
 
 fn widget_kind(widget: &Widget) -> &'static str {
     if widget.kind == WidgetKind::AnalogTime {
         return "analog-time";
+    }
+    if widget.kind == WidgetKind::StatusIcon {
+        return match widget.status_type {
+            Some(crate::model::StatusType::Alarm) => "status-alarm",
+            Some(crate::model::StatusType::Dnd) => "status-dnd",
+            Some(crate::model::StatusType::Bluetooth) => "status-bluetooth",
+            Some(crate::model::StatusType::Lock) => "status-lock",
+            None => "status-alarm",
+        };
     }
     match widget.data_source {
         Some(DataSource::Time) => "time",
@@ -185,6 +169,7 @@ fn widget_kind(widget: &Widget) -> &'static str {
         Some(DataSource::Sleep) => "sleep",
         Some(DataSource::Calorie) => "calories",
         Some(DataSource::Spo2) => "spo2",
+        Some(DataSource::Battery) => "battery",
         _ => match widget.kind {
             WidgetKind::Image => "image",
             WidgetKind::Images => "images",
@@ -203,51 +188,9 @@ fn align_name(align: Align) -> &'static str {
 
 /// Warstwy w kolejności rysowania (od spodu) do wyświetlenia w panelu Layers.
 pub fn describe(project: &Project) -> Vec<LayerView> {
-    let background_path = project
-        .assets
-        .iter()
-        .find(|asset| asset.role == AssetRole::Background)
-        .map(|asset| asset.path.clone());
-
     order(project)
         .into_iter()
         .filter_map(|id| {
-            if id == BACKGROUND_LAYER_ID {
-                return background_path.as_ref().map(|path| LayerView {
-                    id: id.clone(),
-                    name: "Background".to_string(),
-                    kind: "background".to_string(),
-                    x: 0,
-                    y: 0,
-                    w: SCREEN_SIZE as i32,
-                    h: SCREEN_SIZE as i32,
-                    text: None,
-                    time_format: None,
-                    text_size: None,
-                    font: None,
-                    color: None,
-                    align: None,
-                    v_align: "center".to_string(),
-                    src: Some(path.clone()),
-                    image_fit: crate::image_fit::FitMode::Cover.as_str().to_string(),
-                    auto_scale: false,
-                    text_style: "ellipsis".to_string(),
-                    visible: true,
-                    background_image: project.background.as_ref().map(|b| b.image.clone()),
-                    background_auto_scale: project
-                        .background
-                        .as_ref()
-                        .map(|b| b.auto_scale)
-                        .unwrap_or(true),
-                    measurement_system: None,
-                    show_unit: true,
-                    hand_set: None,
-                    hour_src: None,
-                    minute_src: None,
-                    second_src: None,
-                    cap_src: None,
-                });
-            }
             project.widgets.iter().find(|w| w.id == id).map(|w| LayerView {
                 id: w.id.clone(),
                 name: w.name.clone(),
@@ -268,8 +211,6 @@ pub fn describe(project: &Project) -> Vec<LayerView> {
                 auto_scale: w.auto_scale,
                 text_style: w.text_style.as_str().to_string(),
                 visible: w.visible,
-                background_image: None,
-                background_auto_scale: false,
                 measurement_system: w.measurement_system.map(|system| system.as_str().to_string()),
                 show_unit: w.show_unit,
                 hand_set: w.hand_set.clone(),
@@ -277,79 +218,30 @@ pub fn describe(project: &Project) -> Vec<LayerView> {
                 minute_src: w.minute_src.clone(),
                 second_src: w.second_src.clone(),
                 cap_src: w.cap_src.clone(),
+                status_icon_set: w.status_icon_set.clone(),
+                status_type: w.status_type.map(|status| status.as_str().to_string()),
             })
         })
         .collect()
-}
-
-/// Syntetyczny widget IMAGE dla zasobu tła — używany przez generator JS.
-pub fn background_widget(project: &Project) -> Option<Widget> {
-    let src = project
-        .assets
-        .iter()
-        .find(|asset| asset.role == AssetRole::Background)?
-        .path
-        .clone();
-    Some(Widget {
-        id: BACKGROUND_LAYER_ID.to_string(),
-        name: "Background".to_string(),
-        kind: WidgetKind::Image,
-        x: 0,
-        y: 0,
-        w: SCREEN_SIZE as i32,
-        h: SCREEN_SIZE as i32,
-        z: 0,
-        text: None,
-        text_size: None,
-        font: None,
-        time_format: None,
-        color: None,
-        src: Some(src),
-        image_fit: crate::image_fit::FitMode::Cover,
-        hand_set: None,
-        hour_src: None,
-        minute_src: None,
-        second_src: None,
-        cap_src: None,
-        data_source: None,
-        align: None,
-        v_align: crate::model::VAlign::Center,
-        show_level: ShowLevel::Always,
-        auto_scale: false,
-        text_style: crate::model::TextStyle::Ellipsis,
-        visible: true,
-        measurement_system: None,
-        show_unit: true,
-    })
 }
 
 /// Widgety w kolejności rysowania — jedyne źródło prawdy dla kodu JS.
 /// Ukryte warstwy pozostają w projekcie (i w panelu Warstwy), ale nie trafiają
 /// do wygenerowanej tarczy. Podgląd edytora pomija je na podstawie `LayerView::visible`.
 pub fn ordered_widgets(project: &Project) -> Vec<Widget> {
-    let background = background_widget(project);
     order(project)
         .into_iter()
-        .filter_map(|id| {
-            if id == BACKGROUND_LAYER_ID {
-                background.clone()
-            } else {
-                project.widgets.iter().find(|w| w.id == id).cloned()
-            }
-        })
+        .filter_map(|id| project.widgets.iter().find(|w| w.id == id).cloned())
         .filter(|widget| widget.visible)
         .collect()
 }
 
-/// Zmienia widoczność widgetu. Tło jest zawsze widoczne i nie daje się ukryć.
+/// Zmienia widoczność widgetu.
 pub fn set_widget_visibility(
     project: &mut Project,
     id: &str,
     visible: bool,
 ) -> Result<()> {
-    if id == BACKGROUND_LAYER_ID {
-        bail!("Tło jest zablokowane na najniższej warstwie");
-    }
     let widget = project
         .widgets
         .iter_mut()

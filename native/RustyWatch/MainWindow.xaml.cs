@@ -1,10 +1,12 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -58,13 +60,13 @@ public sealed class LayerView
     [JsonPropertyName("autoScale")] public bool AutoScale { get; set; }
     [JsonPropertyName("textStyle")] public string? TextStyle { get; set; }
     [JsonPropertyName("visible")] public bool Visible { get; set; } = true;
-    [JsonPropertyName("backgroundImage")] public string? BackgroundImage { get; set; }
-    [JsonPropertyName("backgroundAutoScale")] public bool BackgroundAutoScale { get; set; }
     [JsonPropertyName("handSet")] public string? HandSet { get; set; }
     [JsonPropertyName("hourSrc")] public string? HourSrc { get; set; }
     [JsonPropertyName("minuteSrc")] public string? MinuteSrc { get; set; }
     [JsonPropertyName("secondSrc")] public string? SecondSrc { get; set; }
     [JsonPropertyName("capSrc")] public string? CapSrc { get; set; }
+    [JsonPropertyName("statusIconSet")] public string? StatusIconSet { get; set; }
+    [JsonPropertyName("statusType")] public string? StatusType { get; set; }
     /// <summary>Własny system jednostek widgetu dystansu; null = domyślny z projektu.</summary>
     [JsonPropertyName("measurementSystem")] public string? MeasurementSystem { get; set; }
 }
@@ -74,10 +76,9 @@ public sealed class LayerRow
 {
     public LayerView Layer { get; set; } = new();
     public string Id => Layer.Id;
-    public string Title => Layer.Kind == "background" ? L("LayerBackground") : Layer.Name;
+    public string Title => Layer.Name;
     public string Subtitle => Layer.Kind switch
     {
-        "background" => Layer.Src ?? "",
         "time" => L("LayerTime"),
         "date" => L("LayerDate"),
         "weekday-number" => L("LayerWeekdayNumber"),
@@ -95,25 +96,23 @@ public sealed class LayerRow
         "sleep" => L("LayerSleep"),
         "calories" => L("LayerCalories"),
         "spo2" => L("LayerSpo2"),
+        "battery" => L("LayerBattery"),
+        "status-alarm" => L("LayerStatusAlarm"),
+        "status-dnd" => L("LayerStatusDnd"),
+        "status-bluetooth" => L("LayerStatusBluetooth"),
+        "status-lock" => L("LayerStatusLock"),
         "analog-time" => L("LayerAnalog"),
         "image" => L("LayerImage"),
         "images" => L("LayerImages"),
         _ => L("LayerText"),
     };
-    public string Glyph => Layer.Kind is "background" or "image" or "images" ? "\uE8B7" : "\uE8B2";
-    public bool IsBackground => Layer.Kind == "background";
-    public Visibility ArrowsVisibility => IsBackground ? Visibility.Collapsed : Visibility.Visible;
-    public Visibility LockVisibility => IsBackground ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility RemoveVisibility => IsBackground ? Visibility.Collapsed : Visibility.Visible;
+    public string Glyph => Layer.Kind is "image" or "images" ? "\uE8B7" : "\uE8B2";
     public bool CanMoveUp { get; set; }
     public bool CanMoveDown { get; set; }
     public string MoveUpText => L("MoveUp");
     public string MoveDownText => L("MoveDown");
-    public string LockText => L("LayerLocked");
     public string RemoveText => L("RemoveWidget");
 
-    /// <summary>Oczko jest tylko dla widgetów — tło pozostaje zablokowane.</summary>
-    public Visibility VisibilityButtonVisibility => IsBackground ? Visibility.Collapsed : Visibility.Visible;
     /// <summary><c>E890</c> = View, <c>ED1A</c> = Hide (Segoe Fluent Icons na Windows 11).</summary>
     public string VisibilityGlyph => Layer.Visible ? "\uE890" : "\uED1A";
     public string VisibilityText => L(Layer.Visible ? "HideLayer" : "ShowLayer");
@@ -133,27 +132,203 @@ public sealed class WidgetCatalogItem
     public string Glyph { get; set; } = "\uE8B2";
 }
 
-/// <summary>Wpis katalogu zestawów wskazówek na stronie Assets.</summary>
-public sealed class HandSetItem
+/// <summary>
+/// Wspólny stan kafelka Assets. ProgressRing w jego własnym miejscu nie blokuje
+/// reszty widoku — zmieniamy tylko właściwości tego jednego wpisu.
+/// </summary>
+public abstract class AssetItemBase : INotifyPropertyChanged
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private bool _isLoading;
+    public bool IsLoading
+    {
+        get => _isLoading;
+        set
+        {
+            if (_isLoading == value) return;
+            _isLoading = value;
+            OnChanged(nameof(IsLoading), nameof(LoadingVisibility), nameof(PreviewVisibility));
+        }
+    }
+
+    public Visibility LoadingVisibility => IsLoading ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility PreviewVisibility => IsLoading ? Visibility.Collapsed : Visibility.Visible;
+
+    protected void OnChanged(params string[] names)
+    {
+        foreach (var name in names)
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    }
+}
+
+/// <summary>
+/// Tani znacznik zmiany plików paczki: nazwa, rozmiar i czas modyfikacji.
+/// Rust ma własny fingerprint; tutaj wykrywamy tylko „coś się zmieniło", żeby
+/// od razu włączyć pierścień ładowania w danym kafelku.
+/// </summary>
+internal static class AssetStamp
+{
+    public static string Compute(string directory, params string[] files)
+    {
+        var parts = new List<string>();
+        foreach (var file in files)
+        {
+            var path = Path.Combine(directory, file);
+            if (!File.Exists(path)) continue;
+            var info = new FileInfo(path);
+            parts.Add($"{file}:{info.Length}:{info.LastWriteTimeUtc.Ticks}");
+        }
+        return string.Join("|", parts);
+    }
+
+    public static string Status(string id) => Compute(
+        Path.Combine(AppPaths.StatusDirectory, id),
+        "alarm.png", "dnd.png", "bluetooth.png", "lock.png");
+
+    public static string Hands(string id) => Compute(
+        Path.Combine(AppPaths.HandsDirectory, id),
+        "hour.png", "minute.png", "second.png", "cap.png");
+
+    public static string Image(string directory, string file) => Compute(directory, file);
+}
+
+/// <summary>Miniaturki współdzielone przez kafelki — bez ponownego dekodowania przy wejściu na Assets.</summary>
+internal static class AssetPreview
+{
+    private static readonly Dictionary<string, BitmapImage> Cache = new(StringComparer.Ordinal);
+    private static readonly HashSet<BitmapImage> Decoded = new();
+    private static readonly object Gate = new();
+
+    public static BitmapImage Load(string directory, string id, string fallbackFile, string? stamp = null)
+    {
+        var folder = Path.Combine(directory, id);
+        var preview = Path.Combine(folder, "preview.png");
+        var source = File.Exists(preview) ? preview : Path.Combine(folder, fallbackFile);
+        return LoadFile(source, stamp ?? "", 128);
+    }
+
+    public static BitmapImage LoadFile(string path, string stamp, int decodeWidth)
+    {
+        var key = $"{path}|{stamp}|{decodeWidth}";
+        lock (Gate)
+        {
+            if (Cache.TryGetValue(key, out var cached)) return cached;
+        }
+
+        var image = new BitmapImage { DecodePixelWidth = decodeWidth };
+        void MarkDecoded(object? sender, object e) { lock (Gate) Decoded.Add(image); }
+        void MarkFailed(object? sender, ExceptionRoutedEventArgs e) { lock (Gate) Decoded.Remove(image); }
+        image.ImageOpened += MarkDecoded;
+        image.ImageFailed += MarkFailed;
+        if (File.Exists(path)) image.UriSource = new Uri(path);
+        else lock (Gate) Decoded.Remove(image);
+        lock (Gate) Cache[key] = image;
+        return image;
+    }
+
+    /// <summary>Pierścień znika dopiero po faktycznym otwarciu obrazka (albo natychmiast dla cache).</summary>
+    public static void Observe(BitmapImage image, Action onDone)
+    {
+        lock (Gate)
+        {
+            if (Decoded.Contains(image))
+            {
+                onDone();
+                return;
+            }
+        }
+        void Done(object? sender, object e)
+        {
+            image.ImageOpened -= Done;
+            image.ImageFailed -= Failed;
+            onDone();
+        }
+        void Failed(object? sender, ExceptionRoutedEventArgs e)
+        {
+            image.ImageOpened -= Done;
+            image.ImageFailed -= Failed;
+            onDone();
+        }
+        image.ImageOpened += Done;
+        image.ImageFailed += Failed;
+    }
+}
+
+/// <summary>Wpis katalogu paczek ikon STATUS w inspektorze i na stronie Assets.</summary>
+public sealed class StatusPackItem : AssetItemBase
+{
+    private BitmapImage? _preview;
+
+    public string Id { get; set; } = "";
+    public uint Size { get; set; }
+    /// <summary>Znacznik z Rusta — zmienia się tylko po faktycznej regeneracji miniaturki.</summary>
+    public string Fingerprint { get; set; } = "";
+    public string Stamp { get; set; } = "";
+    public string Details => $"{Size} × {Size}";
+    /// <summary>Tylko wbudowany `Classic` jest domyślny — tak jak czarne tło.</summary>
+    public bool IsDefault => Id == "Classic";
+    public string Badge => IsDefault ? L("AssetsDefaultBadge") : "";
+    public BitmapImage? Preview
+    {
+        get => _preview;
+        set { _preview = value; OnChanged(nameof(Preview)); }
+    }
+
+    public bool NeedsRefresh => Stamp != AssetStamp.Status(Id) || Preview is null;
+
+    public void RefreshPreview(bool showProgress)
+    {
+        var stamp = AssetStamp.Status(Id);
+        var image = AssetPreview.Load(AppPaths.StatusDirectory, Id, "dnd.png", stamp);
+        if (showProgress || !ReferenceEquals(image, Preview))
+        {
+            IsLoading = true;
+            AssetPreview.Observe(image, () => IsLoading = false);
+        }
+        Stamp = stamp;
+        Preview = image;
+    }
+
+    private static string L(string key) => LocalizationService.Get(key);
+}
+
+/// <summary>Wpis katalogu zestawów wskazówek na stronie Assets.</summary>
+public sealed class HandSetItem : AssetItemBase
+{
+    private BitmapImage? _preview;
+
     public string Id { get; set; } = "";
     public uint Size { get; set; }
     public bool HasSecond { get; set; }
     public bool HasCap { get; set; }
+    public string Fingerprint { get; set; } = "";
+    public string Stamp { get; set; } = "";
     public string Name => Id;
     public string Details => $"{Size} × {Size}"
         + (HasSecond ? $" · {L("HandSecond")}" : "")
         + (HasCap ? $" · {L("HandCap")}" : "");
     public string Badge => Id == "Classic" ? L("AssetsDefaultBadge") : "";
-    public BitmapImage HourPreview
+    public BitmapImage? HourPreview
     {
-        get
+        get => _preview;
+        set { _preview = value; OnChanged(nameof(HourPreview)); }
+    }
+
+    public bool NeedsRefresh => Stamp != AssetStamp.Hands(Id) || HourPreview is null;
+
+    /// <summary>Złożona miniatura 21:37:11 (preview.png), fallback: hour.png.</summary>
+    public void RefreshPreview(bool showProgress)
+    {
+        var stamp = AssetStamp.Hands(Id);
+        var image = AssetPreview.Load(AppPaths.HandsDirectory, Id, "hour.png", stamp);
+        if (showProgress || !ReferenceEquals(image, HourPreview))
         {
-            var image = new BitmapImage { DecodePixelWidth = 104 };
-            var path = Path.Combine(AppPaths.HandsDirectory, Id, "hour.png");
-            if (System.IO.File.Exists(path)) image.UriSource = new Uri(path);
-            return image;
+            IsLoading = true;
+            AssetPreview.Observe(image, () => IsLoading = false);
         }
+        Stamp = stamp;
+        HourPreview = image;
     }
 
     private static string L(string key) => LocalizationService.Get(key);
@@ -241,43 +416,50 @@ public sealed class FontItem
     public string Family { get; set; } = "";
     public bool IsDefault { get; set; }
     public string Badge => IsDefault ? L("AssetsDefaultBadge") : "";
-    /// <summary>Podgląd „Aa" rysowany tą samą czcionką, której użyje tarcza.</summary>
+    /// <summary>Podgląd próbki rysowany tą samą czcionką, której użyje tarcza.</summary>
     public FontFamily PreviewFontFamily => PreviewFonts.FromStore(File);
 
     private static string L(string key) => LocalizationService.Get(key);
 }
 
 /// <summary>Wpis katalogu obrazków na stronie Assets.</summary>
-public sealed class ImageItem
+public sealed class ImageItem : AssetItemBase
 {
     public string File { get; set; } = "";
     public uint Width { get; set; }
     public uint Height { get; set; }
     public ulong Bytes { get; set; }
-    /// <summary>Magazyn, z którego pochodzi plik (Images albo Backgrounds).</summary>
+    /// <summary>Magazyn, z którego pochodzi plik (Images).</summary>
     public string Directory { get; set; } = AppPaths.ImagesDirectory;
     public string Name => Path.GetFileNameWithoutExtension(File);
-    /// <summary>Wbudowane tła mają czytelne nazwy zamiast „black"/„starry".</summary>
-    public string DisplayName => File switch
-    {
-        "black.png" => LocalizationService.Get("BackgroundNone"),
-        "starry.png" => LocalizationService.Get("BackgroundStarry"),
-        _ => Name,
-    };
-    public bool IsBuiltin => File is "black.png" or "starry.png";
+    public string DisplayName => Name;
+    public string Badge => "";
     public string Dimensions => $"{Width} × {Height}";
+    public string Details => $"{Dimensions} · {SizeText}";
     public string SizeText => Bytes >= 1024 * 1024
         ? $"{Bytes / (1024.0 * 1024.0):0.0} MB"
         : $"{Bytes / 1024.0:0} kB";
-    public BitmapImage Preview
+    public string Stamp { get; set; } = "";
+    private BitmapImage? _preview;
+    public BitmapImage? Preview
     {
-        get
+        get => _preview;
+        set { _preview = value; OnChanged(nameof(Preview)); }
+    }
+
+    public bool NeedsRefresh => Stamp != AssetStamp.Image(Directory, File) || Preview is null;
+
+    public void RefreshPreview(bool showProgress)
+    {
+        var stamp = AssetStamp.Image(Directory, File);
+        var image = AssetPreview.LoadFile(Path.Combine(Directory, File), stamp, 152);
+        if (showProgress || !ReferenceEquals(image, Preview))
         {
-            var image = new BitmapImage { DecodePixelWidth = 152 };
-            var path = Path.Combine(Directory, File);
-            if (System.IO.File.Exists(path)) image.UriSource = new Uri(path);
-            return image;
+            IsLoading = true;
+            AssetPreview.Observe(image, () => IsLoading = false);
         }
+        Stamp = stamp;
+        Preview = image;
     }
 }
 
@@ -316,14 +498,20 @@ public sealed partial class MainWindow : Window
     private long _lastFramePressAt;
     private List<WidgetCatalogItem> _widgetCatalog = new();
     private List<WidgetCatalogGroup> _widgetGroups = new();
+    private readonly ObservableCollection<HandSetItem> _handItems = new();
+    private readonly ObservableCollection<StatusPackItem> _statusItems = new();
+    private bool _handsBound;
+    private bool _statusBound;
+    private string _fontSignature = "";
+    private int _assetsRefreshVersion;
+    private List<StatusPackDto> _statusPacks = new();
     private List<FontAssetDto> _fonts = new();
     private string? _selectedFontFile;
-    private List<ImageAssetDto> _backgrounds = new();
-    private string? _selectedBackgroundFile;
     private List<ImageAssetDto> _images = new();
     private string? _selectedImageFile;
     private List<HandSetDto> _handSets = new();
     private string? _selectedHandSetId;
+    private string? _selectedStatusPackId;
     private readonly Dictionary<string, AnalogHandsView> _analogHands = new();
     private string? _selectedLayerId;
     /// <summary>Użytkownik świadomie odznaczył warstwę — nie wybieraj automatycznie pierwszej.</summary>
@@ -337,9 +525,9 @@ public sealed partial class MainWindow : Window
     private bool _loadingWatchfaceLanguage;
     private bool _loadingUnits;
     private bool _loadingFirstDay;
-    private bool _loadingBackground;
     private bool _loadingImages;
     private bool _loadingHands;
+    private bool _loadingStatusPacks;
     // Wartość X/Y: jedno kliknięcie kopiuje (z małym opóźnieniem, żeby podwójne
     // kliknięcie zdążyło je anulować), podwójne otwiera pole do wpisania liczby.
     private readonly DispatcherTimer _positionTapTimer = new()
@@ -394,6 +582,7 @@ public sealed partial class MainWindow : Window
         BuildGridLines();
         PreviewGridToggle.IsChecked = AppSettingsStore.SnapToGrid;
         UnselectedOutlineToggle.IsChecked = AppSettingsStore.ShowUnselectedOutline;
+        CustomDataToggle.IsChecked = AppSettingsStore.CustomPreviewDataEnabled;
         GridLinesCanvas.Visibility = AppSettingsStore.SnapToGrid ? Visibility.Visible : Visibility.Collapsed;
         RefreshPreviewOptionLabels();
         EditorStatusText.Text = L("AutoSave");
@@ -439,9 +628,8 @@ public sealed partial class MainWindow : Window
         LoadDistanceUnitOptions();
         LoadWidgetCatalog();
         LoadFonts();
-        LoadBackgrounds();
         LoadImages();
-        LoadHandSets();
+        LoadHandSets(); LoadStatusPacks();
         ShowView(editor: false);
         _initialized = true;
     }
@@ -537,17 +725,16 @@ public sealed partial class MainWindow : Window
         _projectFile = file;
         _projectName = name;
         _selectionCleared = false;
-        // Tło bieżącej tarczy musi być dostępne w dedykowanym magazynie teł.
-        RustNative.EnsureProjectBackground(file, out _);
+        // Starsze projekty mogą mieć widgety STATUS bez przypisanej paczki.
+        RustNative.AttachStatusPackToMissing(file, out _);
         ProjectNameText.Text = name;
         LoadLayers();
         // Ustawienia aplikacji obowiązują w każdym otwartym projekcie (wpływają na JS).
         ApplyAppMeasurementSystemToProject();
         ApplyAppFirstDayOfWeekToProject();
         ApplyDefaultFontToMissing();
-        LoadBackgrounds();
         LoadImages();
-        LoadHandSets();
+        LoadHandSets(); LoadStatusPacks();
         LoadProjectSettings();
         ShowView(editor: true);
         RefreshRecent();
@@ -638,7 +825,8 @@ public sealed partial class MainWindow : Window
     /// Warstwy oparte na obrazach (wskazówki zegara, przyszłe widgety graficzne).
     /// W niebieskim trybie można je tylko przesuwać — skalowanie wymaga czerwonego trybu.
     /// </summary>
-    private static bool IsImageLayer(LayerView layer) => layer.Kind is "analog-time" or "image" or "images" or "background";
+    private static bool IsImageLayer(LayerView layer) => layer.Kind is "analog-time" or "image" or "images"
+        || IsStatusKind(layer.Kind);
 
     /// <summary>
     /// Host i ramka mają dokładnie w/h; tekst ma szerokość ramki i automatyczną
@@ -783,7 +971,11 @@ public sealed partial class MainWindow : Window
     private void UpdateClockText(DateTime? at = null)
     {
         if (_projectFile is null) return;
-        var now = at ?? DateTime.Now;
+        var live = at ?? DateTime.Now;
+        var useCustom = AppSettingsStore.CustomPreviewDataEnabled;
+        // Niestandardowy czas nadal formatuje Rust — zmieniamy tylko dane wejściowe.
+        var previewNow = useCustom ? CustomPreviewDateTime(live) : live;
+        var customFirstDay = useCustom ? AppSettingsStore.GetCustomPreviewValue("firstDay") : null;
         foreach (var view in _frames.Values)
         {
             var layer = view.Layer;
@@ -791,15 +983,46 @@ public sealed partial class MainWindow : Window
             var pattern = layer.Id == _selectedLayerId && _settings is not null
                 ? _settings.Pattern
                 : layer.TimeFormat ?? fallback;
-            FormatTextForTime(layer.Kind, pattern, view.Text, now);
+            FormatTextForTime(layer.Kind, pattern, view.Text, previewNow, customFirstDay);
+            if (useCustom) ApplyCustomSensorOverride(layer.Kind, view.Text);
         }
 
         // Wskazówki obracamy tym samym tyknięciem zegara, który odświeża tekst.
-        foreach (var hands in _analogHands.Values) RotateHandSet(hands, now);
+        foreach (var hands in _analogHands.Values) RotateHandSet(hands, previewNow);
+    }
+
+    /// <summary>Data podglądu z wartości niestandardowych; brakujące pola wracają do danych „na żywo".</summary>
+    private static DateTime CustomPreviewDateTime(DateTime live)
+    {
+        var year = ClampCustomInt("year", live.Year, 1, 9999);
+        var month = ClampCustomInt("month", live.Month, 1, 12);
+        var day = ClampCustomInt("day", live.Day, 1, DateTime.DaysInMonth(year, month));
+        return new DateTime(year, month, day,
+            ClampCustomInt("hour", live.Hour, 0, 23),
+            ClampCustomInt("minute", live.Minute, 0, 59),
+            ClampCustomInt("second", live.Second, 0, 59));
+    }
+
+    private static int ClampCustomInt(string key, int fallback, int min, int max)
+    {
+        var raw = AppSettingsStore.GetCustomPreviewValue(key);
+        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+            ? Math.Clamp(value, min, max)
+            : fallback;
+    }
+
+    /// <summary>Ręczne wartości czujników i pól-placeholderów wyświetlamy dosłownie.</summary>
+    private static void ApplyCustomSensorOverride(string kind, TextBlock text)
+    {
+        var key = CustomValueKeyForKind(kind);
+        if (key is null) return;
+        var value = AppSettingsStore.GetCustomPreviewValue(key);
+        if (value is not null) text.Text = value;
     }
 
     /// <summary>Wspólny dla podglądu i klatek eksportu formatter tekstu czasu/daty.</summary>
-    private void FormatTextForTime(string layerKind, string? pattern, TextBlock text, DateTime now)
+    private void FormatTextForTime(string layerKind, string? pattern, TextBlock text, DateTime now,
+        string? firstDayOverride = null)
     {
         var locale = EffectiveWatchfaceLanguage();
         if (layerKind == "date")
@@ -816,10 +1039,17 @@ public sealed partial class MainWindow : Window
         {
             // `month` jest 1-based (Rust odejmuje 1 we własnych funkcjach).
             var fieldRaw = RustNative.FormatDateField(layerKind, now.Day, now.Month, now.Year,
-                AppSettingsStore.FirstDayOfWeek, out _);
+                firstDayOverride ?? AppSettingsStore.FirstDayOfWeek, out _);
             if (fieldRaw is null) return;
             using var fieldDocument = JsonDocument.Parse(fieldRaw);
             text.Text = fieldDocument.RootElement.GetProperty("text").GetString() ?? text.Text;
+            return;
+        }
+        if (layerKind == "battery")
+        {
+            // Na PC nie ma czujnika baterii — trzymamy neutralny stan początkowy,
+            // który może nadpisać Custom Data. Na zegarku JS czyta BATTERY.current.
+            text.Text = "100%";
             return;
         }
         if (layerKind != "time") return;
@@ -869,12 +1099,12 @@ public sealed partial class MainWindow : Window
     {
         if (_selectedLayerId is not null && !layers.Any(l => l.Id == _selectedLayerId))
         {
-            _selectedLayerId = layers.FirstOrDefault(l => l.Kind != "background")?.Id;
+            _selectedLayerId = layers.FirstOrDefault()?.Id;
             _selectionCleared = false;
         }
         else if (_selectedLayerId is null && !_selectionCleared)
         {
-            _selectedLayerId = layers.FirstOrDefault(l => l.Kind != "background")?.Id;
+            _selectedLayerId = layers.FirstOrDefault()?.Id;
         }
     }
 
@@ -941,7 +1171,7 @@ public sealed partial class MainWindow : Window
                 || element is ListViewItem || element is NumberBox || element is ContentDialog)
                 return true;
             if (element is FrameworkElement named && named.Name is "WidgetInspector"
-                or "BackgroundSettingsPanel" or "AnalogSettingsPanel" or "DigitalAlignPanel")
+                or "AnalogSettingsPanel" or "DigitalAlignPanel")
                 return true;
             element = VisualTreeHelper.GetParent(element);
         }
@@ -962,53 +1192,40 @@ public sealed partial class MainWindow : Window
             StepInfoPanel.Visibility = Visibility.Collapsed;
             DistanceUnitPanel.Visibility = Visibility.Collapsed;
             ShowUnitPanel.Visibility = Visibility.Collapsed;
-            BackgroundLockedPanel.Visibility = Visibility.Collapsed;
-            BackgroundSettingsPanel.Visibility = Visibility.Collapsed;
             AnalogSettingsPanel.Visibility = Visibility.Collapsed;
             ImagesSettingsPanel.Visibility = Visibility.Collapsed;
+            StatusSettingsPanel.Visibility = Visibility.Collapsed;
             InspectorTitle.Text = "";
             return;
         }
-        var isBackground = layer.Kind == "background";
         var isAnalog = layer.Kind == "analog-time";
         var isImages = layer.Kind == "images";
+        var isStatus = IsStatusKind(layer.Kind);
         var isDate = layer.Kind == "date";
         var isUserText = layer.Kind == "text";
         var isStep = layer.Kind == "steps";
         var isDistance = layer.Kind == "distance";
         var isHealth = IsHealthKind(layer.Kind);
-        WidgetInspector.Visibility = isBackground ? Visibility.Collapsed : Visibility.Visible;
-        DigitalSettingsPanel.Visibility = isAnalog || isImages ? Visibility.Collapsed : Visibility.Visible;
-        DigitalAlignPanel.Visibility = isAnalog || isImages ? Visibility.Collapsed : Visibility.Visible;
+        WidgetInspector.Visibility = Visibility.Visible;
+        DigitalSettingsPanel.Visibility = isAnalog || isImages || isStatus ? Visibility.Collapsed : Visibility.Visible;
+        DigitalAlignPanel.Visibility = isAnalog || isImages || isStatus ? Visibility.Collapsed : Visibility.Visible;
         // Tekst użytkownika i licznik kroków nie mają wzorca czasu/daty.
         // Dla kroków zamiast pola treści pokazujemy informację o czujniku.
-        FormatPanel.Visibility = isUserText || isStep || isDistance || isHealth || isImages || IsDateFieldKind(layer.Kind)
+        FormatPanel.Visibility = isUserText || isStep || isDistance || isHealth || isImages || isStatus || IsDateFieldKind(layer.Kind)
             ? Visibility.Collapsed
             : Visibility.Visible;
         UserTextPanel.Visibility = isUserText ? Visibility.Visible : Visibility.Collapsed;
         StepInfoPanel.Visibility = isStep ? Visibility.Visible : Visibility.Collapsed;
         DistanceUnitPanel.Visibility = isDistance ? Visibility.Visible : Visibility.Collapsed;
         ShowUnitPanel.Visibility = HasUnitKind(layer.Kind) ? Visibility.Visible : Visibility.Collapsed;
-        BackgroundLockedPanel.Visibility = isBackground ? Visibility.Visible : Visibility.Collapsed;
-        BackgroundSettingsPanel.Visibility = isBackground ? Visibility.Visible : Visibility.Collapsed;
         AnalogSettingsPanel.Visibility = isAnalog ? Visibility.Visible : Visibility.Collapsed;
         ImagesSettingsPanel.Visibility = isImages ? Visibility.Visible : Visibility.Collapsed;
-        InspectorTitle.Text = isBackground
-            ? L("LayerBackground")
-            : isImages
-                ? L("ImagesWidgetCardTitle")
+        StatusSettingsPanel.Visibility = isStatus ? Visibility.Visible : Visibility.Collapsed;
+        InspectorTitle.Text = isImages
+            ? L("ImagesWidgetCardTitle")
             : isAnalog
                 ? L("AnalogWidgetCardTitle")
                 : LF("WidgetSettingsFor", layer.Name);
-        if (isBackground)
-        {
-            _settings = null;
-            var selected = layer?.BackgroundImage ?? "";
-            BackgroundComboBox.SelectedItem = (BackgroundComboBox.ItemsSource as IEnumerable<ChoiceItem>)?
-                .FirstOrDefault(item => item.Value == selected);
-            BackgroundAutoScaleCheckBox.IsChecked = layer?.BackgroundAutoScale ?? true;
-            return;
-        }
 
         // Geometria jest wspólna dla wszystkich widgetów — suwaki X/Y i przyciski
         // wyśrodkowania są widoczne zarówno dla czasu cyfrowego, jak i analogowego.
@@ -1044,6 +1261,14 @@ public sealed partial class MainWindow : Window
             ImageFitComboBox.SelectedItem = (ImageFitComboBox.ItemsSource as IEnumerable<ChoiceItem>)?
                 .FirstOrDefault(item => item.Value == _settings.ImageFit);
             _loadingImages = false;
+        }
+
+        if (isStatus)
+        {
+            _loadingStatusPacks = true;
+            StatusPackComboBox.SelectedItem = _statusPacks
+                .FirstOrDefault(pack => pack.Id == layer!.StatusIconSet);
+            _loadingStatusPacks = false;
         }
 
         if (isAnalog)
@@ -1140,7 +1365,7 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Wczytuje bitmapę ze strumienia, a nie z URI — WinUI cache'uje obrazy pod tym samym
-    /// URI, więc po nadpisaniu `bg.png` podgląd pokazywałby starą wersję tła.
+    /// URI, więc po nadpisaniu pliku obrazu podgląd pokazywałby starą wersję.
     /// </summary>
     private static BitmapImage LoadFreshBitmap(string path)
     {
@@ -1189,19 +1414,16 @@ public sealed partial class MainWindow : Window
         {
             // Ukryta warstwa zostaje na liście i w inspektorze, ale nie jest rysowana
             // — dokładnie tak samo jak w wygenerowanym watchface/index.js.
-            if (!layer.Visible && layer.Kind != "background") continue;
-            if (layer.Kind is "background" or "image")
+            if (!layer.Visible) continue;
+            if (layer.Kind is "image")
             {
-                var nativeSize = layer.Kind == "background" && !layer.BackgroundAutoScale;
                 var image = new Microsoft.UI.Xaml.Controls.Image
                 {
                     Width = layer.W,
                     Height = layer.H,
-                    // ZeppOS nie skaluje zasobu IMG — bez auto-skalu tarcza rysuje obraz
-                    // w oryginalnym rozmiarze od lewego górnego rogu. Podgląd robi to samo.
-                    Stretch = nativeSize ? Stretch.None : Stretch.Fill,
-                    HorizontalAlignment = nativeSize ? HorizontalAlignment.Left : HorizontalAlignment.Stretch,
-                    VerticalAlignment = nativeSize ? VerticalAlignment.Top : VerticalAlignment.Stretch,
+                    Stretch = Stretch.Fill,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment = VerticalAlignment.Stretch,
                     IsHitTestVisible = false,
                 };
                 if (!string.IsNullOrEmpty(layer.Src) && _projectFile is not null)
@@ -1216,7 +1438,7 @@ public sealed partial class MainWindow : Window
             }
 
             var view = new FrameView { Layer = layer };
-            if (layer.Kind == "images")
+            if (layer.Kind == "images" || IsStatusKind(layer.Kind))
             {
                 // PNG w projekcie ma fizycznie rozmiar ramki — Podgląd rysuje go
                 // bez skalowania, dokładnie jak hmUI.widget.IMG na tarczy.
@@ -1328,7 +1550,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_initialized || sender is not FrameworkElement element || element.Tag is not LayerView layer) return;
         e.Handled = true;
-        if (layer.Kind is "background" or "image") return;
+        if (layer.Kind is "image") return;
         SelectFrameLayer(layer);
 
         // Podwójne kliknięcie ramki przełącza tryb skalowania (tekstu albo wskazówek).
@@ -1375,7 +1597,7 @@ public sealed partial class MainWindow : Window
         var alignY = new List<int> { 0, ScreenSize / 2, ScreenSize };
         foreach (var other in _layers)
         {
-            if (other.Id == _drag.LayerId || other.Kind == "background" || !other.Visible) continue;
+            if (other.Id == _drag.LayerId || !other.Visible) continue;
             alignX.Add(other.X);
             alignX.Add(other.X + other.W / 2);
             alignX.Add(other.X + other.W);
@@ -1524,7 +1746,7 @@ public sealed partial class MainWindow : Window
     {
         if (_projectFile is null || sender is not Button { Tag: string id }) return;
         var layer = _layers.FirstOrDefault(l => l.Id == id);
-        if (layer is null || layer.Kind == "background") return;
+        if (layer is null) return;
 
         var raw = RustNative.SetWidgetVisibility(_projectFile, id, !layer.Visible, out var error);
         if (raw is null)
@@ -1737,21 +1959,31 @@ public sealed partial class MainWindow : Window
         _loadingFitOptions = false;
     }
 
-    /// <summary>Odczytuje magazyn czcionek i odświeża listę na Assets oraz wybór w inspektorze.</summary>
+    // --- Assets: wczytywanie i odświeżanie bez blokowania wejścia na zakładkę ---
+
     private void LoadFonts()
     {
+        _assetsRefreshVersion++;
         _fonts = RustNative.FontsList(out var error);
-        if (error is not null)
+        ApplyFonts(_fonts, error);
+    }
+
+    private void ApplyFonts(List<FontAssetDto> fonts, string? error)
+    {
+        if (error is not null) AssetsStatusText.Text = LocalizationService.Error(error);
+
+        var signature = string.Join("|", fonts.Select(font => $"{font.File}:{font.Family}:{font.IsDefault}"));
+        if (signature != _fontSignature)
         {
-            AssetsStatusText.Text = LocalizationService.Error(error);
+            _fontSignature = signature;
+            PreviewFonts.RefreshCatalog(fonts);
         }
-        PreviewFonts.RefreshCatalog(_fonts);
 
         var fontItems = new List<ChoiceItem>
         {
             new() { Value = "", Name = L("WidgetFontSystem") },
         };
-        fontItems.AddRange(_fonts.Select(font => new ChoiceItem
+        fontItems.AddRange(fonts.Select(font => new ChoiceItem
         {
             Value = font.File,
             Name = font.IsDefault ? $"{font.Family} ({L("AssetsDefaultBadge")})" : font.Family,
@@ -1760,7 +1992,7 @@ public sealed partial class MainWindow : Window
         LoadChoices(FontComboBox, fontItems.ToArray());
         _loadingFontChoices = false;
 
-        var fontRows = _fonts.Select(font => new FontItem
+        var fontRows = fonts.Select(font => new FontItem
         {
             File = font.File,
             Family = font.Family,
@@ -1771,46 +2003,18 @@ public sealed partial class MainWindow : Window
         RemoveFontButton.IsEnabled = FontsList.SelectedItem is FontItem { IsDefault: false };
     }
 
-    /// <summary>Odświeża osobny magazyn teł, listę na Assets i wybór tła w inspektorze.</summary>
-    private void LoadBackgrounds()
-    {
-        _backgrounds = RustNative.BackgroundsList(out var error);
-        if (error is not null) BackgroundStatusText.Text = LocalizationService.Error(error);
-
-        // Wbudowane tła są zwykłymi plikami magazynu — nie ma ukrytych opcji.
-        var imageItems = _backgrounds.Select(image => new ChoiceItem
-        {
-            Value = image.File,
-            Name = BackgroundDisplayName(image.File),
-        }).ToArray();
-        _loadingBackground = true;
-        LoadChoices(BackgroundComboBox, imageItems);
-        var current = _layers.FirstOrDefault(layer => layer.Kind == "background")?.BackgroundImage;
-        if (string.IsNullOrEmpty(current)) current = "black.png";
-        BackgroundComboBox.SelectedItem = imageItems.FirstOrDefault(item => item.Value == current);
-        _loadingBackground = false;
-
-        var rows = _backgrounds.Select(image => new ImageItem
-        {
-            File = image.File,
-            Width = image.Width,
-            Height = image.Height,
-            Bytes = image.Bytes,
-            Directory = AppPaths.BackgroundsDirectory,
-        }).ToList();
-        BackgroundsList.ItemsSource = rows;
-        BackgroundsList.SelectedItem = rows.FirstOrDefault(row => row.File == _selectedBackgroundFile);
-        RemoveBackgroundButton.IsEnabled = BackgroundsList.SelectedItem is ImageItem { IsBuiltin: false };
-        UseBackgroundButton.IsEnabled = _projectFile is not null && BackgroundsList.SelectedItem is not null;
-    }
-
-    /// <summary>Odświeża magazyn obrazków widgetu IMAGES (osobny od teł).</summary>
     private void LoadImages()
     {
+        _assetsRefreshVersion++;
         _images = RustNative.ImagesList(out var error);
+        ApplyImages(_images, error);
+    }
+
+    private void ApplyImages(List<ImageAssetDto> images, string? error)
+    {
         if (error is not null) ImagesStatusText.Text = LocalizationService.Error(error);
 
-        var choices = _images.Select(image => new ChoiceItem
+        var choices = images.Select(image => new ChoiceItem
         {
             Value = image.File,
             Name = Path.GetFileNameWithoutExtension(image.File),
@@ -1825,7 +2029,7 @@ public sealed partial class MainWindow : Window
             .FirstOrDefault(item => item.Value == (selectedLayer?.ImageFit ?? "contain"));
         _loadingImages = false;
 
-        var rows = _images.Select(image => new ImageItem
+        var rows = images.Select(image => new ImageItem
         {
             File = image.File,
             Width = image.Width,
@@ -1833,6 +2037,7 @@ public sealed partial class MainWindow : Window
             Bytes = image.Bytes,
             Directory = AppPaths.ImagesDirectory,
         }).ToList();
+        foreach (var row in rows) row.RefreshPreview(false);
         ImagesList.ItemsSource = rows;
         ImagesList.SelectedItem = rows.FirstOrDefault(row => row.File == _selectedImageFile);
         RemoveImageButton.IsEnabled = ImagesList.SelectedItem is not null;
@@ -1845,29 +2050,152 @@ public sealed partial class MainWindow : Window
         new ChoiceItem { Value = "stretch", Name = L("ImageFitStretch") },
     };
 
-    /// <summary>Odświeża magazyn wskazówek, listę na Assets i wybór w inspektorze analogu.</summary>
     private void LoadHandSets()
     {
+        _assetsRefreshVersion++;
         _handSets = RustNative.HandsList(out var error);
+        ApplyHandSets(_handSets, error);
+    }
+
+    private void ApplyHandSets(List<HandSetDto> sets, string? error)
+    {
         if (error is not null) HandsStatusText.Text = LocalizationService.Error(error);
 
-        var choices = _handSets.Select(set => new ChoiceItem { Value = set.Id, Name = set.Name }).ToList();
+        var choices = sets.Select(set => new ChoiceItem { Value = set.Id, Name = set.Name }).ToList();
         _loadingHands = true;
         HandsComboBox.ItemsSource = choices;
         var current = _layers.FirstOrDefault(l => l.Kind == "analog-time")?.HandSet ?? "";
         HandsComboBox.SelectedItem = choices.FirstOrDefault(item => item.Value == current);
         _loadingHands = false;
 
-        var rows = _handSets.Select(set => new HandSetItem
+        var byId = _handItems.ToDictionary(item => item.Id, StringComparer.OrdinalIgnoreCase);
+        foreach (var set in sets)
         {
-            Id = set.Id,
-            Size = set.Size,
-            HasSecond = set.HasSecond,
-            HasCap = set.HasCap,
-        }).ToList();
-        HandsList.ItemsSource = rows;
-        HandsList.SelectedItem = rows.FirstOrDefault(row => row.Id == _selectedHandSetId);
+            if (!byId.TryGetValue(set.Id, out var item))
+            {
+                item = new HandSetItem { Id = set.Id, IsLoading = true };
+                byId[set.Id] = item;
+                _handItems.Add(item);
+            }
+            var fingerprint = set.Fingerprint ?? "";
+            var changed = item.Fingerprint != fingerprint || item.NeedsRefresh;
+            item.Size = set.Size;
+            item.HasSecond = set.HasSecond;
+            item.HasCap = set.HasCap;
+            item.Fingerprint = fingerprint;
+            item.RefreshPreview(changed);
+        }
+        foreach (var stale in _handItems.Where(item => sets.All(set => set.Id != item.Id)).ToList())
+            _handItems.Remove(stale);
+
+        if (!_handsBound)
+        {
+            HandsList.ItemsSource = _handItems;
+            _handsBound = true;
+        }
+        HandsList.SelectedItem = _handItems.FirstOrDefault(row => row.Id == _selectedHandSetId);
         RemoveHandsButton.IsEnabled = HandsList.SelectedItem is HandSetItem { Id: not "Classic" };
+    }
+
+    private void LoadStatusPacks()
+    {
+        _assetsRefreshVersion++;
+        _statusPacks = RustNative.StatusPacksList(out var error);
+        ApplyStatusPacks(_statusPacks, error);
+    }
+
+    private void ApplyStatusPacks(List<StatusPackDto> packs, string? error)
+    {
+        if (error is not null) StatusStatusText.Text = LocalizationService.Error(error);
+
+        _loadingStatusPacks = true;
+        StatusPackComboBox.ItemsSource = packs;
+        var current = _layers.FirstOrDefault(l => IsStatusKind(l.Kind))?.StatusIconSet
+                      ?? _selectedStatusPackId
+                      ?? "Classic";
+        StatusPackComboBox.SelectedItem = packs.FirstOrDefault(pack => pack.Id == current);
+        _loadingStatusPacks = false;
+
+        var byId = _statusItems.ToDictionary(item => item.Id, StringComparer.OrdinalIgnoreCase);
+        foreach (var pack in packs)
+        {
+            if (!byId.TryGetValue(pack.Id, out var item))
+            {
+                item = new StatusPackItem { Id = pack.Id, IsLoading = true };
+                byId[pack.Id] = item;
+                _statusItems.Add(item);
+            }
+            var fingerprint = pack.Fingerprint ?? "";
+            var changed = item.Fingerprint != fingerprint || item.NeedsRefresh;
+            item.Size = pack.Size;
+            item.Fingerprint = fingerprint;
+            item.RefreshPreview(changed);
+        }
+        foreach (var stale in _statusItems.Where(item => packs.All(pack => pack.Id != item.Id)).ToList())
+            _statusItems.Remove(stale);
+
+        if (!_statusBound)
+        {
+            StatusList.ItemsSource = _statusItems;
+            _statusBound = true;
+        }
+        StatusList.SelectedItem = _statusItems.FirstOrDefault(row => row.Id == _selectedStatusPackId);
+        RemoveStatusButton.IsEnabled =
+            StatusList.SelectedItem is StatusPackItem { Id: not "Classic" };
+    }
+
+    /// <summary>Nowe/edytowane paczki dostają pierścień zanim ruszyGenerated w tle.</summary>
+    private void MarkChangedPacksLoading()
+    {
+        foreach (var item in _handItems.Where(item => item.NeedsRefresh)) item.IsLoading = true;
+        foreach (var item in _statusItems.Where(item => item.NeedsRefresh)) item.IsLoading = true;
+    }
+
+    /// <summary>
+    /// Wejście na Assets nie czeka na generowanie miniatur — widok pojawia się z
+    /// cache'owanymi obrazkami, a odświeżanie magazynów idzie w tle.
+    /// </summary>
+    private async Task RefreshAssetsAsync()
+    {
+        var version = ++_assetsRefreshVersion;
+        var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+        MarkChangedPacksLoading();
+
+        List<HandSetDto>? hands = null;
+        List<StatusPackDto>? packs = null;
+        List<FontAssetDto>? fonts = null;
+        List<ImageAssetDto>? images = null;
+        string? handError = null, packError = null, fontError = null, imageError = null;
+
+        await Task.WhenAll(
+            Task.Run(() => { hands = RustNative.HandsList(out handError); }),
+            Task.Run(() => { packs = RustNative.StatusPacksList(out packError); }),
+            Task.Run(() => { fonts = RustNative.FontsList(out fontError); }),
+            Task.Run(() => { images = RustNative.ImagesList(out imageError); })
+        ).ConfigureAwait(false);
+
+        dispatcher?.TryEnqueue(() =>
+        {
+            if (version != _assetsRefreshVersion) return;
+            _handSets = hands ?? _handSets;
+            _statusPacks = packs ?? _statusPacks;
+            _fonts = fonts ?? _fonts;
+            _images = images ?? _images;
+            if (fonts is not null) ApplyFonts(fonts, fontError);
+            if (images is not null) ApplyImages(images, imageError);
+            if (hands is not null) ApplyHandSets(hands, handError);
+            if (packs is not null) ApplyStatusPacks(packs, packError);
+        });
+    }
+
+    /// <summary>Assets-siatka: zawsze maksymalnie trzy kafelki w jednym rzędzie.</summary>
+    private void AssetGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is GridView grid && e.NewSize.Width > 0
+            && grid.ItemsPanelRoot is ItemsWrapGrid panel)
+        {
+            panel.ItemWidth = Math.Max(160, (e.NewSize.Width - 16) / 3);
+        }
     }
 
     private static void LoadChoices(ComboBox combo, ChoiceItem[] items)
@@ -1925,6 +2253,7 @@ public sealed partial class MainWindow : Window
         "images" => L("WidgetCategoryImages"),
         "distance" => L("WidgetCategoryDistance"),
         "health" => L("WidgetCategoryHealth"),
+        "system" => L("WidgetCategorySystem"),
         _ => category,
     };
 
@@ -1950,6 +2279,11 @@ public sealed partial class MainWindow : Window
         "sleep" => L("SleepWidgetCardTitle"),
         "calories" => L("CaloriesWidgetCardTitle"),
         "spo2" => L("Spo2WidgetCardTitle"),
+        "battery" => L("BatteryWidgetCardTitle"),
+        "status-alarm" => L("StatusAlarmWidgetCardTitle"),
+        "status-dnd" => L("StatusDndWidgetCardTitle"),
+        "status-bluetooth" => L("StatusBluetoothWidgetCardTitle"),
+        "status-lock" => L("StatusLockWidgetCardTitle"),
         _ => kind,
     };
 
@@ -1975,6 +2309,11 @@ public sealed partial class MainWindow : Window
         "sleep" => L("SleepWidgetCardDesc"),
         "calories" => L("CaloriesWidgetCardDesc"),
         "spo2" => L("Spo2WidgetCardDesc"),
+        "battery" => L("BatteryWidgetCardDesc"),
+        "status-alarm" => L("StatusAlarmWidgetCardDesc"),
+        "status-dnd" => L("StatusDndWidgetCardDesc"),
+        "status-bluetooth" => L("StatusBluetoothWidgetCardDesc"),
+        "status-lock" => L("StatusLockWidgetCardDesc"),
         _ => kind,
     };
 
@@ -2024,11 +2363,9 @@ public sealed partial class MainWindow : Window
             group.FlyoutExpander = flyoutExpander;
             WidgetFlyoutGroups.Children.Add(flyoutExpander);
 
+            // Zakładka Widgets: kategorie zawsze rozwinięte, bez strzałek.
             var tabList = CreateCatalogList(tabTemplate!, selectable: false, selectionChanged: null);
             tabList.ItemsSource = group.Items;
-            // Zakładka Widgets to katalog tylko do czytania — kategorie są widoczne
-            // w całości, bez konieczności rozwijania strzałką. Flayout zachowuje
-            // zwijalne sekcje (ustawienia powyżej).
             WidgetsCatalogGroups.Children.Add(new StackPanel
             {
                 Spacing = 4,
@@ -2241,8 +2578,6 @@ public sealed partial class MainWindow : Window
         target.AutoScale = source.AutoScale;
         target.TextStyle = source.TextStyle;
         target.Visible = source.Visible;
-        target.BackgroundImage = source.BackgroundImage;
-        target.BackgroundAutoScale = source.BackgroundAutoScale;
         target.HandSet = source.HandSet;
         target.HourSrc = source.HourSrc;
         target.MinuteSrc = source.MinuteSrc;
@@ -2268,7 +2603,9 @@ public sealed partial class MainWindow : Window
     private void UpdateScaleModeUI()
     {
         if (_settings is null) return;
-        ScaleModeButtonText.Text = _settings.AutoScale ? L("ScaleModeOnLabel") : L("ScaleModeOffLabel");
+        var label = _settings.AutoScale ? L("ScaleModeOnLabel") : L("ScaleModeOffLabel");
+        ScaleModeButtonText.Text = label;
+        StatusScaleModeButtonText.Text = label;
     }
 
     private void ClockTimer_Tick(object? sender, object e) => UpdateClockText();
@@ -2583,112 +2920,7 @@ public sealed partial class MainWindow : Window
 
     // --- Zasoby: obrazki tła -------------------------------------------------
 
-    private void BackgroundsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_initialized) return;
-        _selectedBackgroundFile = (BackgroundsList.SelectedItem as ImageItem)?.File;
-        RemoveBackgroundButton.IsEnabled = BackgroundsList.SelectedItem is ImageItem { IsBuiltin: false };
-        UseBackgroundButton.IsEnabled = _projectFile is not null && BackgroundsList.SelectedItem is not null;
-    }
-
-    private async void AddBackgroundButton_Click(object sender, RoutedEventArgs e)
-    {
-        var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.PicturesLibrary };
-        picker.FileTypeFilter.Add(".png");
-        picker.FileTypeFilter.Add(".jpg");
-        picker.FileTypeFilter.Add(".jpeg");
-        InitializeWithWindow.Initialize(picker, WindowHandle);
-        var file = await picker.PickSingleFileAsync();
-        if (file is null) return;
-
-        var added = RustNative.BackgroundsAdd(file.Path, out var error);
-        if (added is null)
-        {
-            BackgroundStatusText.Text = error is null ? L("AssetsBackgroundAddFailed") : LocalizationService.Error(error);
-            return;
-        }
-        _selectedBackgroundFile = added.File;
-        LoadBackgrounds();
-        BackgroundStatusText.Text = LF("AssetsBackgroundAdded", added.File);
-    }
-
-    private void RemoveBackgroundButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedBackgroundFile is null) return;
-        RustNative.BackgroundsRemove(_selectedBackgroundFile, out var error);
-        if (error is not null)
-        {
-            BackgroundStatusText.Text = LocalizationService.Error(error);
-            return;
-        }
-        // Kopie w projektach zostają — tarcza z wgranym tłem jest samowystarczalna.
-        _selectedBackgroundFile = null;
-        LoadBackgrounds();
-        BackgroundStatusText.Text = L("AssetsBackgroundRemoved");
-    }
-
-    private async void OpenBackgroundsFolderButton_Click(object sender, RoutedEventArgs e)
-    {
-        await Launcher.LaunchFolderAsync(await StorageFolder.GetFolderFromPathAsync(AppPaths.BackgroundsDirectory));
-    }
-
-    private void UseBackgroundButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedBackgroundFile is null) return;
-        ApplyBackgroundToProject(_selectedBackgroundFile, BackgroundAutoScaleCheckBox.IsChecked ?? true);
-    }
-
-    private void BackgroundComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_loadingBackground || !_initialized || _projectFile is null) return;
-        if ((sender as ComboBox)?.SelectedItem is not ChoiceItem item) return;
-        ApplyBackgroundToProject(item.Value, BackgroundAutoScaleCheckBox.IsChecked ?? true);
-    }
-
-    private void BackgroundAutoScaleCheckBox_Changed(object sender, RoutedEventArgs e)
-    {
-        if (_loadingBackground || !_initialized || _projectFile is null) return;
-        var image = (BackgroundComboBox.SelectedItem as ChoiceItem)?.Value;
-        if (string.IsNullOrEmpty(image)) return;
-        ApplyBackgroundToProject(image, BackgroundAutoScaleCheckBox.IsChecked ?? true);
-    }
-
-    private void ClearBackgroundButton_Click(object sender, RoutedEventArgs e)
-    {
-        ApplyBackgroundToProject("", true);
-    }
-
-    private static string BackgroundDisplayName(string value) => value switch
-    {
-        "" or "black" or "black.png" => L("BackgroundNone"),
-        "starry" or "starry.png" => L("BackgroundStarry"),
-        _ => Path.GetFileNameWithoutExtension(value),
-    };
-
-    /// <summary>Zapisuje wybór tła przez Rusta i wymusza przeładowanie podglądu.</summary>
-    private void ApplyBackgroundToProject(string image, bool autoScale)
-    {
-        if (_projectFile is null) return;
-        var raw = RustNative.SetBackground(_projectFile, image, autoScale, out var error);
-        if (raw is null)
-        {
-            BackgroundStatusText.Text = error is null ? L("BackgroundApplyFailed") : LocalizationService.Error(error);
-            EditorStatusText.Text = BackgroundStatusText.Text;
-            return;
-        }
-
-        using var document = JsonDocument.Parse(raw);
-        ApplyLayersPayload(document.RootElement.GetProperty("layers").GetRawText());
-        // Ścieżka `bg.png` się nie zmienia, więc `ApplyLayersPayload` nie przebuduje podglądu —
-        // plik na dysku został jednak nadpisany i bitmapa musi zostać wczytana od nowa.
-        RebuildPreview();
-        LoadBackgrounds();
-        BackgroundStatusText.Text = string.IsNullOrEmpty(image)
-            ? L("BackgroundResetDone")
-            : LF("BackgroundApplied", BackgroundDisplayName(image));
-    }
-
-    // --- Zasoby: obrazki widgetu IMAGES (osobne od teł) ---------------------
+    // --- Zasoby: obrazki widgetu IMAGES -------------------------------------
 
     private void ImagesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -2793,7 +3025,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         _selectedHandSetId = added.Id;
-        LoadHandSets();
+        LoadHandSets(); LoadStatusPacks();
         HandsStatusText.Text = LF("AssetsHandsAdded", added.Name);
     }
 
@@ -2808,13 +3040,84 @@ public sealed partial class MainWindow : Window
         }
         // Projekty mają własne kopie — usunięcie z magazynu nic im nie robi.
         _selectedHandSetId = null;
-        LoadHandSets();
+        LoadHandSets(); LoadStatusPacks();
         HandsStatusText.Text = L("AssetsHandsRemoved");
     }
 
     private async void OpenHandsFolderButton_Click(object sender, RoutedEventArgs e)
     {
         await Launcher.LaunchFolderAsync(await StorageFolder.GetFolderFromPathAsync(AppPaths.HandsDirectory));
+    }
+
+    // --- Zasoby: pakiety ikon stanu systemu --------------------------------
+
+    private static bool IsStatusKind(string? kind) => kind is
+        "status-alarm" or "status-dnd" or "status-bluetooth" or "status-lock";
+
+    private void StatusList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_initialized) return;
+        _selectedStatusPackId = (StatusList.SelectedItem as StatusPackItem)?.Id;
+        RemoveStatusButton.IsEnabled =
+            StatusList.SelectedItem is StatusPackItem { Id: not "Classic" };
+    }
+
+    private async void AddStatusButton_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.PicturesLibrary };
+        picker.FileTypeFilter.Add("*");
+        InitializeWithWindow.Initialize(picker, WindowHandle);
+        var folder = await picker.PickSingleFolderAsync();
+        if (folder is null) return;
+
+        var added = RustNative.StatusPacksAdd(folder.Path, out var error);
+        if (added is null)
+        {
+            StatusStatusText.Text = error is null ? L("AssetsStatusAddFailed") : LocalizationService.Error(error);
+            return;
+        }
+        _selectedStatusPackId = added.Id;
+        LoadStatusPacks();
+        StatusStatusText.Text = LF("AssetsStatusAdded", added.Id);
+    }
+
+    private void RemoveStatusButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedStatusPackId is null) return;
+        RustNative.StatusPacksRemove(_selectedStatusPackId, out var error);
+        if (error is not null)
+        {
+            StatusStatusText.Text = LocalizationService.Error(error);
+            return;
+        }
+        _selectedStatusPackId = null;
+        LoadStatusPacks();
+        StatusStatusText.Text = L("AssetsStatusRemoved");
+    }
+
+    private async void OpenStatusFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        await Launcher.LaunchFolderAsync(
+            await StorageFolder.GetFolderFromPathAsync(AppPaths.StatusDirectory));
+    }
+
+    private void StatusPackComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingStatusPacks || !_initialized || _projectFile is null) return;
+        if ((sender as ComboBox)?.SelectedItem is not StatusPackDto pack) return;
+        var layer = _layers.FirstOrDefault(l => IsStatusKind(l.Kind) && l.Id == _selectedLayerId);
+        if (layer is null) return;
+
+        var raw = RustNative.SetStatusPack(_projectFile, layer.Id, pack.Id, out var error);
+        if (raw is null)
+        {
+            StatusStatusText.Text = error is null ? L("StatusApplyFailed") : LocalizationService.Error(error);
+            EditorStatusText.Text = StatusStatusText.Text;
+            return;
+        }
+        using var document = JsonDocument.Parse(raw);
+        ApplyLayersPayload(document.RootElement.GetProperty("layers").GetRawText());
+        StatusStatusText.Text = LF("StatusApplied", pack.Id);
     }
 
     private void HandsComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2928,11 +3231,9 @@ public sealed partial class MainWindow : Window
                 ShowView(editor: false, widgets: true);
                 break;
             case "assets":
-                LoadFonts();
-                LoadBackgrounds();
-                LoadImages();
-                LoadHandSets();
+                // Najpierw widok z zapamiętanymi miniaturkami, dopiero potem odświeżanie w tle.
                 ShowView(editor: false, assets: true);
+                _ = RefreshAssetsAsync();
                 break;
             case "project-settings":
                 LoadProjectSettings();
@@ -2984,6 +3285,8 @@ public sealed partial class MainWindow : Window
     {
         PreviewGridToggle.Text = L("PreviewGrid");
         UnselectedOutlineToggle.Text = L("UnselectedWidgetsOutline");
+        CustomDataToggle.Text = L("CustomDataPreview");
+        CustomDataEditItem.Text = L("CustomDataEdit");
     }
 
     /// <summary>Siatka podglądu włącza też przyciąganie do niej — jak dawny checkbox.</summary>
@@ -2991,6 +3294,7 @@ public sealed partial class MainWindow : Window
     {
         var enabled = PreviewGridToggle.IsChecked;
         GridLinesCanvas.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        RefreshToggleVisuals(PreviewGridToggle);
         if (!_initialized) return;
         AppSettingsStore.SetSnapToGrid(enabled);
     }
@@ -2999,8 +3303,252 @@ public sealed partial class MainWindow : Window
     private void UnselectedOutlineToggle_Click(object sender, RoutedEventArgs e)
     {
         if (!_initialized) return;
+        RefreshToggleVisuals(UnselectedOutlineToggle);
         AppSettingsStore.SetShowUnselectedOutline(UnselectedOutlineToggle.IsChecked);
         UpdateFrameVisuals();
+    }
+
+    /// <summary>Włącza/wyłącza nadpisywanie danych podglądu; wartości nie są kasowane.</summary>
+    private void CustomDataToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_initialized) return;
+        RefreshToggleVisuals(CustomDataToggle);
+        AppSettingsStore.SetCustomPreviewDataEnabled(CustomDataToggle.IsChecked);
+        UpdateClockText();
+    }
+
+    /// <summary>Własny template flyoutu nie przełącza sam znacznika ✓ po kliknięciu.</summary>
+    private static void RefreshToggleVisuals(ToggleMenuFlyoutItem item)
+        => VisualStateManager.GoToState(item, item.IsChecked ? "Checked" : "Unchecked", false);
+
+    /// <summary>Zębatka otwiera panel tylko dla typów danych obecnych na tarczy.</summary>
+    private async void CustomDataEdit_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_initialized || _projectFile is null) return;
+        // Pozycja z zębatką nie jest przełącznikiem — nie zostawiamy znacznika ✓.
+        CustomDataEditItem.IsChecked = false;
+        RefreshToggleVisuals(CustomDataEditItem);
+        PreviewOptionsFlyout.Hide();
+        BuildCustomDataDialog();
+        CustomDataDialog.XamlRoot = Content.XamlRoot ?? NavView.XamlRoot;
+        try
+        {
+            await CustomDataDialog.ShowAsync();
+        }
+        catch
+        {
+            ShowStatus(L("ErrorCustomData"), InfoBarSeverity.Error);
+        }
+    }
+
+    private void ResetCustomData_Click(object sender, RoutedEventArgs e)
+    {
+        AppSettingsStore.ClearCustomPreviewValues();
+        BuildCustomDataDialog();
+        UpdateClockText();
+        CustomDataStatusText.Text = L("CustomDataCleared");
+        CustomDataStatusText.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>Oddzielny klucz magazynu dla każdego typu danych (bez duskich formatów wyświetlania).</summary>
+    private static string? CustomValueKeyForKind(string kind) => kind switch
+    {
+        "steps" => "steps",
+        "distance" => "distance",
+        "heart" => "heart",
+        "stress" => "stress",
+        "pai" => "pai",
+        "skin-temp" => "skinTemp",
+        "sleep" => "sleep",
+        "calories" => "calories",
+        "spo2" => "spo2",
+        "battery" => "battery",
+        "lunar-date" => "lunarDate",
+        "festival" => "festival",
+        "world-clock" => "worldClock",
+        _ => null,
+    };
+
+    private static string CustomLayerLabel(string kind) => kind switch
+    {
+        "steps" => L("LayerSteps"),
+        "distance" => L("LayerDistance"),
+        "heart" => L("LayerHeart"),
+        "stress" => L("LayerStress"),
+        "pai" => L("LayerPai"),
+        "skin-temp" => L("LayerSkinTemp"),
+        "sleep" => L("LayerSleep"),
+        "calories" => L("LayerCalories"),
+        "spo2" => L("LayerSpo2"),
+        "lunar-date" => L("LayerLunarDate"),
+        "festival" => L("LayerFestival"),
+        "world-clock" => L("LayerWorldClock"),
+        _ => kind,
+    };
+
+    /// <summary>Buduje pola na nowo przy każdym otwarciu — lista widgetów mogła się zmienić.</summary>
+    private void BuildCustomDataDialog()
+    {
+        CustomDataFieldsPanel.Children.Clear();
+        CustomDataStatusText.Visibility = Visibility.Collapsed;
+
+        var kinds = _layers
+            .Select(layer => layer.Kind)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var hasTime = kinds.Contains("time") || kinds.Contains("analog-time");
+        var hasDate = kinds.Contains("date") || kinds.Any(IsDateFieldKind);
+        var sensorKinds = kinds.Where(kind => CustomValueKeyForKind(kind) is not null).ToList();
+
+        if (!hasTime && !hasDate && sensorKinds.Count == 0)
+        {
+            CustomDataFieldsPanel.Children.Add(new TextBlock
+            {
+                Text = L("CustomDataEmpty"),
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(Color.FromArgb(255, 150, 160, 180)),
+            });
+            return;
+        }
+
+        if (hasTime)
+        {
+            AddCustomGroup("CustomDataGroupTime", body =>
+            {
+                AddCustomNumber(body, "CustomDataHour", "hour", DateTime.Now.Hour, 0, 23);
+                AddCustomNumber(body, "CustomDataMinute", "minute", DateTime.Now.Minute, 0, 59);
+                AddCustomNumber(body, "CustomDataSecond", "second", DateTime.Now.Second, 0, 59);
+            });
+        }
+        if (hasDate)
+        {
+            AddCustomGroup("CustomDataGroupDate", body =>
+            {
+                AddCustomNumber(body, "CustomDataDay", "day", DateTime.Now.Day, 1, 31);
+                AddCustomNumber(body, "CustomDataMonth", "month", DateTime.Now.Month, 1, 12);
+                AddCustomNumber(body, "CustomDataYear", "year", DateTime.Now.Year, 1, 9999);
+                if (kinds.Contains("weekday-number"))
+                    AddCustomFirstDay(body);
+            });
+        }
+        if (sensorKinds.Count > 0)
+        {
+            AddCustomGroup("CustomDataGroupValues", body =>
+            {
+                foreach (var kind in sensorKinds)
+                {
+                    var key = CustomValueKeyForKind(kind)!;
+                    var fallback = _layers.FirstOrDefault(layer => layer.Kind == kind)?.Text ?? "";
+                    AddCustomText(body, CustomLayerLabel(kind), key, fallback);
+                }
+            });
+        }
+    }
+
+    private void AddCustomGroup(string labelKey, Action<StackPanel> build)
+    {
+        var group = new StackPanel { Spacing = 8 };
+        group.Children.Add(new TextBlock
+        {
+            Text = L(labelKey),
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+        });
+        var body = new StackPanel { Spacing = 6, Margin = new Thickness(12, 0, 0, 0) };
+        build(body);
+        group.Children.Add(body);
+        CustomDataFieldsPanel.Children.Add(group);
+    }
+
+    private void AddCustomNumber(StackPanel parent, string labelKey, string key, int liveValue,
+        int min, int max)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        row.Children.Add(new TextBlock
+        {
+            Text = L(labelKey),
+            Width = 110,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var box = new TextBox
+        {
+            Width = 160,
+            FontSize = 12,
+            Text = AppSettingsStore.GetCustomPreviewValue(key) ?? "",
+            PlaceholderText = liveValue.ToString(CultureInfo.InvariantCulture),
+        };
+        box.TextChanged += (_, _) =>
+        {
+            var value = int.TryParse(box.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                ? Math.Clamp(parsed, min, max).ToString(CultureInfo.InvariantCulture)
+                : box.Text;
+            AppSettingsStore.SetCustomPreviewValue(key, value);
+            UpdateClockText();
+        };
+        row.Children.Add(box);
+        parent.Children.Add(row);
+    }
+
+    private void AddCustomText(StackPanel parent, string label, string key, string fallback)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        row.Children.Add(new TextBlock
+        {
+            Text = label,
+            Width = 110,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var box = new TextBox
+        {
+            Width = 200,
+            FontSize = 12,
+            Text = AppSettingsStore.GetCustomPreviewValue(key) ?? "",
+            PlaceholderText = string.IsNullOrWhiteSpace(fallback) ? L("CustomDataValue") : fallback,
+        };
+        box.TextChanged += (_, _) =>
+        {
+            AppSettingsStore.SetCustomPreviewValue(key, box.Text);
+            UpdateClockText();
+        };
+        row.Children.Add(box);
+        parent.Children.Add(row);
+    }
+
+    private void AddCustomFirstDay(StackPanel parent)
+    {
+        var items = new List<ChoiceItem>
+        {
+            new() { Value = "monday", Name = L("FirstDayMonday") },
+            new() { Value = "sunday", Name = L("FirstDaySunday") },
+        };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        row.Children.Add(new TextBlock
+        {
+            Text = L("FirstDayOfWeekLabel"),
+            Width = 110,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var combo = new ComboBox
+        {
+            Width = 200,
+            FontSize = 12,
+            ItemsSource = items,
+            SelectedItem = items.FirstOrDefault(item =>
+                item.Value == (AppSettingsStore.GetCustomPreviewValue("firstDay") ?? AppSettingsStore.FirstDayOfWeek)),
+        };
+        combo.SelectionChanged += (_, _) =>
+        {
+            var value = (combo.SelectedItem as ChoiceItem)?.Value;
+            if (string.IsNullOrEmpty(value)) AppSettingsStore.SetCustomPreviewValue("firstDay", null);
+            else AppSettingsStore.SetCustomPreviewValue("firstDay", value);
+            UpdateClockText();
+        };
+        row.Children.Add(combo);
+        parent.Children.Add(row);
     }
 
     /// <summary>Autor wpisywany przy tworzeniu tarczy, gdy nie ustawiono własnego.</summary>
@@ -3033,13 +3581,12 @@ public sealed partial class MainWindow : Window
         LoadFirstDayOfWeekOptions();
         LoadDistanceUnitOptions();
         LoadFonts();
-        LoadBackgrounds();
         LoadImages();
-        LoadHandSets();
+        LoadHandSets(); LoadStatusPacks();
         LoadWidgetCatalog();
         var selected = _layers.FirstOrDefault(l => l.Id == _selectedLayerId);
-        InspectorTitle.Text = selected is null || selected.Kind == "background"
-            ? L("LayerBackground")
+        InspectorTitle.Text = selected is null
+            ? ""
             : LF("WidgetSettingsFor", selected.Name);
         RefreshRecent();
         if (_settings is not null)
@@ -3374,7 +3921,7 @@ public sealed partial class MainWindow : Window
         ShowStatus(L("ClearedRecent"));
     }
 
-    /// <summary>Kliknięcie otwiera okno eksportu bezpośrednio nad edytorem.</summary>
+    /// <summary>Generuje podglądy i dopiero wtedy otwiera okno eksportu.</summary>
     private void Export_Click(object sender, RoutedEventArgs e)
     {
         if (_projectFile is null)
@@ -3382,19 +3929,92 @@ public sealed partial class MainWindow : Window
             ShowStatus(L("ExportFirst"), InfoBarSeverity.Warning);
             return;
         }
-        ShowExportDialog();
+        _ = GeneratePreviewAndShowExportAsync();
     }
 
-    private async void ShowExportDialog()
+    private async Task GeneratePreviewAndShowExportAsync()
     {
-        LoadExportProjectInfo();
+        var project = _projectFile;
+        if (project is null) return;
+
+        ExportButton.IsEnabled = false;
+        ExportProgressBar.Visibility = Visibility.Visible;
+        ExportProgressBar.Value = 0;
+        ExportProgressBar.IsIndeterminate = false;
+        ToolTipService.SetToolTip(ExportButton, LF("ExportProgress", 0));
         try
         {
+            // Jedna losowa seria dla wszystkich klatek — dane nie zmieniają się w trakcie.
+            var series = await Task.Run(() =>
+            {
+                var data = RustNative.PreviewRandomSeries(EffectiveWatchfaceLanguage(), out var error);
+                return (data, error);
+            });
+            if (series.data is null)
+                throw new InvalidOperationException(
+                    series.error is null ? L("ErrorExport") : LocalizationService.Error(series.error));
+
+            // Rust jest jedynym źródłem liczby klatek — C# nie ma własnej stałej.
+            int frameCount;
+            using (var seriesDocument = JsonDocument.Parse(series.data!))
+            {
+                frameCount = seriesDocument.RootElement.TryGetProperty("frameCount", out var count)
+                    ? count.GetInt32()
+                    : 7;
+            }
+            ExportProgressBar.Maximum = frameCount;
+            for (var index = 0; index < frameCount; index++)
+            {
+                var frameIndex = (uint)index;
+                var frame = await Task.Run(() =>
+                {
+                    var data = RustNative.RenderPreviewFrame(project, frameIndex, series.data!, out var error);
+                    return (data, error);
+                });
+                if (frame.data is null)
+                    throw new InvalidOperationException(
+                        frame.error is null ? L("ErrorExport") : LocalizationService.Error(frame.error));
+                ExportProgressBar.Value = index + 1;
+                ToolTipService.SetToolTip(ExportButton, LF("ExportProgress", index + 1));
+            }
+
+            // Kodowanie GIF-a też trwa — pasek przechodzi w tryb ciągłego ładowania,
+            // żeby nie wyglądał na skończony przed pojawieniem się pliku.
+            ExportProgressBar.IsIndeterminate = true;
+            var encoded = await Task.Run(() =>
+            {
+                var data = RustNative.EncodePreviewGif(project, series.data!, out var error);
+                return (data, error);
+            });
+            ExportProgressBar.IsIndeterminate = false;
+            if (encoded.data is null)
+                throw new InvalidOperationException(
+                    encoded.error is null ? L("ErrorExport") : LocalizationService.Error(encoded.error));
+
+            using (var document = JsonDocument.Parse(encoded.data))
+            {
+                var gif = document.RootElement.GetProperty("gif").GetString() ?? "";
+                var bitmap = new BitmapImage { CreateOptions = BitmapCreateOptions.IgnoreImageCache };
+                bitmap.UriSource = new Uri(gif);
+                ExportPreviewImage.Source = bitmap;
+                // Border w XAML ma CornerRadius="120" — przycina animację do okręgu
+                // Active 2 (Round), więc w oknie nie widać kwadratowych rogów.
+            }
+
+            LoadExportProjectInfo();
             await ExportDialog.ShowAsync();
         }
-        catch
+        catch (Exception ex)
         {
-            ShowStatus(L("ErrorExport"), InfoBarSeverity.Error);
+            ShowStatus(ex.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            ExportProgressBar.Visibility = Visibility.Collapsed;
+            ExportProgressBar.IsIndeterminate = false;
+            ExportProgressBar.Value = 0;
+            ExportButton.IsEnabled = true;
+            ToolTipService.SetToolTip(ExportButton, null);
         }
     }
 

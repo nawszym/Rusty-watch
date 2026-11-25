@@ -1,6 +1,7 @@
-pub mod backgrounds;
+pub mod asset_cache;
 pub mod codegen;
 pub mod date_format;
+pub mod export_paths;
 pub mod fonts;
 pub mod hands;
 pub mod image_fit;
@@ -9,8 +10,10 @@ pub mod layers;
 pub mod locale;
 pub mod model;
 pub mod package;
+pub mod preview;
 pub mod project;
 pub mod recent;
+pub mod status_icons;
 pub mod time_format;
 pub mod validate;
 pub mod widgets;
@@ -27,6 +30,7 @@ pub use validate::validate;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::GenericImageView;
     use std::io::{Cursor, Read};
     use std::path::Path;
     use zip::ZipArchive;
@@ -42,10 +46,16 @@ mod tests {
     fn generated_json_has_active2_device_source() {
         let project = Project::starter("Test");
         let json = codegen::generate_app_json(&project);
-        assert!(json.contains("8913153"));
+        for source in [8913152, 8913153, 8913155, 8913159, 10092800, 10092801, 10092803, 10092807] {
+            assert!(json.contains(&format!("\"deviceSource\": {source}")), "missing {source}");
+        }
         assert!(json.contains("\"designWidth\": 466"));
-        assert!(json.contains("\"lockscreen\": 1"));
-        // Wymagane przez schemat app.json v3 — bez tego zeus build/install odrzuca pakiet.
+        assert!(json.contains("\"lockscreen\": 0"));
+        assert!(json.contains("\"configVersion\": \"v2\""));
+        // Blok `targets` jest formatem roboczym zeus — nie może trafić do ZIP dla zegarka.
+        assert!(!json.contains("\"targets\""));
+        assert!(json.contains("\"icon\": \"Preview.png\""));
+        assert!(json.contains("\"packageInfo\""));
         assert!(json.contains("\"defaultLanguage\": \"en-US\""));
         // `type: 2` oznacza bytecode (.bin) — zablokowałoby ładowanie naszych plików .js.
         assert!(!json.contains("\"type\":"));
@@ -59,13 +69,43 @@ mod tests {
         let project = Project::starter("Test");
         let js = codegen::generate_index_js(&project);
         // Tarcza używa API hmUI, nie modułu @zos/ui przeznaczonego dla Mini Program.
-        assert!(js.contains("hmUI.createWidget(hmUI.widget.IMG"));
+        assert!(js.contains("hmUI.widget.FILL_RECT"));
+        assert!(js.contains("hmUI.createWidget(hmUI.widget.TEXT"));
+        assert!(!js.contains("bg.png"), "tło nie jest zasobem: {js}");
         assert!(js.contains("hmSensor.createSensor(hmSensor.id.TIME)"));
         assert!(!js.contains("@zos/ui"));
         assert!(!js.contains("@zos/sensor"));
         assert!(js.contains("const s = t.second"));
         assert!(js.contains("timer.createTimer(0, 1000, tick)"));
         assert!(js.contains("timer.stopTimer(tickTimer)"));
+    }
+
+    #[test]
+    fn bootstrap_matches_reference_package() {
+        let app_js = codegen::generate_app_js();
+        for token in [
+            "getApp()",
+            "getCurrentPage()",
+            "HmUtils.getPx(454)",
+            "gettextFactory(languageTable",
+            "onCreate(options)",
+            "DeviceRuntimeCore.App",
+        ] {
+            assert!(app_js.contains(token), "app.js lacks {token}: {app_js}");
+        }
+
+        let project = Project::starter("Bootstrap");
+        let js = codegen::generate_index_js(&project);
+        // Cały kod helperów musi być wewnątrz try/IIFE — firmware nie wybacza
+        // wyjątków na poziomie modułu, symulator je pomija.
+        let try_at = js.find("try {").expect("try block");
+        let module_at = js.find("DeviceRuntimeCore.WatchFace").expect("module");
+        for token in ["const IS_POLISH", "const L =", "function _getTime()"] {
+            let at = js.find(token).unwrap_or(usize::MAX);
+            assert!(try_at < at && at < module_at, "{token} outside IIFE");
+        }
+        assert!(js.contains("function getApp()"));
+        assert!(js.contains("function getCurrentPage()"));
     }
 
     #[test]
@@ -94,8 +134,8 @@ mod tests {
 
         let js = codegen::generate_index_js(&project);
         assert!(!js.contains("UNIKATOWY_TEKST"));
-        // Tło + widget czasu; ukryta warstwa nie trafia do generatora JS.
-        assert_eq!(layers::ordered_widgets(&project).len(), 2);
+        // Tylko widoczny widget czasu; ukryta warstwa nie trafia do generatora JS.
+        assert_eq!(layers::ordered_widgets(&project).len(), 1);
 
         let described = layers::describe(&project);
         let hidden = described.iter().find(|layer| layer.id == "hidden").unwrap();
@@ -105,7 +145,7 @@ mod tests {
 
         layers::set_widget_visibility(&mut project, "hidden", true).unwrap();
         assert!(codegen::generate_index_js(&project).contains("UNIKATOWY_TEKST"));
-        assert_eq!(layers::ordered_widgets(&project).len(), 3);
+        assert_eq!(layers::ordered_widgets(&project).len(), 2);
     }
 
     #[test]
@@ -126,8 +166,10 @@ mod tests {
         date.data_source = Some(model::DataSource::Date);
         project.widgets.push(date);
         let js = codegen::generate_index_js(&project);
+        assert!(js.contains("DeviceRuntimeCore.HmUtils.getLanguage()"));
         assert!(js.contains("hmSetting.getLanguage()"));
         assert!(js.contains("const IS_POLISH = _watchLanguage() === 9"));
+        assert!(js.find("try {").unwrap() < js.find("const IS_POLISH").unwrap());
         assert!(js.contains("'Paź'"));
         assert!(js.contains("amUp: 'PRZEDP.'"));
         assert!(js.contains("? L.amUp : L.pmUp"));
@@ -189,8 +231,146 @@ mod tests {
         assert!(archive.by_name("app.json").is_ok());
         assert!(archive.by_name("app.js").is_ok());
         assert!(archive.by_name("watchface/index.js").is_ok());
-        assert!(archive.by_name("assets/active2round/bg.png").is_ok());
-        assert!(archive.by_name("assets/active2round/icon.png").is_ok());
+        assert!(archive.by_name("assets/Preview.png").is_ok());
+        // Tło jest stałym FILL_RECT — w paczce nie ma żadnego zasobu tła.
+        assert!(archive.by_name("assets/bg.png").is_err());
+        // Struktura płaska — bez katalogu targetu i bez pustych katalogów-duplikatów.
+        assert!(archive.by_name("assets/active2round/").is_err());
+        let mut icon = archive.by_name("assets/Preview.png").unwrap();
+        let mut png = Vec::new();
+        icon.read_to_end(&mut png).unwrap();
+        let image = image::load_from_memory(&png).unwrap();
+        assert_eq!(image.dimensions(), (314, 314));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn zip_directory_entries_have_reference_metadata() {
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-watch-zipmeta-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_project(&dir, "Zip Meta").unwrap();
+        let file = project::project_file(&dir);
+        let bytes = export_zip_bytes(&file).unwrap();
+
+        let u16at = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
+        let u32at = |at: usize| {
+            u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+        };
+        let eocd = (22..=bytes.len())
+            .rev()
+            .find(|&i| u32at(i - 22) == 0x0605_4b50)
+            .expect("EOCD");
+        let eocd = eocd - 22;
+        let count = u16at(eocd + 10) as usize;
+        let mut at = u32at(eocd + 16) as usize;
+        let mut directories = 0;
+        for _ in 0..count {
+            assert_eq!(u32at(at), 0x0201_4b50);
+            // DOS (0), version 20 — tak samo jak w paczce Pythona.
+            assert_eq!(u16at(at + 4), 20, "version made by");
+            let name_len = u16at(at + 28) as usize;
+            let name = &bytes[at + 46..at + 46 + name_len];
+            if name.last() == Some(&b'/') {
+                directories += 1;
+                assert_eq!(u32at(at + 38), 0x41ff_0010, "directory attributes");
+            }
+            at += 46 + name_len
+                + u16at(at + 30) as usize
+                + u16at(at + 32) as usize;
+        }
+        assert_eq!(directories, 3);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn exported_asset_paths_match_js_and_are_flat_and_masked() {
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-watch-flat-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_project(&dir, "Flat Test").unwrap();
+        let file = project::project_file(&dir);
+        let bytes = export_zip_bytes(&file).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+
+        // Zasoby leżą bezpośrednio w `assets/`; jedynym dozwolonym podfolderem
+        // jest `fonts/`, którego wymaga firmware (tak jak w referencyjnej tarczy).
+        let names: Vec<String> = (0..archive.len())
+            .map(|index| archive.by_index(index).unwrap().name().to_string())
+            .collect();
+        let nested: Vec<&String> = names
+            .iter()
+            .filter(|name| {
+                name.starts_with("assets/")
+                    && name.matches('/').count() > 1
+                    && !name.starts_with("assets/fonts/")
+            })
+            .collect();
+        assert!(nested.is_empty(), "nested assets: {nested:?}");
+
+        // Każda ścieżka z JS musi mieć dokładnie odpowiadający wpis w ZIP-ie.
+        let mut js = String::new();
+        archive
+            .by_name("watchface/index.js")
+            .unwrap()
+            .read_to_string(&mut js)
+            .unwrap();
+        for marker in ["src: \"", "font: \""] {
+            let mut rest = js.as_str();
+            while let Some(at) = rest.find(marker) {
+                let value = &rest[at + marker.len()..];
+                let end = value.find('"').expect("unterminated asset path");
+                let path = format!("assets/{}", &value[..end]);
+                assert!(names.contains(&path), "{path} missing in ZIP");
+                rest = &value[end + 1..];
+            }
+        }
+
+        // Bootstrap zgodny z referencją (realny firmware go wymaga).
+        let mut app_js = String::new();
+        archive
+            .by_name("app.js")
+            .unwrap()
+            .read_to_string(&mut app_js)
+            .unwrap();
+        assert!(app_js.contains("DeviceRuntimeCore.App"));
+        assert!(app_js.contains("__$$app$$__.__globals__"));
+        assert!(js.contains("__$$module$$__.module = DeviceRuntimeCore.WatchFace"));
+        assert!(js.contains("hmUI.widget.FILL_RECT"));
+        assert!(js.contains("WIDGET_DELEGATE"));
+        assert!(js.contains("resume_call") && js.contains("pause_call"));
+        // Flaga AOD w show_level dawała na realnym zegarku czarną nakładkę.
+        assert!(!js.contains("ONAL_AOD"), "js: {js}");
+        assert!(!js.contains("x: -1000"));
+        // Firmware nie ma obiektu `Date` — zakaz dowolnego jego użycia w JS.
+        for banned in [
+            "new Date",
+            "Date.UTC",
+            ".getDate(",
+            ".getMonth(",
+            ".getDay(",
+            ".getFullYear(",
+            "getUTCDay",
+            "setUTCDate",
+        ] {
+            assert!(!js.contains(banned), "banned {banned} in js: {js}");
+        }
+
+        // Ikona 314x314 jest wycinana do okręgu: rogi przezroczyste, środek nie.
+        let mut png = Vec::new();
+        archive
+            .by_name("assets/Preview.png")
+            .unwrap()
+            .read_to_end(&mut png)
+            .unwrap();
+        let image = image::load_from_memory(&png).unwrap();
+        assert_eq!(image.dimensions(), (314, 314));
+        assert_eq!(image.get_pixel(0, 0).0[3], 0);
+        assert!(image.get_pixel(157, 157).0[3] > 0);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -216,7 +396,9 @@ mod tests {
         let json = codegen::generate_app_json(&project);
         assert!(json.contains("\"appId\": 12345678"));
         assert!(json.contains("\"appName\": \"My Face\""));
-        assert!(json.contains("\"vender\": \"Jane Doe\""));
+        assert!(json.contains("\"vender\": \"zepp\""));
+        assert!(!json.contains("pl-PL"));
+        assert!(json.contains("\"description\": \"\""));
 
         let bytes = export_zip_bytes(&file).unwrap();
         let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
@@ -228,7 +410,8 @@ mod tests {
             .unwrap();
         assert!(app_json.contains("12345678"));
         assert!(app_json.contains("My Face"));
-        assert!(app_json.contains("Jane Doe"));
+        assert!(app_json.contains("\"vender\": \"zepp\""));
+        assert!(!app_json.contains("Jane Doe"));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -321,7 +504,6 @@ mod tests {
         assert_eq!(file, root.join("Copy/project.json"));
         assert_eq!(project.metadata.author, "Jane Doe");
         assert_eq!(project.metadata.app_id, 33_333_333);
-        assert!(root.join("Copy/assets/bg.png").exists());
         assert!(root.join("Copy/assets/icon.png").exists());
         std::fs::remove_dir_all(&root).ok();
     }
@@ -368,14 +550,12 @@ mod tests {
     }
 
     #[test]
-    fn default_layer_order_has_background_at_the_bottom() {
+    fn default_layer_order_contains_only_widgets() {
         let project = Project::starter("Layers");
-        assert_eq!(layers::order(&project), vec!["background", "time"]);
+        assert_eq!(layers::order(&project), vec!["time"]);
         let layers = layers::describe(&project);
-        assert_eq!(layers.len(), 2);
-        assert_eq!(layers[0].kind, "background");
-        assert_eq!(layers[0].src.as_deref(), Some("bg.png"));
-        assert_eq!(layers[1].kind, "time");
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0].kind, "time");
     }
 
     #[test]
@@ -386,18 +566,18 @@ mod tests {
         assert_eq!(js_before.matches("hmUI.createWidget(hmUI.widget.TEXT").count(), 2);
 
         let order = layers::move_layer(&mut project, "time-2", -1).unwrap();
-        assert_eq!(order, vec!["background", "time-2", "time"]);
+        assert_eq!(order, vec!["time-2", "time"]);
         assert_eq!(
             project.widgets.iter().find(|w| w.id == "time-2").unwrap().z,
-            1
+            0
         );
-        assert_eq!(project.layer_order, vec!["background", "time-2", "time"]);
+        assert_eq!(project.layer_order, vec!["time-2", "time"]);
 
         let drawn: Vec<String> = layers::ordered_widgets(&project)
             .into_iter()
             .map(|w| w.id)
             .collect();
-        assert_eq!(drawn, vec!["background", "time-2", "time"]);
+        assert_eq!(drawn, vec!["time-2", "time"]);
     }
 
     #[test]
@@ -418,21 +598,16 @@ mod tests {
         let reloaded = load_project(&file).unwrap();
         assert_eq!(
             layers::order(&reloaded),
-            vec!["background", "time-2", "time"]
+            vec!["time-2", "time"]
         );
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn background_is_locked_at_the_bottom() {
+    fn bottom_widget_cannot_move_lower() {
         let mut project = Project::starter("Locked");
-        assert!(layers::move_layer(&mut project, "background", 1).is_err());
-        assert!(layers::move_layer(&mut project, "background", -1).is_err());
-        assert!(layers::remove_widget(&mut project, "background").is_err());
-
-        // Widget tuż nad tłem nie może zejść poniżej tła.
         assert!(layers::move_layer(&mut project, "time", -1).is_err());
-        assert_eq!(layers::order(&project), vec!["background", "time"]);
+        assert_eq!(layers::order(&project), vec!["time"]);
     }
 
     #[test]
@@ -444,17 +619,14 @@ mod tests {
         assert_eq!(third.id, "time-3");
         assert_eq!(
             layers::order(&project),
-            vec!["background", "time", "time-2", "time-3"]
+            vec!["time", "time-2", "time-3"]
         );
 
         layers::remove_widget(&mut project, "time-2").unwrap();
-        assert_eq!(
-            layers::order(&project),
-            vec!["background", "time", "time-3"]
-        );
+        assert_eq!(layers::order(&project), vec!["time", "time-3"]);
         layers::remove_widget(&mut project, "time-3").unwrap();
         layers::remove_widget(&mut project, "time").unwrap_err(); // ostatni widget chroniony
-        assert_eq!(layers::order(&project), vec!["background", "time"]);
+        assert_eq!(layers::order(&project), vec!["time"]);
     }
 
     #[test]
@@ -468,12 +640,12 @@ mod tests {
             date.time_format.as_deref(),
             Some(crate::date_format::DEFAULT_PATTERN)
         );
-        assert_eq!(layers::order(&project), vec!["background", "time", "date"]);
+        assert_eq!(layers::order(&project), vec!["time", "date"]);
         assert_eq!(layers::describe(&project).last().unwrap().kind, "date");
 
         let js = codegen::generate_index_js(&project);
         assert!(js.contains("L.months[d"), "generated JS: {js}");
-        assert!(js.contains(".getMonth()]"));
+        assert!(js.contains(".m0]"));
 
         // Zmiana wzorca daty trafia zarówno do podglądu (przez `date_format`),
         // jak i do wygenerowanego JS.
@@ -487,8 +659,8 @@ mod tests {
         assert_eq!(updated.time_format.as_deref(), Some("DD.MM.YYYY"));
         assert_eq!(updated.text.as_deref(), Some("01.01.2026"));
         let js = codegen::generate_index_js(&project);
-        assert!(js.contains("p2((d2.getDate()))"), "generated JS: {js}");
-        assert!(js.contains("p2((d2.getMonth() + 1))"));
+        assert!(js.contains("p2((d1.d))"), "generated JS: {js}");
+        assert!(js.contains("p2((d1.m))"));
     }
 
     #[test]
@@ -500,7 +672,7 @@ mod tests {
         assert_eq!(text.data_source, None);
         assert_eq!(text.time_format, None);
         assert_eq!(text.text.as_deref(), Some("Text"));
-        assert_eq!(layers::order(&project), vec!["background", "time", "text"]);
+        assert_eq!(layers::order(&project), vec!["time", "text"]);
         assert_eq!(layers::describe(&project).last().unwrap().kind, "text");
 
         let js = codegen::generate_index_js(&project);
@@ -534,14 +706,14 @@ mod tests {
         assert_eq!(steps.data_source, Some(model::DataSource::Step));
         assert_eq!(steps.text.as_deref(), Some("0"));
         assert_eq!(steps.time_format, None);
-        assert_eq!(layers::order(&project), vec!["background", "time", "steps"]);
+        assert_eq!(layers::order(&project), vec!["time", "steps"]);
         assert_eq!(layers::describe(&project).last().unwrap().kind, "steps");
         assert!(validate(&project).is_empty());
 
         let js = codegen::generate_index_js(&project);
         assert!(js.contains("hmSensor.createSensor(hmSensor.id.STEP)"), "JS: {js}");
         assert!(js.contains("_stepSensor.event.CHANGE"), "JS: {js}");
-        assert!(js.contains("refs[2].setProperty(hmUI.prop.TEXT, _steps)"), "JS: {js}");
+        assert!(js.contains("refs[1].setProperty(hmUI.prop.TEXT, _steps)"), "JS: {js}");
         assert!(js.contains("removeEventListener(stepSensor.event.CHANGE, stepTick)"), "JS: {js}");
         assert!(js.contains("text: \"0\""), "JS: {js}");
 
@@ -617,10 +789,10 @@ mod tests {
     #[test]
     fn date_widgets_live_in_date_category_and_generate_js() {
         let cases = [
-            ("date", "date", "new Date()"),
+            ("date", "date", "_dateFromT(t)"),
             ("weekday-number", "weekday-number", "_weekdayNumber(t)"),
-            ("week-number", "week-number", "_isoWeek()"),
-            ("day-of-year", "day-of-year", "_dayOfYear()"),
+            ("week-number", "week-number", "_isoWeek(_dateFromT(t))"),
+            ("day-of-year", "day-of-year", "_dayOfYear(_dateFromT(t))"),
             ("lunar-date", "lunar-date", "lunar_month"),
             ("festival", "festival", "solar_festival"),
             ("world-clock", "world-clock", "WORLD_CLOCK"),
@@ -659,6 +831,33 @@ mod tests {
             3
         );
         assert_eq!(date_format::day_of_year(3, 11, 2026), 307);
+    }
+
+    #[test]
+    fn date_widgets_never_generate_date_object() {
+        let mut project = Project::starter("No Date");
+        for kind in ["date", "weekday-number", "week-number", "day-of-year"] {
+            widgets::add_widget(&mut project, kind).unwrap();
+        }
+        let js = codegen::generate_index_js(&project);
+        for banned in [
+            "new Date",
+            "Date.UTC",
+            ".getDate(",
+            ".getMonth(",
+            ".getDay(",
+            ".getFullYear(",
+            "getUTCDay",
+            "setUTCDate",
+        ] {
+            assert!(!js.contains(banned), "banned {banned} in js: {js}");
+        }
+        // Pola liczone z czujnika TIME, bez obiektu Date.
+        assert!(js.contains("const _dateFromT = (t) => {"), "{js}");
+        assert!(js.contains("w: _weekdayIndex("), "{js}");
+        assert!(js.contains("L.months[d") && js.contains(".m0]"), "{js}");
+        assert!(js.contains("function _isoWeek(d)"), "{js}");
+        assert!(js.contains("function _dayOfYear(d)"), "{js}");
     }
 
     #[test]
@@ -864,9 +1063,9 @@ mod tests {
         assert!(js.contains("align_v: hmUI.align.BOTTOM"));
 
         let described = layers::describe(&project);
-        assert_eq!(described[1].auto_scale, true);
-        assert_eq!(described[1].text_style, "none");
-        assert_eq!(described[1].v_align, "bottom");
+        assert_eq!(described[0].auto_scale, true);
+        assert_eq!(described[0].text_style, "none");
+        assert_eq!(described[0].v_align, "bottom");
 
         let mut invalid = settings.clone();
         invalid["textStyle"] = serde_json::json!("bogus");
@@ -1096,9 +1295,7 @@ mod tests {
         let project = Project::starter("Emulator");
         let project_file = source.join("project.json");
         std::fs::write(&project_file, serde_json::to_vec_pretty(&project).unwrap()).unwrap();
-        for asset in ["bg.png", "icon.png"] {
-            std::fs::write(source.join("assets").join(asset), b"fake-png").unwrap();
-        }
+        std::fs::write(source.join("assets/icon.png"), b"fake-png").unwrap();
 
         let workspace = prepare_emulator_workspace(&project_file, &root).unwrap();
         assert_eq!(workspace.app_dir, workspace.dir.join("app"));
@@ -1108,10 +1305,13 @@ mod tests {
         assert!(workspace.app_dir.join("watchface/index.js").is_file());
         assert!(workspace
             .app_dir
-            .join("assets/active2round/bg.png")
+            .join("assets/active2round/Preview.png")
             .is_file());
         let app_json = std::fs::read_to_string(workspace.app_dir.join("app.json")).unwrap();
         assert!(app_json.contains("8913153"));
+        // Tylko kopia dla zeus dostaje v3 i `targets`; ZIP dla zegarka zostaje v2.
+        assert!(app_json.contains("\"configVersion\": \"v3\""));
+        assert!(app_json.contains("\"targets\""));
         // Log jest tworzony przez zeus, nie przez generator.
         assert!(!workspace.log.exists());
 
@@ -1163,14 +1363,23 @@ mod tests {
         assert!(validate(&project).is_empty());
 
         let js = codegen::generate_index_js(&project);
-        assert!(js.contains("font: \"fonts/Inter-Regular.ttf\""));
-        assert!(js.contains("Podgrzanie glif"));
+        let flat_font = export_paths::exported_asset_name("fonts/Inter-Regular.ttf");
+        // Jak w działającej referencji: TTF jest przypisany do widgetu.
+        assert!(js.contains(&format!("font: \"{flat_font}\"")), "{js}");
+        assert!(js.contains("char_space: 0"));
+        assert!(js.contains("line_space: 0"));
+        // Referencyjny bootstrap: moduł tarczy jest przypisany, a tło rysowane jako pierwsze.
+        assert!(js.contains("__$$module$$__.module = DeviceRuntimeCore.WatchFace"));
+        assert!(js.contains("hmUI.widget.FILL_RECT"));
+        assert!(!js.contains("x: -1000"), "js: {js}");
 
         let output = root.join("out.zip");
         export_zip(&file, &output).unwrap();
         let archive = std::fs::File::open(&output).unwrap();
         let mut zip = ZipArchive::new(archive).unwrap();
-        assert!(zip.by_name("assets/active2round/fonts/Inter-Regular.ttf").is_ok());
+        assert!(zip
+            .by_name(&format!("assets/{flat_font}"))
+            .is_ok());
 
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -1203,7 +1412,8 @@ mod tests {
             .all(|w| w.font.as_deref() == Some(fonts::DEFAULT_FONT_FILE)));
         assert!(dir.join("assets/fonts/Inter-Regular.ttf").is_file());
         let js = codegen::generate_index_js(&project);
-        assert!(js.contains("font: \"fonts/Inter-Regular.ttf\""));
+        let flat_font = export_paths::exported_asset_name("fonts/Inter-Regular.ttf");
+        assert!(js.contains(&format!("font: \"{flat_font}\"")), "{js}");
 
         std::fs::remove_dir_all(&root).unwrap();
     }

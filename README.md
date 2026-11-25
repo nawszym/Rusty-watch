@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <img src="logo/github-avatar.png" alt="Rusty Watch logo" width="150" />
 
@@ -45,16 +45,17 @@ no code or assets from that project were copied.
 
 | Feature | Description |
 | --- | --- |
-| 🖥️ **1:1 preview** | Round 466 × 466 watchface with the real background and every widget in export order. |
-| 🧱 **Layers** | Panel to hide, reorder and remove widgets. The background is permanently locked at the bottom. |
+| 🖥️ **1:1 preview** | Round 466 × 466 watchface with the fixed dark background and every widget in export order. |
+| 🧱 **Layers** | Panel to hide, reorder and remove widgets. The background is always the same dark fill and has no layer. |
 | 🖱️ **Frames & snapping** | Drag and resize widgets, 16 px grid, alignment guides to edges and centres. |
 | 🕐 **Clocks** | Digital (custom format pattern) and analog (rotating PNG hand sets). |
 | 📅 **Date & time data** | Date with an editable pattern, weekday number, week of year, day of year, lunar date, festivals, world clock. |
 | ❤️ **Health & activity** | Steps, distance, heart rate, stress, PAI, skin temperature, sleep, calories and SpO₂. |
-| 🖼️ **Assets** | TTF fonts, backgrounds, Image-widget graphics and hand sets — shared stores across projects. |
+| 🖼️ **Assets** | TTF fonts, Image-widget graphics, hand sets and status icons — shared stores across projects. |
 | 🌐 **Watch language** | The exported ZIP detects the watch language itself (`pl-PL` → Polish month names and AM/PM). |
 | 📦 **`.zip` export** | Self-contained package: generated JS plus every asset actually used. |
 | 🧪 **Simulator test** | Installs the export in the official Zepp OS Simulator at the click of a button. |
+| 🎛️ **Custom preview data** | Override time, date and sensor values in the editor; controls are filtered to the widgets on your watchface and never affect the exported `.zip`. |
 
 ### 🧩 Available widgets
 
@@ -74,16 +75,32 @@ read-only catalog of supported types. Weekday numbering defaults to **Monday = 1
 | Store (`%APPDATA%\RustyWatch\…`) | Contents |
 | --- | --- |
 | `Fonts` | TTF fonts; bundled **Inter** (SIL OFL 1.1) by default. The preview uses the exact TTF exported to the watch. |
-| `Backgrounds` | Backgrounds — including built-in **Black (default)** (`black.png`) and **Starry** (`starry.png`) plus user imports. |
 | `Images` | Graphics for the **Image** widget. |
 | `Hands` | Analog hand sets (bundled **Classic** and **Light**). |
 | `Localization` | UI language catalogs — add your own without rebuilding the app. |
 
 Selected assets are copied into the project folder, so **Save as…** and ZIP export
-never depend on the application store. Backgrounds are prepared at exactly 466 × 466
+never depend on the application store. Hand textures are cropped to their visible pixels
 (`Cover`, no white edges) because ZeppOS cannot scale an `IMG` resource at runtime.
 
 ### 📤 Export and simulator
+
+Clicking **Export** first renders `preview.png` (frame `7`, showing `21:37:40`) and a
+7-frame animated, **infinitely looping** `preview.gif` (hours `06`–`21`, ~1.7 s per frame). A small
+progress bar on the Export button counts `1/7 … 7/7` and keeps animating while the
+GIF is encoded; the dialog opens **only after** the GIF is ready and shows it **cropped
+to the round watchface** above the watchface details and the **Export ZIP** button. Both
+files are saved next to `project.json` and are **not** included in the `.zip`.
+
+The previews are rendered entirely in Rust (`crates/rusty-core/src/preview.rs`) — never
+with offscreen WinUI controls, which previously left a watchface-image artifact under
+the editor. The 7 frames use hardcoded presets (7 real dates 2022-01-03 … 2022-07-31, weekdays Monday…Sunday, months January…July; strictly increasing time
+seconds, forced HR extremes `56`/`120`), while each frame gets its **own random date**,
+so month/day widgets visibly change. All date widgets in a frame share that single
+date; steps are derived from distance (`1300`–`1400` steps/km), so `12.3 km` shows about
+`16 000` steps. Battery decreases deterministically `100% → 10%`. Everything outside
+the 233 px radius is opaque black in both formats. Custom preview data is ignored by
+the generated files.
 
 Export writes a `.zip` straight into the project folder — no save picker and no extra
 steps. You can test it in the official
@@ -97,6 +114,22 @@ unpacks the package and installs it with
 > testing validates the JS build/runtime but does not replace a real-device check.
 
 Only the **`.zip`** format is exported (never `.zpk`).
+
+### 🖥️ System category: battery and STATUS icons
+
+The **System** catalog category contains **Battery** (from the `BATTERY` sensor, centred on
+the watchface by default) and four status icons: **DND**, **LOCK**, **BLUETOOTH** and **ALARM** —
+all directly in System, with no subcategory. New status icons form one centred horizontal row.
+They use `hmUI.widget.IMG_STATUS` — ZeppOS shows or hides each icon itself, so no extra sensors
+or timers are generated. Icon packs are read dynamically from `%APPDATA%\RustyWatch\Status\<pack>\`;
+a valid pack must contain **all four** square PNGs: `alarm.png`, `dnd.png`, `bluetooth.png`,
+`lock.png`. The only bundled pack is **Classic** (the default) in `native/RustyWatch/Assets/Status/`.
+Choosing a pack in the inspector (or in **Assets → Status icons**) copies it into
+`<project>/assets/status/<pack>/`, keeping the exported ZIP self-contained. Status layers support
+the standard blue-move / red-scale gesture (double-click to toggle scaling). In the 7-frame preview
+the icons appear only in selected frames; frame **7** (`21:37:40`) shows all four and is the source
+of `preview.png`. Pack thumbnails are generated in Rust (hands at 21:37:11, status icons in a 2×2
+grid), and the Assets page shows at most three tiles per row.
 
 ### 🌐 Interface and watchface languages
 
@@ -119,11 +152,15 @@ is open source, so you can extend it yourself with new widgets, formats and lang
 
 **[`docs/TECHNICAL.md`](docs/TECHNICAL.md)** is a file-by-file deep-dive into how the
 application actually works: the `Project`/`Widget` data model, layer ordering, frame
-geometry and snapping math, all 54 `rw_*` FFI exports, the four asset stores and their
+geometry and snapping math, all 57 `rw_*` FFI exports, the four asset stores and their
 scaling algorithms, the shared time/date/locale engine, generated `watchface/index.js`
 (with sensors, timers and per-widget updates), ZIP packaging, and the WinUI preview,
 inspector, navigation and simulator integration. It documents the exact path from an
 editor click to a watchface running on the watch.
+
+The **Custom data** preview option (with its gear button) stores manual overrides in app
+settings only — never in `project.json` — so the exported watchface keeps reading real
+watch sensors. See `docs/TECHNICAL.md` §11.7.
 
 ### 🏗️ Architecture
 
@@ -134,7 +171,7 @@ editor click to a watchface running on the watch.
 └───────────────────────────┬──────────────────────────────────┘
                             ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  crates/rusty-ffi  — the only C ABI bridge (54 exports)     │
+│  crates/rusty-ffi  — the only C ABI bridge (57 exports)     │
 └───────────────────────────┬──────────────────────────────────┘
                             ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -176,9 +213,9 @@ modules, which is what keeps them 1:1.
 rusty-watch/
 ├── crates/
 │   ├── rusty-core/src/      # model, project, codegen, widgets, layers, formats,
-│   │                        #  asset stores (fonts/images/backgrounds/hands), zip, validation
+│   │                        #  asset stores (fonts/images/hands/status), zip, validation
 │   ├── rusty-cli/src/       # CLI: new | validate | export | inspect
-│   └── rusty-ffi/src/       # rw_* C exports (54 functions)
+│   └── rusty-ffi/src/       # rw_* C exports (57 functions)
 ├── native/RustyWatch/       # the only frontend: WinUI 3
 │   ├── MainWindow.xaml(.cs) # shell, HOME, editor, assets, settings, dialogs
 │   ├── RustNative.cs        # P/Invoke bridge to rusty_ffi.dll
@@ -236,11 +273,11 @@ cargo run -p rusty-cli -- inspect .\my-watch\My_Watch.zip
 ```
 
 `--author` and `--app-id` are optional (default author "Rusty Watch", random App ID).
-Name, author and App ID land in `app.json` as `appName`, `vender`, `appId` and `i18n.*.appName`.
+Name, author and App ID land in `app.json` as `appName`, `appId` (`vender` is always `zepp` for reference parity) and `i18n.*.appName`.
 
 ### 🧪 Tests and verification
 
-1. `cargo test --workspace` — 84 core + 25 FFI tests.
+1. `cargo test --workspace` — 89 core + 26 FFI tests.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. Launch the app and check affected screens in **EN and PL**.
 4. Round-trip `new → export → open → export` must preserve data.
@@ -250,20 +287,19 @@ Name, author and App ID land in `app.json` as `appName`, `vender`, `appId` and `
 
 1. **Create a project** on HOME — the folder is created under the projects root from App Settings.
 2. **Add widgets** from the flyout above the preview and set them in the inspector (edits autosave).
-3. **Add assets** in the Assets tab (font, background, image, hand set).
+3. **Add assets** in the Assets tab (font, image, hand set, status icons).
 4. **Export the ZIP** with Export — it lands next to `project.json`.
 5. **Test** in the simulator (optional) and install on the watch.
 
 ### 📦 Exported `.zip` layout
 
 ```
-app.json                    # v3 manifest with defaultLanguage; metadata from the project
+app.json                    # flat v2 manifest (no `targets`) with defaultLanguage, packageInfo and all Active 2 deviceSources
 app.js                      # entry point
 watchface/index.js          # generated watchface code (hmUI/hmSensor/timer)
-assets/active2round/bg.png  # background prepared at 466 × 466
-assets/active2round/icon.png
-assets/active2round/fonts/… # used TTFs
-assets/active2round/images/…, backgrounds/…, hands/… # used assets
+assets/Preview.png          # temporary 314x314 placeholder (scaled app logo) used as the watchface icon (round-masked, transparent corners)
+assets/fonts/…              # used TTFs
+assets/images/…, hands/…, status/… # used assets
 ```
 
 ### 🤖 Documentation

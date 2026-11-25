@@ -9,4 +9,7 @@ serde.workspace = true
 serde_json.workspace = true
 zip.workspace = true
 image.workspace = true
+gif.workspace = true
+ab_glyph.workspace = true
+fastrand.workspace = true
 anyhow.workspace = true

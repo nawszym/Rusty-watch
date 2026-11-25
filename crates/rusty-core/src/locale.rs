@@ -1,9 +1,10 @@
 //! Język tekstów rysowanych na tarczy zegarka.
 //!
-//! Tarcza sama odczytuje język systemu przez klasyczne API `hmSetting.getLanguage()`
-//! ( ZeppOS 1.x). Zgodnie z mapą wielojęzyczności Zepp `9` to `pl-PL`; każdy inny
-//! język daje angielski. Dzięki temu ten sam plik ZIP działa w obu wersjach językowych
-//! bez jakiejkolwiek konfiguracji po stronie użytkownika.
+//! Tarcza sama odczytuje język systemu przez `DeviceRuntimeCore.HmUtils.getLanguage()`
+//! (tak jak oficjalny bootstrap `app.js`), z awaryjnym `hmSetting.getLanguage()`.
+//! Zgodnie z mapą wielojęzyczności Zepp `9` to `pl-PL`; każdy inny język daje angielski.
+//! Dzięki temu ten sam plik ZIP działa w obu wersjach językowych bez konfiguracji.
+//! Blok jest emitowany wewnątrz IIFE `watchface/index.js`, nigdy na poziomie modułu.
 
 /// Wartość zwracana przez `hmSetting.getLanguage()` dla `pl-PL`.
 pub const POLISH_LANGUAGE_ID: i32 = 9;
@@ -119,6 +120,12 @@ impl WatchfaceLocale {
     /// `typeof` i `try` chronią przed brakiem `hmSetting` w starszych runtime'ach.
     pub fn js_detection() -> &'static str {
         "function _watchLanguage() {\n\
+         \x20 try {\n\
+         \x20   if (typeof DeviceRuntimeCore !== 'undefined' && DeviceRuntimeCore.HmUtils &&\n\
+         \x20       typeof DeviceRuntimeCore.HmUtils.getLanguage === 'function') {\n\
+         \x20     return DeviceRuntimeCore.HmUtils.getLanguage()\n\
+         \x20   }\n\
+         \x20 } catch (e) {}\n\
          \x20 try {\n\
          \x20   if (typeof hmSetting !== 'undefined' && typeof hmSetting.getLanguage === 'function') return hmSetting.getLanguage()\n\
          \x20 } catch (e) {}\n\

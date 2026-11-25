@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <img src="logo/github-avatar.png" alt="Logo Rusty Watch" width="150" />
 
@@ -55,6 +55,7 @@ Projekt powstał jako własna implementacja inspirowana edytorem
 | 🌐 **Język na zegarku** | Eksportowany ZIP sam wykrywa język (`pl-PL` → polskie nazwy miesięcy i AM/PM). |
 | 📦 **Eksport `.zip`** | Paczka samowystarczalna: zawiera wygenerowany JS i wszystkie użyte zasoby. |
 | 🧪 **Test w symulatorze** | Instalacja eksportu w oficjalnym Zepp OS Simulator jednym przyciskiem. |
+| 🎛️ **Niestandardowe dane podglądu** | Ręczne nadpisanie czasu, daty i wartości czujników w edytorze — pola są filtrowane do widgetów na tarczy i nigdy nie trafiają do `.zip`. |
 
 ### 🧩 Dostępne widgety
 
@@ -74,7 +75,6 @@ to tylko podgląd obsługiwanych typów. Numeracja dnia tygodnia domyślnie przy
 | Magazyn (`%APPDATA%\RustyWatch\…`) | Zawartość |
 | --- | --- |
 | `Fonts` | Czcionki TTF; domyślnie **Inter** (SIL OFL 1.1). Podgląd używa dokładnie tego samego pliku, który trafia do tarczy. |
-| `Backgrounds` | Tła — w tym wbudowane **Black (default)** (`black.png`) i **Starry** (`starry.png`) oraz obrazy użytkownika. |
 | `Images` | Grafiki dla widgetu **Image**. |
 | `Hands` | Zestawy wskazówek do zegara analogowego (wbudowane **Classic** i **Light**). |
 | `Localization` | Katalogi języków interfejsu — można dodawać własne bez przebudowy aplikacji. |
@@ -84,6 +84,20 @@ wymagają już magazynu aplikacji. Tło jest przygotowywane do dokładnie 466 ×
 (tryb `Cover`, bez białych krawędzi), ponieważ ZeppOS nie skaluje zasobów `IMG` w runtime.
 
 ### 📤 Eksport i symulator
+
+Kliknięcie **Export** najpierw generuje `preview.png` (klatka `21`, czyli `21:37`) i 7-klatkowy,
+animowany, **zapętlony w nieskończoność** `preview.gif` (godziny `00`–`23`). Na przycisku pojawia się
+mały pasek postępu (`1/7` … `7/7`), który podczas kodowania GIF-a nadal się ładuje; okno eksportu
+otwiera się **dopiero po** zapisaniu GIF-a i pokazuje animację **przyciętą do okręgu tarczy** nad
+danymi tarczy oraz przyciskiem **Export ZIP**. Oba pliki lądują obok `project.json` i **nie trafiają
+do `.zip`**.
+
+Podglądy rysuje wyłącznie Rust (`crates/rusty-core/src/preview.rs`) — bez offscreen-renderowania
+kontrolek WinUI, które dawniej zostawiały artefakt pod edytorem. 7 klatek ma zahardkodowany czas (godziny 6,9,12,15,18,20,21, minuty i sekundy ściśle rosnące, skrajności tętna 56/120), a każda dostaje **inną, prawdziwą datę**: 2022-01-03 (poniedziałek) … 2022-07-31 (niedziela), miesiące styczeń…lipiec. Wszystkie widgety daty
+w klatce korzystają z tej samej daty, kroki liczone są z dystansu (`1300`–`1400` kroków/km),
+więc `12,3 km` pokazuje około `16 000` kroków. Bateria maleje deterministycznie `100% → 10%`.
+Poza promieniem `233` oba formaty mają czarne, nieprzezroczyste tło. Niestandardowe dane podglądu
+nie wpływają na generowane pliki.
 
 Eksport tworzy plik `.zip` bezpośrednio w folderze projektu — bez okna zapisu i bez
 kolejnych kroków. Tarczę możesz przetestować w oficjalnym
@@ -96,6 +110,10 @@ rozpakowuje paczkę i instaluje ją poleceniem `zeus install --target "Amazfit A
 > Test w symulatorze sprawdza build i runtime JS, ale nie zastępuje testu na fizycznym zegarku.
 
 Eksport obsługuje wyłącznie format **`.zip`** (nigdy `.zpk`).
+
+### 🖥️ Kategoria SYSTEM: bateria i ikony STATUS
+
+Kategoria **SYSTEM** zawiera **Baterię** (z czujnika `BATTERY`, domyślnie wyśrodkowaną na tarczy) oraz cztery ikony **DND**, **LOCK**, **BLUETOOTH** i **ALARM** — bezpośrednio w SYSTEM, bez podkategorii. Nowe ikony tworzą jedną wycentrowaną linię. Używają `hmUI.widget.IMG_STATUS` — ZeppOS sam pokazuje lub ukrywa ikonę, więc nie generujemy własnych czujników ani timerów. Pakiety są skanowane z `%APPDATA%\RustyWatch\Status\<paczka>\`; ważna paczka musi mieć **wszystkie cztery** kwadratowe pliki: `alarm.png`, `dnd.png`, `bluetooth.png`, `lock.png`. Wbudowany jest tylko pakiet **Classic** (domyślny, jak czarne tło) w `native/RustyWatch/Assets/Status/`. Wybór paczki w inspektorze (lub w **Zasoby → Ikony statusu**) kopiuje ją do `<projekt>/assets/status/<paczka>/`, więc ZIP pozostaje samowystarczalny. Ikony obsługująstandardowy tryb niebieski-przesuw / czerwony-skalowanie (dwuklik włącza skalowanie). W podglądzie 7 klatek ikony pojawiają się tylko w wybranych klatkach; klatka **7** (`21:37:40`) ma wszystkie cztery i to ona trafia do `preview.png`. Miniaturki pakietów generuje Rust (wskazówki na 21:37:11, statusy w układzie 2×2), a zakładka Zasoby pokazuje maksymalnie trzy kafelki w rzędzie.
 
 ### 🌐 Języki interfejsu i tarczy
 
@@ -119,10 +137,14 @@ więc rozszerzenia (nowe widgety, formaty, języki) możesz dodawać samodzielni
 
 **[`docs/TECHNICAL.md`](docs/TECHNICAL.md)** to opis działania aplikacji plik po pliku:
 model `Project`/`Widget`, kolejność warstw, matematyka ramek i przyciągania, wszystkie
-54 eksporty `rw_*`, cztery magazyny zasobów i algorytmy skalowania, współdzielony silnik
+57 eksportów `rw_*`, cztery magazyny zasobów i algorytmy skalowania, współdzielony silnik
 czasu/daty/lokalizacji, generowany `watchface/index.js` (sensory, timery, aktualizacje
 widgetów), pakowanie ZIP oraz podgląd, inspektor, nawigacja i integracja z symulatorem
 w WinUI. Dokument śledzi dokładną drogę od kliknięcia w edytorze do tarczy na zegarku.
+
+Opcja **Niestandardowe dane** (z przyciskiem zębatki) przechowuje ręczne wartości wyłącznie
+w ustawieniach aplikacji — nigdy w `project.json` — więc eksportowana tarcza nadal czyta
+prawdziwe czujniki zegarka. Zobacz `docs/TECHNICAL.md` §11.7.
 
 ### 🏗️ Architektura
 
@@ -133,7 +155,7 @@ w WinUI. Dokument śledzi dokładną drogę od kliknięcia w edytorze do tarczy 
 └───────────────────────────┬──────────────────────────────────┘
                             ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  crates/rusty-ffi  — jedyny most C ABI (54 eksporty)        │
+│  crates/rusty-ffi  — jedyny most C ABI (57 eksportów)        │
 └───────────────────────────┬──────────────────────────────────┘
                             ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -177,7 +199,7 @@ rusty-watch/
 │   ├── rusty-core/src/      # model, project, codegen, widgets, layers, formaty,
 │   │                        #  zasoby (fonts/images/backgrounds/hands), zip, walidacja
 │   ├── rusty-cli/src/       # CLI: new | validate | export | inspect
-│   └── rusty-ffi/src/       # eksporty rw_* (54 funkcje)
+│   └── rusty-ffi/src/       # eksporty rw_* (57 funkcji)
 ├── native/RustyWatch/       # jedyny frontend WinUI 3
 │   ├── MainWindow.xaml(.cs) # shell, HOME, edytor, zasoby, ustawienia, dialogi
 │   ├── RustNative.cs        # P/Invoke do rusty_ffi.dll
@@ -239,7 +261,7 @@ Nazwa, autor i App ID trafiają do `app.json` jako `appName`, `vender`, `appId` 
 
 ### 🧪 Testy i weryfikacja
 
-1. `cargo test --workspace` — 84 testy core + 25 FFI.
+1. `cargo test --workspace` — 89 testów core + 26 FFI.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 błędów, 0 ostrzeżeń.
 3. Uruchom aplikację i sprawdź ekrany w **EN i PL**.
 4. Round-trip `new → export → open → export` musi zachować dane.
@@ -249,20 +271,19 @@ Nazwa, autor i App ID trafiają do `app.json` jako `appName`, `vender`, `appId` 
 
 1. **Utwórz projekt** na stronie HOME — folder powstaje w katalogu projektów z App Settings.
 2. **Dodaj widgety** z flyoutu nad podglądem i ustaw ich inspektora (zmiany zapisują się automatycznie).
-3. **Dodaj zasoby** w zakładce Assets (czcionka, tło, obraz, wskazówki).
+3. **Dodaj zasoby** w zakładce Assets (czcionka, obraz, wskazówki, ikony statusu).
 4. **Eksportuj ZIP** przyciskiem Export — plik ląduje obok `project.json`.
 5. **Przetestuj** w symulatorze (opcjonalnie) i wgraj na zegarek.
 
 ### 📦 Zawartość eksportowanego `.zip`
 
 ```
-app.json                    # manifest v3 (defaultLanguage), metadane z projektu
+app.json                    # płaski manifest v2 (bez bloku `targets`; defaultLanguage, packageInfo, 8 deviceSource), metadane z projektu
 app.js                      # punkt wejścia
 watchface/index.js          # generowany kod tarcz (hmUI/hmSensor/timer)
-assets/active2round/bg.png  # tło przygotowane do 466 × 466
-assets/active2round/icon.png
-assets/active2round/fonts/… # użyte TTF
-assets/active2round/images/…, backgrounds/…, hands/… # użyte zasoby
+assets/Preview.png          # tymczasowy placeholder 314x314 (przeskalowane logo aplikacji) jako ikona tarczy (maskowany do okręgu, przezroczyste rogi)
+assets/fonts/…              # użyte TTF
+assets/images/…, hands/…, status/… # użyte zasoby
 ```
 
 ### 🤖 Dokumentacja

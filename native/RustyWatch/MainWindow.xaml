@@ -9,6 +9,78 @@
 
     <Grid x:Name="RootGrid" Background="#1C1C20"
           DoubleTapped="RootGrid_DoubleTapped">
+        <Grid.Resources>
+            <!-- Kompaktowy układ opcji podglądu: ikona/✓ i tekst w jednym wierszu,
+                 z odstępem jak w natywnym menu Windows 11 (bez osobnej kolumny). -->
+            <Style x:Key="PreviewOptionItemStyle" TargetType="muxc:ToggleMenuFlyoutItem">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="muxc:ToggleMenuFlyoutItem">
+                            <Grid x:Name="RootGrid" Height="32" Padding="8,0,12,0"
+                                  Background="Transparent" CornerRadius="4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="44" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon x:Name="CheckGlyph" Glyph="&#xE73E;" FontSize="12"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Visibility="Collapsed"
+                                          Foreground="{TemplateBinding Foreground}" />
+                                <ContentPresenter x:Name="IconPresenter" Grid.Column="0"
+                                                  Content="{TemplateBinding Icon}"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center" />
+                                <TextBlock x:Name="ItemText" Grid.Column="1"
+                                           Text="{TemplateBinding Text}" FontSize="12"
+                                           Foreground="{TemplateBinding Foreground}"
+                                           VerticalAlignment="Center" />
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="PointerOver">
+                                            <VisualState.Setters>
+                                                <Setter Target="RootGrid.Background"
+                                                        Value="{ThemeResource SystemControlHighlightListLowBrush}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <VisualState.Setters>
+                                                <Setter Target="RootGrid.Background"
+                                                        Value="{ThemeResource SystemControlHighlightListMediumBrush}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled">
+                                            <VisualState.Setters>
+                                                <Setter Target="ItemText.Foreground"
+                                                        Value="{ThemeResource SystemControlDisabledBaseMediumLowBrush}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                    <VisualStateGroup x:Name="CheckStates">
+                                        <VisualState x:Name="Checked">
+                                            <VisualState.Setters>
+                                                <Setter Target="CheckGlyph.Visibility" Value="Visible" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Unchecked">
+                                            <VisualState.Setters>
+                                                <Setter Target="CheckGlyph.Visibility" Value="Collapsed" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Indeterminate">
+                                            <VisualState.Setters>
+                                                <Setter Target="CheckGlyph.Visibility" Value="Collapsed" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -344,11 +416,23 @@
                                         <TextBlock Text="{Binding Strings[PreviewOptions]}" FontSize="12" />
                                     </StackPanel>
                                     <Button.Flyout>
-                                        <muxc:MenuFlyout Placement="Bottom">
+                                        <muxc:MenuFlyout x:Name="PreviewOptionsFlyout" Placement="Bottom">
                                             <muxc:ToggleMenuFlyoutItem x:Name="PreviewGridToggle"
+                                                                       Style="{StaticResource PreviewOptionItemStyle}"
                                                                        Click="PreviewGridToggle_Click" />
                                             <muxc:ToggleMenuFlyoutItem x:Name="UnselectedOutlineToggle"
+                                                                       Style="{StaticResource PreviewOptionItemStyle}"
                                                                        Click="UnselectedOutlineToggle_Click" />
+                                            <muxc:ToggleMenuFlyoutItem x:Name="CustomDataToggle"
+                                                                       Style="{StaticResource PreviewOptionItemStyle}"
+                                                                       Click="CustomDataToggle_Click" />
+                                            <muxc:ToggleMenuFlyoutItem x:Name="CustomDataEditItem"
+                                                                       Style="{StaticResource PreviewOptionItemStyle}"
+                                                                       Click="CustomDataEdit_Click">
+                                                <muxc:ToggleMenuFlyoutItem.Icon>
+                                                    <FontIcon Glyph="&#xE713;" FontSize="14" />
+                                                </muxc:ToggleMenuFlyoutItem.Icon>
+                                            </muxc:ToggleMenuFlyoutItem>
                                         </muxc:MenuFlyout>
                                     </Button.Flyout>
                                 </Button>
@@ -407,22 +491,13 @@
                                                          nakładał się na strzałki i zasłaniał przesuwanie warstw. -->
                                                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2"
                                                                 VerticalAlignment="Center">
-                                                        <!-- Tło jest zablokowane: zamiast przycisków jest native lock. -->
-                                                        <FontIcon Glyph="&#xE72E;" FontSize="11"
-                                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                                  Visibility="{Binding LockVisibility}"
-                                                                  AutomationProperties.Name="{Binding LockText}"
-                                                                  ToolTipService.ToolTip="{Binding LockText}"
-                                                                  VerticalAlignment="Center" />
                                                         <Button Tag="{Binding Id}" Click="ToggleLayerVisibility_Click"
-                                                                Visibility="{Binding VisibilityButtonVisibility}"
                                                                 AutomationProperties.Name="{Binding VisibilityText}"
                                                                 ToolTipService.ToolTip="{Binding VisibilityText}"
                                                                 Padding="6,4" MinWidth="0">
                                                             <FontIcon Glyph="{Binding VisibilityGlyph}" FontSize="11" />
                                                         </Button>
                                                         <Button Tag="{Binding Id}" Click="LayerUp_Click"
-                                                                Visibility="{Binding ArrowsVisibility}"
                                                                 IsEnabled="{Binding CanMoveUp}"
                                                                 AutomationProperties.Name="{Binding MoveUpText}"
                                                                 ToolTipService.ToolTip="{Binding MoveUpText}"
@@ -430,7 +505,6 @@
                                                             <FontIcon Glyph="&#xE70E;" FontSize="11" />
                                                         </Button>
                                                         <Button Tag="{Binding Id}" Click="LayerDown_Click"
-                                                                Visibility="{Binding ArrowsVisibility}"
                                                                 IsEnabled="{Binding CanMoveDown}"
                                                                 AutomationProperties.Name="{Binding MoveDownText}"
                                                                 ToolTipService.ToolTip="{Binding MoveDownText}"
@@ -438,7 +512,6 @@
                                                             <FontIcon Glyph="&#xE70D;" FontSize="11" />
                                                         </Button>
                                                         <Button Tag="{Binding Id}" Click="RemoveWidget_Click"
-                                                                Visibility="{Binding RemoveVisibility}"
                                                                 AutomationProperties.Name="{Binding RemoveText}"
                                                                 ToolTipService.ToolTip="{Binding RemoveText}"
                                                                 Padding="6,4" MinWidth="0">
@@ -452,31 +525,6 @@
                                 </Border>
 
                                 <TextBlock x:Name="InspectorTitle" Text="" FontSize="18" FontWeight="SemiBold" />
-                                <TextBlock x:Name="BackgroundLockedPanel" Visibility="Collapsed"
-                                           Text="{Binding Strings[BackgroundLockedText]}"
-                                           FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                           TextWrapping="Wrap" Margin="0,2,0,14" />
-
-                                <!-- Ustawienia warstwy tła (warstwa jest zablokowana, ale obraz można zmienić). -->
-                                 <StackPanel x:Name="BackgroundSettingsPanel" Visibility="Collapsed"
-                                             Spacing="4" Margin="0,4,0,14">
-                                    <TextBlock Text="{Binding Strings[BackgroundImageLabel]}" FontSize="11"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    <ComboBox x:Name="BackgroundComboBox" HorizontalAlignment="Stretch"
-                                              DisplayMemberPath="Name"
-                                              SelectionChanged="BackgroundComboBox_SelectionChanged" />
-                                    <CheckBox x:Name="BackgroundAutoScaleCheckBox"
-                                              Content="{Binding Strings[BackgroundAutoScale]}"
-                                              Checked="BackgroundAutoScaleCheckBox_Changed"
-                                              Unchecked="BackgroundAutoScaleCheckBox_Changed"
-                                              Margin="0,8,0,0" />
-                                    <TextBlock Text="{Binding Strings[BackgroundAutoScaleDesc]}" FontSize="10"
-                                               TextWrapping="Wrap"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    <Button x:Name="ClearBackgroundButton"
-                                            Content="{Binding Strings[BackgroundReset]}"
-                                            Click="ClearBackgroundButton_Click" Margin="0,8,0,0" />
-                                 </StackPanel>
 
                                  <!-- Ustawienia zegara analogowego. -->
                                  <StackPanel x:Name="AnalogSettingsPanel" Visibility="Collapsed"
@@ -505,7 +553,29 @@
                                               Visibility="Collapsed" Click="OptionalHand_Click" />
                                  </StackPanel>
 
-                                 <!-- Ustawienia widgetu IMAGES: obrazek z magazynu Images i dopasowanie do ramki. -->
+                                 <!-- Ustawienia ikony STATUS: paczka z %APPDATA%\RustyWatch\Status. -->
+                                  <StackPanel x:Name="StatusSettingsPanel" Visibility="Collapsed"
+                                              Spacing="4" Margin="0,4,0,0">
+                                     <TextBlock Text="{Binding Strings[StatusIconPackLabel]}" FontSize="11"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                     <ComboBox x:Name="StatusPackComboBox" HorizontalAlignment="Stretch"
+                                               DisplayMemberPath="Id"
+                                               SelectionChanged="StatusPackComboBox_SelectionChanged" />
+                                     <TextBlock Text="{Binding Strings[StatusIconPackDesc]}" FontSize="10"
+                                                TextWrapping="Wrap" Margin="0,4,0,0"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                     <Button x:Name="StatusScaleModeButton" Click="ScaleModeButton_Click"
+                                             HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                             Margin="0,8,0,0"
+                                             AutomationProperties.Name="{Binding Strings[ScaleModeTitle]}">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                           <FontIcon Glyph="&#xE8B4;" FontSize="12" />
+                                           <TextBlock x:Name="StatusScaleModeButtonText" Text="" FontSize="11" />
+                                        </StackPanel>
+                                     </Button>
+                                  </StackPanel>
+
+                                  <!-- Ustawienia widgetu IMAGES: obrazek z magazynu Images i dopasowanie do ramki. -->
                                  <StackPanel x:Name="ImagesSettingsPanel" Visibility="Collapsed"
                                              Spacing="4" Margin="0,4,0,0">
                                     <TextBlock Text="{Binding Strings[WidgetImageLabel]}" FontSize="11"
@@ -834,45 +904,47 @@
                                     Background="{ThemeResource ControlFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
                                     BorderThickness="1">
-                                <ListView x:Name="FontsList" SelectionMode="Single"
-                                          SelectionChanged="FontsList_SelectionChanged"
-                                          Padding="0"
-                                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
-                                    <ListView.ItemContainerStyle>
-                                        <Style TargetType="ListViewItem">
-                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                            <Setter Property="MinHeight" Value="0" />
-                                            <Setter Property="Padding" Value="0" />
-                                        </Style>
-                                    </ListView.ItemContainerStyle>
-                                    <ListView.ItemTemplate>
-                                        <DataTemplate x:DataType="local:FontItem">
-                                            <Grid ColumnSpacing="14" Padding="10,10">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="44" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <Border Width="44" Height="44" CornerRadius="8"
-                                                        Background="{ThemeResource AccentFillColorDefaultBrush}">
-                                                    <TextBlock Text="Aa" FontSize="19" FontWeight="SemiBold"
-                                                               Foreground="White" FontFamily="{Binding PreviewFontFamily}"
-                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                                </Border>
-                                                <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Family}" FontSize="14"
-                                                               FontWeight="SemiBold" />
-                                                    <TextBlock Text="{Binding File}" FontSize="11"
-                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                               TextWrapping="Wrap" />
-                                                </StackPanel>
-                                                <TextBlock Grid.Column="2" Text="{Binding Badge}"
-                                                           FontSize="11" VerticalAlignment="Center"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ListView.ItemTemplate>
-                                </ListView>
+                                <GridView x:Name="FontsList" SelectionMode="Single"
+                          SizeChanged="AssetGrid_SizeChanged"
+                          Padding="0"
+                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                          <GridView.ItemContainerStyle>
+                            <Style TargetType="GridViewItem">
+                              <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                              <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                              <Setter Property="Padding" Value="0" />
+                            </Style>
+                          </GridView.ItemContainerStyle>
+                          <GridView.ItemsPanel>
+                            <ItemsPanelTemplate>
+                              <ItemsWrapGrid Orientation="Horizontal" ItemWidth="200" ItemHeight="168" />
+                            </ItemsPanelTemplate>
+                          </GridView.ItemsPanel>
+                          <GridView.ItemTemplate>
+                            <DataTemplate x:DataType="local:FontItem">
+                              <Grid Padding="8" RowSpacing="4" VerticalAlignment="Stretch">
+                              <Grid.RowDefinitions>
+                                <RowDefinition Height="96" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                              </Grid.RowDefinitions>
+                              <Border CornerRadius="8" Background="#FF0F6CBD">
+                                <TextBlock FontSize="22" Foreground="White"
+                                           FontFamily="{Binding PreviewFontFamily}"
+                                           TextAlignment="Center" VerticalAlignment="Center"
+                                           LineHeight="27" TextWrapping="NoWrap">
+                                  <Run Text="AaBbCc" /><LineBreak /><Run Text="012345" />
+                                </TextBlock>
+                              </Border>
+                              <TextBlock Grid.Row="1" Text="{Binding Family}" FontSize="12"
+                                         FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                              <TextBlock Grid.Row="2" Text="{Binding Badge}" FontSize="10"
+                                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                         TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                            </DataTemplate>
+                          </GridView.ItemTemplate>
+                        </GridView>
                             </Border>
 
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -886,74 +958,6 @@
                             <TextBlock x:Name="AssetsStatusText" FontSize="12" TextWrapping="Wrap"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
-                            <TextBlock Text="{Binding Strings[AssetsBackgroundCategory]}" FontSize="18"
-                                       FontWeight="SemiBold" Margin="0,18,0,0" />
-                            <TextBlock Text="{Binding Strings[AssetsBackgroundDesc]}" FontSize="12"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       TextWrapping="Wrap" />
-
-                            <Border Padding="12" CornerRadius="6"
-                                    Background="{ThemeResource ControlFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
-                                    BorderThickness="1">
-                                <ListView x:Name="BackgroundsList" SelectionMode="Single"
-                                          SelectionChanged="BackgroundsList_SelectionChanged"
-                                          Padding="0"
-                                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
-                                    <ListView.ItemContainerStyle>
-                                        <Style TargetType="ListViewItem">
-                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                            <Setter Property="MinHeight" Value="0" />
-                                            <Setter Property="Padding" Value="0" />
-                                        </Style>
-                                    </ListView.ItemContainerStyle>
-                                    <ListView.ItemTemplate>
-                                        <DataTemplate x:DataType="local:ImageItem">
-                                            <Grid ColumnSpacing="14" Padding="10,8">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="76" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <Border Width="76" Height="50" CornerRadius="6">
-                                                    <Border.Background>
-                                                        <ImageBrush ImageSource="{Binding Preview}"
-                                                                    Stretch="UniformToFill" />
-                                                    </Border.Background>
-                                                </Border>
-                                                <StackPanel Grid.Column="1" Spacing="4"
-                                                            VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding DisplayName}" FontSize="14"
-                                                               FontWeight="SemiBold" />
-                                                    <TextBlock Text="{Binding Dimensions}" FontSize="11"
-                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                </StackPanel>
-                                                <TextBlock Grid.Column="2" Text="{Binding SizeText}"
-                                                           FontSize="11" VerticalAlignment="Center"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ListView.ItemTemplate>
-                                </ListView>
-                            </Border>
-
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Button x:Name="AddBackgroundButton"
-                                        Content="{Binding Strings[AssetsAddBackground]}"
-                                        Click="AddBackgroundButton_Click" />
-                                <Button x:Name="RemoveBackgroundButton"
-                                        Content="{Binding Strings[AssetsRemoveBackground]}"
-                                        Click="RemoveBackgroundButton_Click" IsEnabled="False" />
-                                <Button x:Name="UseBackgroundButton"
-                                        Content="{Binding Strings[AssetsUseBackground]}"
-                                        Click="UseBackgroundButton_Click" IsEnabled="False" />
-                                <Button x:Name="OpenBackgroundsFolderButton"
-                                        Content="{Binding Strings[AssetsOpenBackgroundsFolder]}"
-                                        Click="OpenBackgroundsFolderButton_Click" />
-                            </StackPanel>
-                            <TextBlock x:Name="BackgroundStatusText" FontSize="12" TextWrapping="Wrap"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-
                             <TextBlock Text="{Binding Strings[AssetsImagesCategory]}" FontSize="18"
                                        FontWeight="SemiBold" Margin="0,18,0,0" />
                             <TextBlock Text="{Binding Strings[AssetsImagesDesc]}" FontSize="12"
@@ -964,45 +968,53 @@
                                     Background="{ThemeResource ControlFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
                                     BorderThickness="1">
-                                <ListView x:Name="ImagesList" SelectionMode="Single"
-                                          SelectionChanged="ImagesList_SelectionChanged"
-                                          Padding="0"
-                                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
-                                    <ListView.ItemContainerStyle>
-                                        <Style TargetType="ListViewItem">
-                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                            <Setter Property="MinHeight" Value="0" />
-                                            <Setter Property="Padding" Value="0" />
-                                        </Style>
-                                    </ListView.ItemContainerStyle>
-                                    <ListView.ItemTemplate>
-                                        <DataTemplate x:DataType="local:ImageItem">
-                                            <Grid ColumnSpacing="14" Padding="10,8">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="76" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <Border Width="76" Height="50" CornerRadius="6">
-                                                    <Border.Background>
-                                                        <ImageBrush ImageSource="{Binding Preview}"
-                                                                    Stretch="Uniform" />
-                                                    </Border.Background>
-                                                </Border>
-                                                <StackPanel Grid.Column="1" Spacing="4"
-                                                            VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Name}" FontSize="14"
-                                                               FontWeight="SemiBold" />
-                                                    <TextBlock Text="{Binding Dimensions}" FontSize="11"
-                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                </StackPanel>
-                                                <TextBlock Grid.Column="2" Text="{Binding SizeText}"
-                                                           FontSize="11" VerticalAlignment="Center"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ListView.ItemTemplate>
-                                </ListView>
+                                <GridView x:Name="ImagesList" SelectionMode="Single"
+                          SelectionChanged="ImagesList_SelectionChanged"
+                          SizeChanged="AssetGrid_SizeChanged"
+                          Padding="0"
+                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                          <GridView.ItemContainerStyle>
+                            <Style TargetType="GridViewItem">
+                              <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                              <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                              <Setter Property="Padding" Value="0" />
+                            </Style>
+                          </GridView.ItemContainerStyle>
+                          <GridView.ItemsPanel>
+                            <ItemsPanelTemplate>
+                              <ItemsWrapGrid Orientation="Horizontal" ItemWidth="200" ItemHeight="144" />
+                            </ItemsPanelTemplate>
+                          </GridView.ItemsPanel>
+                          <GridView.ItemTemplate>
+                            <DataTemplate x:DataType="local:ImageItem">
+                              <Grid Padding="8" RowSpacing="4" VerticalAlignment="Stretch">
+                                <Grid.RowDefinitions>
+                                  <RowDefinition Height="72" />
+                                  <RowDefinition Height="Auto" />
+                                  <RowDefinition Height="Auto" />
+                                  <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid>
+                                <Border CornerRadius="6" Background="#1C1C20">
+                                  <Image Source="{Binding Preview}" Width="64" Height="64"
+                                         Stretch="Uniform" Visibility="{Binding PreviewVisibility}" />
+                                </Border>
+                                <ProgressRing IsActive="{Binding IsLoading}" Visibility="{Binding LoadingVisibility}"
+                                              Width="28" Height="28" HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" Foreground="White" />
+                              </Grid>
+                                <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="12"
+                                           FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Row="2" Text="{Binding Details}" FontSize="10"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Row="3" Text="{Binding Badge}" FontSize="10"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextTrimming="CharacterEllipsis" />
+                              </Grid>
+                            </DataTemplate>
+                          </GridView.ItemTemplate>
+                        </GridView>
                             </Border>
 
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -1029,42 +1041,52 @@
                                     Background="{ThemeResource ControlFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
                                     BorderThickness="1">
-                                <ListView x:Name="HandsList" SelectionMode="Single"
-                                          SelectionChanged="HandsList_SelectionChanged"
-                                          Padding="0"
-                                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
-                                    <ListView.ItemContainerStyle>
-                                        <Style TargetType="ListViewItem">
-                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                            <Setter Property="MinHeight" Value="0" />
-                                            <Setter Property="Padding" Value="0" />
-                                        </Style>
-                                    </ListView.ItemContainerStyle>
-                                    <ListView.ItemTemplate>
-                                        <DataTemplate x:DataType="local:HandSetItem">
-                                            <Grid ColumnSpacing="14" Padding="10,8">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <Border Width="52" Height="52" CornerRadius="6" Background="#1C1C20">
-                                                    <Image Source="{Binding HourPreview}" Width="52" Height="52"
-                                                           Stretch="Uniform" />
-                                                </Border>
-                                                <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Name}" FontSize="14"
-                                                               FontWeight="SemiBold" />
-                                                    <TextBlock Text="{Binding Details}" FontSize="11"
-                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                </StackPanel>
-                                                <TextBlock Grid.Column="2" Text="{Binding Badge}" FontSize="11"
-                                                           VerticalAlignment="Center"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ListView.ItemTemplate>
-                                </ListView>
+                                <GridView x:Name="HandsList" SelectionMode="Single"
+                          SizeChanged="AssetGrid_SizeChanged"
+                          Padding="0"
+                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                          <GridView.ItemContainerStyle>
+                            <Style TargetType="GridViewItem">
+                              <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                              <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                              <Setter Property="Padding" Value="0" />
+                            </Style>
+                          </GridView.ItemContainerStyle>
+                          <GridView.ItemsPanel>
+                            <ItemsPanelTemplate>
+                              <ItemsWrapGrid Orientation="Horizontal" ItemWidth="200" ItemHeight="144" />
+                            </ItemsPanelTemplate>
+                          </GridView.ItemsPanel>
+                          <GridView.ItemTemplate>
+                            <DataTemplate x:DataType="local:HandSetItem">
+                              <Grid Padding="8" RowSpacing="4" VerticalAlignment="Stretch">
+                              <Grid.RowDefinitions>
+                                <RowDefinition Height="72" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                              </Grid.RowDefinitions>
+                              <Grid>
+                                <Border CornerRadius="6" Background="#1C1C20">
+                                  <Image Source="{Binding HourPreview}" Width="64" Height="64"
+                                         Stretch="Uniform" Visibility="{Binding PreviewVisibility}" />
+                                </Border>
+                                <ProgressRing IsActive="{Binding IsLoading}" Visibility="{Binding LoadingVisibility}"
+                                              Width="28" Height="28" HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" Foreground="White" />
+                              </Grid>
+                              <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="12"
+                                         FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                              <TextBlock Grid.Row="2" Text="{Binding Details}" FontSize="10"
+                                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                         TextTrimming="CharacterEllipsis" />
+                              <TextBlock Grid.Row="3" Text="{Binding Badge}" FontSize="10"
+                                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                         TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                            </DataTemplate>
+                          </GridView.ItemTemplate>
+                        </GridView>
                             </Border>
 
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -1077,6 +1099,73 @@
                                         Click="OpenHandsFolderButton_Click" />
                             </StackPanel>
                             <TextBlock x:Name="HandsStatusText" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                            <TextBlock Text="{Binding Strings[AssetsStatusCategory]}" FontSize="18"
+                                       FontWeight="SemiBold" Margin="0,18,0,0" />
+                            <TextBlock Text="{Binding Strings[AssetsStatusDesc]}" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap" />
+                            <Border Padding="12" CornerRadius="6"
+                                    Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <GridView x:Name="StatusList" SelectionMode="Single"
+                          SizeChanged="AssetGrid_SizeChanged"
+                          Padding="0"
+                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                          <GridView.ItemContainerStyle>
+                            <Style TargetType="GridViewItem">
+                              <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                              <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                              <Setter Property="Padding" Value="0" />
+                            </Style>
+                          </GridView.ItemContainerStyle>
+                          <GridView.ItemsPanel>
+                            <ItemsPanelTemplate>
+                              <ItemsWrapGrid Orientation="Horizontal" ItemWidth="200" ItemHeight="144" />
+                            </ItemsPanelTemplate>
+                          </GridView.ItemsPanel>
+                          <GridView.ItemTemplate>
+                            <DataTemplate x:DataType="local:StatusPackItem">
+                              <Grid Padding="8" RowSpacing="4" VerticalAlignment="Stretch">
+                              <Grid.RowDefinitions>
+                                <RowDefinition Height="72" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                              </Grid.RowDefinitions>
+                              <Grid>
+                                <Border CornerRadius="6" Background="#1C1C20">
+                                  <Image Source="{Binding Preview}" Width="64" Height="64"
+                                         Stretch="Uniform" Visibility="{Binding PreviewVisibility}" />
+                                </Border>
+                                <ProgressRing IsActive="{Binding IsLoading}" Visibility="{Binding LoadingVisibility}"
+                                              Width="28" Height="28" HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" Foreground="White" />
+                              </Grid>
+                              <TextBlock Grid.Row="1" Text="{Binding Id}" FontSize="12"
+                                         FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                              <TextBlock Grid.Row="2" Text="{Binding Details}" FontSize="10"
+                                         Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                              <TextBlock Grid.Row="3" Text="{Binding Badge}" FontSize="10"
+                                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                         TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                            </DataTemplate>
+                          </GridView.ItemTemplate>
+                        </GridView>
+                            </Border>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="AddStatusButton" Content="{Binding Strings[AssetsAddStatus]}"
+                                        Click="AddStatusButton_Click" />
+                                <Button x:Name="RemoveStatusButton" Content="{Binding Strings[AssetsRemoveStatus]}"
+                                        Click="RemoveStatusButton_Click" IsEnabled="False" />
+                                <Button x:Name="OpenStatusFolderButton"
+                                        Content="{Binding Strings[AssetsOpenStatusFolder]}"
+                                        Click="OpenStatusFolderButton_Click" />
+                            </StackPanel>
+                            <TextBlock x:Name="StatusStatusText" FontSize="12" TextWrapping="Wrap"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
                     </ScrollViewer>
@@ -1250,8 +1339,16 @@
                             IsEnabled="False" />
                     <Button x:Name="SaveAsButton" Content="{Binding Strings[SaveAs]}" Click="SaveAs_Click"
                             IsEnabled="False" />
-                    <Button x:Name="ExportButton" Content="{Binding Strings[Export]}" Click="Export_Click"
-                            IsEnabled="False" />
+                    <Button x:Name="ExportButton" Click="Export_Click" IsEnabled="False"
+                            MinWidth="104" Padding="12,6">
+                        <Grid>
+                            <TextBlock x:Name="ExportButtonLabel" Text="{Binding Strings[Export]}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <ProgressBar x:Name="ExportProgressBar" Minimum="0" Maximum="7" Value="0"
+                                         Height="3" Margin="0,0,0,-4" VerticalAlignment="Bottom"
+                                         Visibility="Collapsed" />
+                        </Grid>
+                    </Button>
                     <Button x:Name="TestEmulatorButton" Content="{Binding Strings[TestInEmulator]}"
                             AutomationProperties.Name="{Binding Strings[TestInEmulator]}"
                             Click="TestEmulator_Click" IsEnabled="False" />
@@ -1300,6 +1397,15 @@
                             CloseButtonText="{Binding Strings[Close]}"
                             DefaultButton="Close">
             <StackPanel Spacing="12" MinWidth="340" HorizontalAlignment="Center">
+                <!-- Gotowy animowany podgląd (7 klatek, ~1,7 s na klatkę) nad danymi eksportu. -->
+                <Border x:Name="ExportPreviewBorder" Width="240" Height="240"
+                        CornerRadius="120" Background="Black" HorizontalAlignment="Center">
+                    <Image x:Name="ExportPreviewImage" Width="240" Height="240"
+                           Stretch="Uniform" />
+                </Border>
+                <TextBlock x:Name="ExportPreviewCaption" Text="{Binding Strings[ExportPreviewCaption]}"
+                           FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           HorizontalAlignment="Center" />
                 <StackPanel Spacing="6">
                     <TextBlock Text="{Binding Strings[ProjectIdentityLabel]}"
                                FontWeight="SemiBold" FontSize="13" />
@@ -1329,6 +1435,27 @@
                 <Button x:Name="DialogExportZipButton" Content="{Binding Strings[ExportZip]}"
                         Click="DialogExportZip_Click" HorizontalAlignment="Center" />
             </StackPanel>
+        </muxc:ContentDialog>
+
+        <!-- Niestandardowe dane podglądu — tylko edytor, nigdy eksportowana tarcza. -->
+        <muxc:ContentDialog x:Name="CustomDataDialog"
+                            Title="{Binding Strings[CustomDataDialogTitle]}"
+                            CloseButtonText="{Binding Strings[Close]}"
+                            DefaultButton="Close">
+            <ScrollViewer MaxHeight="520" HorizontalScrollMode="Disabled" VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="12" MinWidth="360">
+                    <TextBlock Text="{Binding Strings[CustomDataDesc]}" FontSize="12" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <StackPanel x:Name="CustomDataFieldsPanel" Spacing="10" />
+                    <TextBlock Text="{Binding Strings[CustomDataHint]}" FontSize="11" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <Button x:Name="ResetCustomDataButton" Content="{Binding Strings[CustomDataReset]}"
+                            Click="ResetCustomData_Click" HorizontalAlignment="Left" />
+                    <TextBlock x:Name="CustomDataStatusText" Text="" FontSize="11" TextWrapping="Wrap"
+                               Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                               Visibility="Collapsed" />
+                </StackPanel>
+            </ScrollViewer>
         </muxc:ContentDialog>
     </Grid>
 </Window>

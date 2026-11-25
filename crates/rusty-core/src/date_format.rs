@@ -254,47 +254,75 @@ fn js_case(expression: String, case: NameCase) -> String {
 }
 
 /// Buduje wyrażenie JS zwracające sformatowaną datę. `date_expr` to wyrażenie
-/// zwracające obiekt `Date` (np. `d1`). Nazwy miesięcy i dni tygodnia pochodzą
-/// z obiektu `L`, więc wielkość liter w wzorcu daje identyczny efekt jak w podglądzie.
+/// zwracające zwykły obiekt z polami `d` (dzień), `m` (miesiąc 1-based),
+/// `m0` (miesiąc 0-based), `y` (rok) i `w` (dzień tygodnia 0-based od niedzieli).
+/// Klasyczny runtime tarczy nie ma obiektu `Date` — dlatego używamy tylko pól.
+/// Nazwy miesięcy i dni tygodnia pochodzą z obiektu `L`, więc wielkość liter
+/// w wzorcu daje identyczny efekt jak w podglądzie.
 pub fn js_expression_localized(pattern: &str, date_expr: &str) -> Result<String> {
     let mut parts = Vec::new();
     for segment in parse(pattern)? {
         let part = match segment {
             Segment::Literal(text) => js_literal(&text),
-            Segment::Day { pad } => js_number(&format!("({date_expr}.getDate())"), pad),
-            Segment::MonthNumber { pad } => {
-                js_number(&format!("({date_expr}.getMonth() + 1)"), pad)
-            }
+            Segment::Day { pad } => js_number(&format!("({date_expr}.d)"), pad),
+            Segment::MonthNumber { pad } => js_number(&format!("({date_expr}.m)"), pad),
             Segment::MonthName { full, case } => {
                 let table = if full { "L.monthsFull" } else { "L.months" };
-                js_case(format!("{table}[{date_expr}.getMonth()]"), case)
+                js_case(format!("{table}[{date_expr}.m0]"), case)
             }
             Segment::WeekdayName { full, case } => {
                 let table = if full { "L.daysFull" } else { "L.days" };
-                js_case(format!("{table}[{date_expr}.getDay()]"), case)
+                js_case(format!("{table}[{date_expr}.w]"), case)
             }
-            Segment::Year2 => format!("p2(({date_expr}.getFullYear() % 100))"),
-            Segment::Year4 => format!("({date_expr}.getFullYear())"),
+            Segment::Year2 => format!("p2(({date_expr}.y % 100))"),
+            Segment::Year4 => format!("({date_expr}.y)"),
         };
         parts.push(part);
     }
     Ok(parts.join(" + "))
 }
 
-/// Pomocnicze funkcje JS dla pól daty liczonych z `Date` — ten sam algorytm
-/// co `iso_week()` / `day_of_year()` w Rust, żeby podgląd i tarcza się zgadzały.
-pub const JS_ISO_WEEK: &str = "function _isoWeek() {\n\
-  const _d = new Date()\n\
-  const _t = new Date(Date.UTC(_d.getFullYear(), _d.getMonth(), _d.getDate()))\n\
-  const _wd = _t.getUTCDay() || 7\n\
-  _t.setUTCDate(_t.getUTCDate() + 4 - _wd)\n\
-  const _ys = new Date(Date.UTC(_t.getUTCFullYear(), 0, 1))\n\
-  return Math.ceil((((_t - _ys) / 86400000) + 1) / 7)\n\
+/// Zamienia dane z czujnika TIME na zwykły obiekt — bez `Date`, którego
+/// klasyczny firmware tarczy nie udostępnia (w emulatorze jest, na zegarku nie).
+/// `w` liczy się algorytmem Sakamoto, tym samym co `JS_WEEKDAY_INDEX`.
+pub const JS_DATE_FROM_T: &str = "const _dateFromT = (t) => {\n\
+  const _m = Math.max(1, Math.min(t.month || 1, 12))\n\
+  return {\n\
+    d: t.day || 1,\n\
+    m: _m,\n\
+    m0: _m - 1,\n\
+    y: t.year,\n\
+    w: _weekdayIndex(t.year, _m, t.day || 1)\n\
+  }\n\
 }\n";
 
-pub const JS_DAY_OF_YEAR: &str = "function _dayOfYear() {\n\
-  const _d = new Date()\n\
-  return Math.floor((_d - new Date(_d.getFullYear(), 0, 0)) / 86400000)\n\
+/// Pomocnicze funkcje JS dla pól daty liczonych wyłącznie z pól czujnika TIME —
+/// ten sam algorytm co `iso_week()` / `day_of_year()` w Rust, żeby podgląd
+/// i tarcza się zgadzały. Bez `Date` i `Date.UTC`.
+pub const JS_ISO_WEEK: &str = "function _isoWeek(d) {\n\
+  const _doy = _dayOfYear(d)\n\
+  const _w = ((d.w + 6) % 7) + 1\n\
+  let _week = Math.floor((_doy - _w + 10) / 7)\n\
+  const _leap = (y) => y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)\n\
+  if (_week < 1) {\n\
+    const _pw = ((_weekdayIndex(d.y - 1, 12, 31) + 6) % 7) + 1\n\
+    _week = (_pw === 4 || (_pw === 3 && _leap(d.y - 1))) ? 53 : 52\n\
+  } else if (_week === 53) {\n\
+    const _ew = ((_weekdayIndex(d.y, 12, 31) + 6) % 7) + 1\n\
+    if (!(_ew === 4 || (_ew === 3 && _leap(d.y)))) _week = 1\n\
+  }\n\
+  return _week\n\
+}\n";
+
+pub const JS_DAY_OF_YEAR: &str = "function _dayOfYear(d) {\n\
+  const _days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]\n\
+  const _leap = d.y % 4 === 0 && (d.y % 100 !== 0 || d.y % 400 === 0)\n\
+  let _total = Math.min(d.d, 31)\n\
+  for (let _i = 0; _i < Math.max(0, Math.min(d.m, 12)) - 1; _i++) {\n\
+    _total += _days[_i]\n\
+    if (_i === 1 && _leap) _total += 1\n\
+  }\n\
+  return _total\n\
 }\n";
 
 /// Numer dnia tygodnia dla pola „Dzień tygodnia (liczba)".
@@ -437,19 +465,40 @@ mod tests {
     fn builds_localized_js_expression() {
         assert_eq!(
             js_expression_localized("MMM D", "d1").unwrap(),
-            "L.months[d1.getMonth()] + ' ' + (d1.getDate())"
+            "L.months[d1.m0] + ' ' + (d1.d)"
         );
         assert_eq!(
             js_expression_localized("DD.MM.YYYY", "d").unwrap(),
-            "p2((d.getDate())) + '.' + p2((d.getMonth() + 1)) + '.' + (d.getFullYear())"
+            "p2((d.d)) + '.' + p2((d.m)) + '.' + (d.y)"
         );
         assert_eq!(
             js_expression_localized("mmm dddd", "d").unwrap(),
-            "L.months[d.getMonth()].toLowerCase() + ' ' + L.daysFull[d.getDay()].toLowerCase()"
+            "L.months[d.m0].toLowerCase() + ' ' + L.daysFull[d.w].toLowerCase()"
         );
         assert_eq!(
             js_expression_localized("DDD MMMMMM", "d").unwrap(),
-            "L.days[d.getDay()] + ' ' + L.monthsFull[d.getMonth()].toUpperCase()"
+            "L.days[d.w] + ' ' + L.monthsFull[d.m0].toUpperCase()"
         );
+    }
+
+    #[test]
+    fn js_date_helpers_never_use_date_object() {
+        for helper in [
+            JS_DATE_FROM_T,
+            JS_ISO_WEEK,
+            JS_DAY_OF_YEAR,
+            JS_WEEKDAY_INDEX,
+        ] {
+            for banned in [
+                "Date",
+                "getDate",
+                "getMonth",
+                "getDay",
+                "getFullYear",
+                "UTC",
+            ] {
+                assert!(!helper.contains(banned), "banned {banned} in: {helper}");
+            }
+        }
     }
 }

@@ -5,8 +5,7 @@ use anyhow::{bail, Context, Result};
 use image::{ImageEncoder, Rgba, RgbaImage};
 
 use crate::model::{
-    Asset, AssetRole, BackgroundConfig, FirstDayOfWeek, MeasurementSystem, Project, WidgetKind,
-    SCHEMA_VERSION, SCREEN_SIZE,
+    FirstDayOfWeek, MeasurementSystem, Project, WidgetKind, SCHEMA_VERSION,
 };
 
 pub fn project_file(dir: &Path) -> PathBuf {
@@ -89,31 +88,14 @@ pub fn create_project_with(dir: &Path, input: &NewProject) -> Result<Project> {
     }
     std::fs::create_dir_all(dir.join("assets"))?;
 
-    let mut project = Project::starter_with(
+    let project = Project::starter_with(
         input.name.trim(),
         input.author.trim(),
         input.app_id,
     );
 
-    // Domyślne tło to zwykły plik źródłowy — widoczny w Assets i wybieralny
-    // dokładnie tak samo, jak obrazy zaimportowane przez użytkownika.
-    let bg = generate_black_background(SCREEN_SIZE);
-    write_png(&dir.join("assets/bg.png"), &bg)?;
-    let source_dir = dir.join("assets/backgrounds");
-    std::fs::create_dir_all(&source_dir)?;
-    let black_file = crate::backgrounds::BUILTIN_BLACK_FILE;
-    write_png(&source_dir.join(black_file), &bg)?;
-    let source_path = format!("backgrounds/{black_file}");
-    if !project.assets.iter().any(|asset| asset.path == source_path) {
-        project.assets.push(Asset {
-            path: source_path,
-            role: AssetRole::Image,
-        });
-    }
-    project.background = Some(BackgroundConfig {
-        image: black_file.to_string(),
-        auto_scale: true,
-    });
+    // Tło jest stałe: `FILL_RECT` w wygenerowanym JS (dokładnie jak w
+    // działającej tarczy referencyjnej). Nie ma zasobu tła ani magazynu tła.
 
     let icon = generate_icon(100);
     write_png(&dir.join("assets/icon.png"), &icon)?;
@@ -254,32 +236,6 @@ pub(crate) fn write_png(path: &Path, image: &RgbaImage) -> Result<()> {
         image::ExtendedColorType::Rgba8,
     )?;
     Ok(())
-}
-
-/// Całkowicie czarne, nieprzezroczyste tło — domyślny wybór w edytorze.
-pub(crate) fn generate_black_background(size: u32) -> RgbaImage {
-    RgbaImage::from_pixel(size, size, image::Rgba([0, 0, 0, 255]))
-}
-
-/// Dawną domyślną tapetę (gwieździsty gradient) zachowujemy jako opcję „Starry".
-pub(crate) fn generate_starry_background(size: u32) -> RgbaImage {
-    let mut img = RgbaImage::new(size, size);
-    let center = size as f32 / 2.0;
-    for (x, y, pixel) in img.enumerate_pixels_mut() {
-        let dx = x as f32 - center;
-        let dy = y as f32 - center;
-        let dist = (dx * dx + dy * dy).sqrt();
-        let glow = (1.0 - (dist / (center * 0.95)).min(1.0)).max(0.0);
-        let ring = if (dist - center * 0.78).abs() < 2.0 { 28.0 } else { 0.0 };
-        let star = if (x as u32 * 73 + y * 151) % 997 == 0 { 40.0 } else { 0.0 };
-        *pixel = Rgba([
-            (14.0 + glow * 6.0 + ring * 0.4 + star) as u8,
-            (17.0 + glow * 10.0 + ring * 0.7 + star) as u8,
-            (30.0 + glow * 26.0 + ring + star) as u8,
-            255,
-        ]);
-    }
-    img
 }
 
 fn generate_icon(size: u32) -> RgbaImage {

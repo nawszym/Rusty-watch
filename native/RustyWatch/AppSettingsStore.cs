@@ -17,6 +17,10 @@ internal static class AppSettingsStore
     private static bool _snapToGrid;
     // Domyślnie włączone — tak samo jak przed wprowadzeniem opcji w flyoucie.
     private static bool _showUnselectedOutline = true;
+    // Niestandardowe dane podglądu to ustawienie EDYTORA — nie trafia do project.json
+    // ani do eksportowanego ZIP, więc nie może zmienić zachowania tarczy na zegarku.
+    private static bool _customPreviewDataEnabled;
+    private static readonly Dictionary<string, string> _customPreviewData = new();
     private static bool _loaded;
 
     public static string? Language
@@ -151,6 +155,51 @@ internal static class AppSettingsStore
         Save();
     }
 
+    /// <summary>Czy podgląd używa ręcznie wprowadzonych wartości zamiast danych na żywo.</summary>
+    public static bool CustomPreviewDataEnabled
+    {
+        get { Load(); return _customPreviewDataEnabled; }
+    }
+
+    public static void SetCustomPreviewDataEnabled(bool value)
+    {
+        Load();
+        if (_customPreviewDataEnabled == value) return;
+        _customPreviewDataEnabled = value;
+        Save();
+    }
+
+    /// <summary>Pusty brak wartości oznacza „użyj domyślnej wartości na żywo".</summary>
+    public static string? GetCustomPreviewValue(string key)
+    {
+        Load();
+        return _customPreviewData.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value)
+            ? value
+            : null;
+    }
+
+    public static void SetCustomPreviewValue(string key, string? value)
+    {
+        Load();
+        if (string.IsNullOrWhiteSpace(key)) return;
+        if (string.IsNullOrWhiteSpace(value)) _customPreviewData.Remove(key);
+        else _customPreviewData[key] = value.Trim();
+        Save();
+    }
+
+    public static IReadOnlyDictionary<string, string> CustomPreviewValues
+    {
+        get { Load(); return _customPreviewData; }
+    }
+
+    public static void ClearCustomPreviewValues()
+    {
+        Load();
+        if (_customPreviewData.Count == 0) return;
+        _customPreviewData.Clear();
+        Save();
+    }
+
     public static void SetLanguage(string code)
     {
         Load();
@@ -206,6 +255,18 @@ internal static class AppSettingsStore
                 _snapToGrid = snap.ValueKind == JsonValueKind.True;
             if (root.TryGetProperty("showUnselectedOutline", out var outline))
                 _showUnselectedOutline = outline.ValueKind == JsonValueKind.True;
+            if (root.TryGetProperty("customPreviewDataEnabled", out var customEnabled))
+                _customPreviewDataEnabled = customEnabled.ValueKind == JsonValueKind.True;
+            if (root.TryGetProperty("customPreviewData", out var customValues)
+                && customValues.ValueKind == JsonValueKind.Object)
+            {
+                _customPreviewData.Clear();
+                foreach (var property in customValues.EnumerateObject())
+                {
+                    if (property.Value.ValueKind == JsonValueKind.String)
+                        _customPreviewData[property.Name] = property.Value.GetString() ?? "";
+                }
+            }
         }
         catch
         {
@@ -230,6 +291,8 @@ internal static class AppSettingsStore
                 firstDayOfWeek = _firstDayOfWeek,
                 snapToGrid = _snapToGrid,
                 showUnselectedOutline = _showUnselectedOutline,
+                customPreviewDataEnabled = _customPreviewDataEnabled,
+                customPreviewData = _customPreviewData,
             }));
         }
         catch

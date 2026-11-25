@@ -27,11 +27,14 @@ internal static class AppPaths
     /// <summary>Wspólny magazyn obrazków dla widgetów IMAGES.</summary>
     public static string ImagesDirectory => Path.Combine(DataDirectory, "Images");
 
-    /// <summary>Osobny magazyn teł — nie dzieli się z obrazkami widgetów IMAGES.</summary>
-    public static string BackgroundsDirectory => Path.Combine(DataDirectory, "Backgrounds");
-
     /// <summary>Wspólny magazyn zestawów wskazówek zegara analogowego.</summary>
     public static string HandsDirectory => Path.Combine(DataDirectory, "Hands");
+
+    /// <summary>Wspólny magazyn paczek ikon stanu systemu (STATUS).</summary>
+    public static string StatusDirectory => Path.Combine(DataDirectory, "Status");
+
+    /// <summary>Wbudowana paczka ikon STATUS — tylko Classic (domyślna).</summary>
+    public static string BundledStatusDirectory => Path.Combine(AppContext.BaseDirectory, "Assets", "Status");
 
     /// <summary>
     /// Katalogi języków czytane w runtime. Użytkownik może tu dorzucić własny
@@ -67,8 +70,8 @@ internal static class AppPaths
         Directory.CreateDirectory(EmulatorDirectory);
         Directory.CreateDirectory(FontsDirectory);
         Directory.CreateDirectory(ImagesDirectory);
-        Directory.CreateDirectory(BackgroundsDirectory);
         Directory.CreateDirectory(HandsDirectory);
+        Directory.CreateDirectory(StatusDirectory);
         Directory.CreateDirectory(LocalizationDirectory);
         Directory.CreateDirectory(PreviewFontCacheDirectory);
 

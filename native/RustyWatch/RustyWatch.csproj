@@ -31,6 +31,10 @@
     <Content Include="Assets\Hands\**\*.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- Wbudowana paczka ikon stanu systemu: Classic (domyślna). -->
+    <Content Include="Assets\Status\**\*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>

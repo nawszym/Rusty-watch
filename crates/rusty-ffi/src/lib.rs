@@ -3,6 +3,7 @@
 //! wywołujący musi zwolnić go przez `rw_free_string`.
 
 use std::ffi::{CStr, CString};
+use std::fs;
 use std::os::raw::c_char;
 use std::path::Path;
 
@@ -235,18 +236,20 @@ pub extern "C" fn rw_add_widget(
     kind: *const c_char,
     app_data_root: *const c_char,
     bundled_dir: *const c_char,
+    bundled_status_dir: *const c_char,
 ) -> *mut c_char {
     let result = (|| -> Result<Value> {
         let project_file = unsafe { read_input(project_file) };
         let kind = unsafe { read_input(kind) };
         let root = unsafe { read_input(app_data_root) };
         let bundled = unsafe { read_input(bundled_dir) };
+        let bundled_status = unsafe { read_input(bundled_status_dir) };
         let mut project = rusty_core::load_project(Path::new(&project_file))?;
         let widget = rusty_core::widgets::add_widget(&mut project, &kind)?;
+        let dir = Path::new(&project_file)
+            .parent()
+            .context("project file has no parent")?;
         if widget.kind == rusty_core::model::WidgetKind::AnalogTime {
-            let dir = Path::new(&project_file)
-                .parent()
-                .context("project file has no parent")?;
             string_result(rusty_core::hands::ensure_default(
                 Path::new(&root),
                 Path::new(&bundled),
@@ -257,6 +260,25 @@ pub extern "C" fn rw_add_widget(
                 Path::new(&root),
                 &widget.id,
                 rusty_core::hands::DEFAULT_HAND_SET,
+            ))?;
+        }
+        if widget.kind == rusty_core::model::WidgetKind::StatusIcon {
+            string_result(rusty_core::status_icons::ensure_default(
+                Path::new(&root),
+                Path::new(&bundled_status),
+            ))?;
+            string_result(rusty_core::status_icons::attach_to_project(
+                &mut project,
+                dir,
+                Path::new(&root),
+                &widget.id,
+                rusty_core::status_icons::DEFAULT_STATUS_PACK,
+            ))?;
+            string_result(rusty_core::status_icons::scale_project_icons(
+                &project,
+                dir,
+                Path::new(&root),
+                &widget.id,
             ))?;
         }
         rusty_core::save_project(Path::new(&project_file), &project)?;
@@ -303,7 +325,16 @@ pub extern "C" fn rw_set_widget(
                 &widget.id,
             ))?;
         }
+        if widget.kind == rusty_core::model::WidgetKind::StatusIcon {
+            string_result(rusty_core::status_icons::scale_project_icons(
+                &project,
+                dir,
+                Path::new(&app_data_root),
+                &widget.id,
+            ))?;
+        }
         rusty_core::images::prune_unused(&mut project, dir);
+        rusty_core::status_icons::prune_unused(&mut project, dir);
         if let Some(font) = &widget.font {
             string_result(rusty_core::fonts::attach_to_project(
                 &mut project,
@@ -394,11 +425,13 @@ pub extern "C" fn rw_ensure_defaults(
     app_data_root: *const c_char,
     bundled_fonts_dir: *const c_char,
     bundled_hands_dir: *const c_char,
+    bundled_status_dir: *const c_char,
 ) -> *mut c_char {
     let result = (|| -> Result<Value> {
         let root = unsafe { read_input(app_data_root) };
         let bundled_fonts = unsafe { read_input(bundled_fonts_dir) };
         let bundled_hands = unsafe { read_input(bundled_hands_dir) };
+        let bundled_status = unsafe { read_input(bundled_status_dir) };
         string_result(rusty_core::fonts::ensure_default(
             Path::new(&root),
             Path::new(&bundled_fonts),
@@ -407,8 +440,10 @@ pub extern "C" fn rw_ensure_defaults(
             Path::new(&root),
             Path::new(&bundled_hands),
         ))?;
-        // Tła ze starszych wersji trafiają do dedykowanego magazynu.
-        string_result(rusty_core::backgrounds::ensure_migrated(Path::new(&root)))?;
+        string_result(rusty_core::status_icons::ensure_default(
+            Path::new(&root),
+            Path::new(&bundled_status),
+        ))?;
         Ok(json!({ "seeded": true }))
     })();
     respond(result)
@@ -515,46 +550,7 @@ pub extern "C" fn rw_apply_default_font_to_missing(
     respond(result)
 }
 
-// --- Zasoby: tła (%APPDATA%\RustyWatch\Backgrounds) i obrazki IMAGES --------
-
-/// Lista teł w dedykowanym magazynie.
-#[no_mangle]
-pub extern "C" fn rw_backgrounds_list(app_data_root: *const c_char) -> *mut c_char {
-    let result = (|| -> Result<Value> {
-        let root = unsafe { read_input(app_data_root) };
-        let images = string_result(rusty_core::backgrounds::list(Path::new(&root)))?;
-        Ok(json!({ "images": images }))
-    })();
-    respond(result)
-}
-
-#[no_mangle]
-pub extern "C" fn rw_backgrounds_add(
-    app_data_root: *const c_char,
-    source_path: *const c_char,
-) -> *mut c_char {
-    let result = (|| -> Result<Value> {
-        let root = unsafe { read_input(app_data_root) };
-        let source = unsafe { read_input(source_path) };
-        let image = string_result(rusty_core::backgrounds::add(Path::new(&root), Path::new(&source)))?;
-        Ok(json!({ "image": image }))
-    })();
-    respond(result)
-}
-
-#[no_mangle]
-pub extern "C" fn rw_backgrounds_remove(
-    app_data_root: *const c_char,
-    file: *const c_char,
-) -> *mut c_char {
-    let result = (|| -> Result<Value> {
-        let root = unsafe { read_input(app_data_root) };
-        let file = unsafe { read_input(file) };
-        string_result(rusty_core::backgrounds::remove(Path::new(&root), &file))?;
-        Ok(json!({ "removed": file }))
-    })();
-    respond(result)
-}
+// --- Zasoby: obrazki IMAGES (%APPDATA%\RustyWatch\Images) -------------------
 
 #[no_mangle]
 pub extern "C" fn rw_images_list(app_data_root: *const c_char) -> *mut c_char {
@@ -628,58 +624,6 @@ pub extern "C" fn rw_set_widget_image(
             "path": asset_path,
             "layers": rusty_core::layers::describe(&project)
         }))
-    })();
-    respond(result)
-}
-
-/// Udostępnia tło otwieranego projektu w dedykowanym magazynie teł.
-#[no_mangle]
-pub extern "C" fn rw_ensure_project_background(
-    project_file: *const c_char,
-    app_data_root: *const c_char,
-) -> *mut c_char {
-    let result = (|| -> Result<Value> {
-        let project_file = unsafe { read_input(project_file) };
-        let root = unsafe { read_input(app_data_root) };
-        let path = Path::new(&project_file);
-        let dir = path.parent().context("project file has no parent")?;
-        let project = rusty_core::load_project(path)?;
-        string_result(rusty_core::backgrounds::ensure_project_background(
-            &project, dir, Path::new(&root),
-        ))?;
-        Ok(json!({ "ok": true }))
-    })();
-    respond(result)
-}
-
-/// Ustawia (albo czyści, gdy `image` jest pusty) tło projektu.
-#[no_mangle]
-pub extern "C" fn rw_set_background(
-    project_file: *const c_char,
-    image: *const c_char,
-    auto_scale: i32,
-    app_data_root: *const c_char,
-) -> *mut c_char {
-    let result = (|| -> Result<Value> {
-        let project_file = unsafe { read_input(project_file) };
-        let image = unsafe { read_input(image) };
-        let root = unsafe { read_input(app_data_root) };
-        let path = Path::new(&project_file);
-        let dir = path.parent().context("project file has no parent")?;
-        let mut project = rusty_core::load_project(path)?;
-        if image.is_empty() {
-            string_result(rusty_core::backgrounds::clear_background(&mut project, dir))?;
-        } else {
-            string_result(rusty_core::backgrounds::set_background(
-                &mut project,
-                dir,
-                Path::new(&root),
-                &image,
-                auto_scale != 0,
-            ))?;
-        }
-        rusty_core::save_project(path, &project)?;
-        Ok(json!({ "layers": rusty_core::layers::describe(&project) }))
     })();
     respond(result)
 }
@@ -822,6 +766,144 @@ pub extern "C" fn rw_set_hand_visibility(
     respond(result)
 }
 
+// --- Zasoby: pakiety ikon STATUS (%APPDATA%\RustyWatch\Status) --------------
+
+/// Lista paczek ikon statusu. Katalog jest skanowany dynamicznie.
+#[no_mangle]
+pub extern "C" fn rw_status_packs_list(
+    app_data_root: *const c_char,
+    bundled_dir: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let root = unsafe { read_input(app_data_root) };
+        let bundled = unsafe { read_input(bundled_dir) };
+        string_result(rusty_core::status_icons::ensure_default(
+            Path::new(&root),
+            Path::new(&bundled),
+        ))?;
+        let packs = string_result(rusty_core::status_icons::list(Path::new(&root)))?;
+        Ok(json!({ "packs": packs }))
+    })();
+    respond(result)
+}
+
+/// Dodaje paczkę z wybranego folderu (wymagane 4 pliki PNG).
+#[no_mangle]
+pub extern "C" fn rw_status_packs_add(
+    app_data_root: *const c_char,
+    folder: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let root = unsafe { read_input(app_data_root) };
+        let folder = unsafe { read_input(folder) };
+        let pack = string_result(rusty_core::status_icons::add(
+            Path::new(&root),
+            Path::new(&folder),
+        ))?;
+        Ok(json!({ "pack": pack }))
+    })();
+    respond(result)
+}
+
+#[no_mangle]
+pub extern "C" fn rw_status_packs_remove(
+    app_data_root: *const c_char,
+    id: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let root = unsafe { read_input(app_data_root) };
+        let id = unsafe { read_input(id) };
+        string_result(rusty_core::status_icons::remove(Path::new(&root), &id))?;
+        Ok(json!({ "removed": id }))
+    })();
+    respond(result)
+}
+
+/// Przypisuje paczkę do widgetu statusu (zapisuje projekt i skaluje ikony).
+#[no_mangle]
+pub extern "C" fn rw_set_status_pack(
+    project_file: *const c_char,
+    widget_id: *const c_char,
+    set_id: *const c_char,
+    app_data_root: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let project_file = unsafe { read_input(project_file) };
+        let widget_id = unsafe { read_input(widget_id) };
+        let set_id = unsafe { read_input(set_id) };
+        let root = unsafe { read_input(app_data_root) };
+        let path = Path::new(&project_file);
+        let dir = path.parent().context("project file has no parent")?;
+        let mut project = rusty_core::load_project(path)?;
+        string_result(rusty_core::status_icons::attach_to_project(
+            &mut project,
+            dir,
+            Path::new(&root),
+            &widget_id,
+            &set_id,
+        ))?;
+        string_result(rusty_core::status_icons::scale_project_icons(
+            &project,
+            dir,
+            Path::new(&root),
+            &widget_id,
+        ))?;
+        rusty_core::status_icons::prune_unused(&mut project, dir);
+        rusty_core::save_project(path, &project)?;
+        Ok(json!({ "layers": rusty_core::layers::describe(&project) }))
+    })();
+    respond(result)
+}
+
+/// Domyślnie przypisuje `Classic` widgetom statusu w starszych projektach.
+#[no_mangle]
+pub extern "C" fn rw_attach_status_pack_to_missing(
+    project_file: *const c_char,
+    app_data_root: *const c_char,
+    bundled_dir: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let project_file = unsafe { read_input(project_file) };
+        let root = unsafe { read_input(app_data_root) };
+        let bundled = unsafe { read_input(bundled_dir) };
+        string_result(rusty_core::status_icons::ensure_default(
+            Path::new(&root),
+            Path::new(&bundled),
+        ))?;
+        let path = Path::new(&project_file);
+        let dir = path.parent().context("project file has no parent")?;
+        let mut project = rusty_core::load_project(path)?;
+        string_result(rusty_core::status_icons::attach_default_to_missing(
+            &mut project,
+            dir,
+            Path::new(&root),
+        ))?;
+        // Magazyn mógł zostać odświeżony przez `ensure_default` — kopie w starych
+        // projektach również muszą dostać nowe pliki, zanim je przeskalujemy.
+        string_result(rusty_core::status_icons::refresh_attached(
+            Path::new(&root),
+            dir,
+            &mut project,
+        ))?;
+        for widget in project
+            .widgets
+            .iter()
+            .filter(|w| w.kind == rusty_core::model::WidgetKind::StatusIcon)
+        {
+            string_result(rusty_core::status_icons::scale_project_icons(
+                &project,
+                dir,
+                Path::new(&root),
+                &widget.id,
+            ))?;
+        }
+        rusty_core::status_icons::prune_unused(&mut project, dir);
+        rusty_core::save_project(path, &project)?;
+        Ok(json!({ "layers": rusty_core::layers::describe(&project) }))
+    })();
+    respond(result)
+}
+
 /// Usuwa widget — dostępne z poziomu panelu Warstwy. Tła nie da się usunąć.
 #[no_mangle]
 pub extern "C" fn rw_remove_widget(
@@ -878,6 +960,91 @@ pub extern "C" fn rw_validate_project(path: *const c_char) -> *mut c_char {
         let path = unsafe { read_input(path) };
         let project = rusty_core::load_project(Path::new(&path))?;
         Ok(json!(rusty_core::validate(&project)))
+    })();
+    respond(result)
+}
+
+/// Losuje całą serię danych dla 7 klatek podglądu. Jedno wywołanie na eksport —
+/// edytor przekazuje zwrócony JSON do każdej klatki, więc dane są spójne.
+#[no_mangle]
+pub extern "C" fn rw_preview_random_series(locale: *const c_char) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let locale = unsafe { read_input(locale) };
+        let locale = if locale.trim().is_empty() {
+            "en"
+        } else {
+            locale.trim()
+        };
+        let series = rusty_core::preview::random_series(rusty_core::preview::random_seed(), locale);
+        Ok(serde_json::to_value(series)?)
+    })();
+    respond(result)
+}
+
+/// Rysuje jedną klatkę do `<project>/preview-cache/frame-NN.png`.
+#[no_mangle]
+pub extern "C" fn rw_render_preview_frame(
+    project: *const c_char,
+    index: u32,
+    series_json: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let project = unsafe { read_input(project) };
+        let series_json = unsafe { read_input(series_json) };
+        let series: rusty_core::preview::PreviewRandomSeries = serde_json::from_str(&series_json)?;
+        let path = Path::new(&project);
+        let dir = path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("Nieprawidłowa ścieżka projektu"))?;
+        let loaded = rusty_core::load_project(path)?;
+        let index = index as usize;
+        let frame = string_result(rusty_core::preview::frame_data(index, &series))?;
+        let image = rusty_core::preview::render_frame(dir, &loaded, &frame, &series);
+        let cache = dir.join("preview-cache");
+        fs::create_dir_all(&cache)?;
+        let output = cache.join(format!("frame-{index:02}.png"));
+        string_result(rusty_core::preview::write_png(&image, &output))?;
+        Ok(json!({ "index": index, "frame": output.to_string_lossy() }))
+    })();
+    respond(result)
+}
+
+/// Składa `preview.gif` (7 klatek, zapętlenie, ~1,7 s na klatkę) i `preview.png`.
+#[no_mangle]
+pub extern "C" fn rw_encode_preview_gif(
+    project: *const c_char,
+    series_json: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let project = unsafe { read_input(project) };
+        let _series_json = unsafe { read_input(series_json) };
+        let path = Path::new(&project);
+        let dir = path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("Nieprawidłowa ścieżka projektu"))?;
+        let cache = dir.join("preview-cache");
+        let mut frames = Vec::with_capacity(rusty_core::preview::FRAME_COUNT);
+        for index in 0..rusty_core::preview::FRAME_COUNT {
+            let file = cache.join(format!("frame-{index:02}.png"));
+            let image = image::open(&file)
+                .with_context(|| format!("Brak klatki podglądu: {}", file.display()))?;
+            frames.push(image.to_rgba8());
+        }
+        let gif_path = dir.join("preview.gif");
+        let png_path = dir.join("preview.png");
+        string_result(rusty_core::preview::write_gif(&frames, &gif_path))?;
+
+        // Statyczny PNG to dokładnie 7. klatka wygenerowanego GIF-a (21:37,
+        // wszystkie ikony STATUS), więc oba pliki pokazują ten sam stan tarczy.
+        let reference = rusty_core::preview::FRAME_COUNT - 1;
+        string_result(rusty_core::preview::write_png(&frames[reference], &png_path))?;
+        let _ = fs::remove_dir_all(&cache);
+        Ok(json!({
+            "gif": gif_path.to_string_lossy(),
+            "png": png_path.to_string_lossy(),
+            "frames": frames.len(),
+            "referenceFrame": reference + 1,
+        }))
     })();
     respond(result)
 }
@@ -1200,7 +1367,7 @@ pub extern "C" fn rw_set_time_widget(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::ImageEncoder;
+    use image::{GenericImageView, ImageEncoder};
 
     fn take(ptr: *mut c_char) -> Value {
         let json = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
@@ -1220,11 +1387,13 @@ mod tests {
         let root_arg = CString::new(root.to_string_lossy().as_bytes()).unwrap();
         let fonts_arg = CString::new(bundled.join("Fonts").to_string_lossy().as_bytes()).unwrap();
         let hands_arg = CString::new(bundled.join("Hands").to_string_lossy().as_bytes()).unwrap();
+        let status_arg = CString::new(bundled.join("Status").to_string_lossy().as_bytes()).unwrap();
 
         let value = take(rw_ensure_defaults(
             root_arg.as_ptr(),
             fonts_arg.as_ptr(),
             hands_arg.as_ptr(),
+            status_arg.as_ptr(),
         ));
         assert_eq!(value["ok"], true, "error: {}", value["error"]);
         assert!(root.join("Fonts").join("Inter-Regular.ttf").is_file());
@@ -1393,6 +1562,7 @@ mod tests {
             kind.as_ptr(),
             root_arg.as_ptr(),
             root_arg.as_ptr(),
+            root_arg.as_ptr(),
         ));
         assert_eq!(added["ok"], true, "error: {}", added["error"]);
 
@@ -1517,10 +1687,11 @@ mod tests {
             kind.as_ptr(),
             destination.as_ptr(),
             destination.as_ptr(),
+            destination.as_ptr(),
         ));
         assert_eq!(added["ok"], true, "error: {}", added["error"]);
         assert_eq!(added["data"]["id"], "time-2");
-        assert_eq!(added["data"]["layers"].as_array().unwrap().len(), 3);
+        assert_eq!(added["data"]["layers"].as_array().unwrap().len(), 2);
 
         let settings = CString::new(
             r#"{"id":"time-2","x":10,"y":20,"w":200,"h":60,"textSize":30,"color":"0xFFFF0000","align":"right","timeFormat":"HH:MM","autoScale":true,"textStyle":"wrap","vAlign":"bottom"}"#,
@@ -1535,14 +1706,10 @@ mod tests {
         assert_eq!(changed["textStyle"], "wrap");
         assert_eq!(changed["vAlign"], "bottom");
 
-        let locked = CString::new("background").unwrap();
-        let rejected = take(rw_remove_widget(file.as_ptr(), locked.as_ptr()));
-        assert_eq!(rejected["ok"], false);
-
         let second = CString::new("time-2").unwrap();
         let removed = take(rw_remove_widget(file.as_ptr(), second.as_ptr()));
         assert_eq!(removed["ok"], true, "error: {}", removed["error"]);
-        assert_eq!(removed["data"]["layers"].as_array().unwrap().len(), 2);
+        assert_eq!(removed["data"]["layers"].as_array().unwrap().len(), 1);
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1568,12 +1735,6 @@ mod tests {
         let layers = hidden["data"]["layers"].as_array().unwrap();
         let widget = layers.iter().find(|layer| layer["id"] == "time").unwrap();
         assert_eq!(widget["visible"], false);
-        let background = layers.iter().find(|layer| layer["id"] == "background").unwrap();
-        assert_eq!(background["visible"], true);
-
-        let locked = CString::new("background").unwrap();
-        let rejected = take(rw_set_widget_visibility(file.as_ptr(), locked.as_ptr(), false));
-        assert_eq!(rejected["ok"], false);
 
         let shown = take(rw_set_widget_visibility(file.as_ptr(), id.as_ptr(), true));
         assert_eq!(shown["ok"], true, "error: {}", shown["error"]);
@@ -1630,13 +1791,8 @@ mod tests {
         let listed = take(rw_editor_layers(file.as_ptr()));
         assert_eq!(listed["ok"], true, "error: {}", listed["error"]);
         let layers = listed["data"].as_array().unwrap();
-        assert_eq!(layers.len(), 2);
-        assert_eq!(layers[0]["kind"], "background");
-        assert_eq!(layers[1]["kind"], "time");
-
-        let locked = CString::new("background").unwrap();
-        let rejected = take(rw_move_layer(file.as_ptr(), locked.as_ptr(), 1));
-        assert_eq!(rejected["ok"], false);
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0]["kind"], "time");
 
         let kind = CString::new("time").unwrap();
         take(rw_add_widget(
@@ -1644,15 +1800,16 @@ mod tests {
             kind.as_ptr(),
             destination.as_ptr(),
             destination.as_ptr(),
+            destination.as_ptr(),
         ));
         let id = CString::new("time-2").unwrap();
         let moved = take(rw_move_layer(file.as_ptr(), id.as_ptr(), -1));
         assert_eq!(moved["ok"], true, "error: {}", moved["error"]);
-        assert_eq!(moved["data"]["order"][0], "background");
-        assert_eq!(moved["data"]["order"][1], "time-2");
+        assert_eq!(moved["data"]["order"][0], "time-2");
+        assert_eq!(moved["data"]["order"][1], "time");
 
-        let below_background = take(rw_move_layer(file.as_ptr(), id.as_ptr(), -1));
-        assert_eq!(below_background["ok"], false);
+        let below_first = take(rw_move_layer(file.as_ptr(), id.as_ptr(), -1));
+        assert_eq!(below_first["ok"], false);
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1732,6 +1889,7 @@ mod tests {
             project_file.as_ptr(),
             kind.as_ptr(),
             root_arg.as_ptr(),
+            bundled_arg.as_ptr(),
             bundled_arg.as_ptr(),
         ));
         assert_eq!(added["ok"], true, "error: {}", added["error"]);
@@ -1879,6 +2037,7 @@ mod tests {
             kind.as_ptr(),
             root_arg.as_ptr(),
             bundled_arg.as_ptr(),
+            bundled_arg.as_ptr(),
         ));
         assert_eq!(added["ok"], true, "error: {}", added["error"]);
         let widget_id = added["data"]["id"].as_str().unwrap();
@@ -1935,11 +2094,13 @@ mod tests {
         let root_arg = CString::new(root.to_string_lossy().as_bytes()).unwrap();
         let bundled_arg = CString::new(bundled.join("Hands").to_string_lossy().as_bytes()).unwrap();
         let fonts_arg = CString::new(bundled.join("Fonts").to_string_lossy().as_bytes()).unwrap();
+        let status_arg = CString::new(bundled.join("Status").to_string_lossy().as_bytes()).unwrap();
         assert_eq!(
             take(rw_ensure_defaults(
                 root_arg.as_ptr(),
                 fonts_arg.as_ptr(),
-                bundled_arg.as_ptr()
+                bundled_arg.as_ptr(),
+                status_arg.as_ptr()
             ))["ok"],
             true
         );
@@ -1955,6 +2116,7 @@ mod tests {
             project_file.as_ptr(),
             kind.as_ptr(),
             root_arg.as_ptr(),
+            bundled_arg.as_ptr(),
             bundled_arg.as_ptr(),
         ));
         assert_eq!(added["ok"], true, "error: {}", added["error"]);
@@ -2016,6 +2178,7 @@ mod tests {
             kind.as_ptr(),
             root_arg.as_ptr(),
             root_arg.as_ptr(),
+            root_arg.as_ptr(),
         ));
         assert_eq!(added["ok"], true, "error: {}", added["error"]);
         let layers = added["data"]["layers"].as_array().unwrap();
@@ -2048,6 +2211,7 @@ mod tests {
         let added = take(rw_add_widget(
             project_file.as_ptr(),
             kind.as_ptr(),
+            root_arg.as_ptr(),
             root_arg.as_ptr(),
             root_arg.as_ptr(),
         ));
@@ -2145,6 +2309,7 @@ mod tests {
                 kind_arg.as_ptr(),
                 root_arg.as_ptr(),
                 root_arg.as_ptr(),
+                root_arg.as_ptr(),
             ));
             assert_eq!(added["ok"], true, "kind={kind} error: {}", added["error"]);
             let layers = added["data"]["layers"].as_array().unwrap();
@@ -2184,67 +2349,27 @@ mod tests {
     }
 
     #[test]
-    fn images_store_and_background_roundtrip() {
+    fn images_store_roundtrip() {
         let root = std::env::temp_dir().join(format!("rw-ffi-images-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let root_arg = CString::new(root.to_string_lossy().as_bytes()).unwrap();
-        let name = CString::new("Bg Face").unwrap();
+        let name = CString::new("Image Face").unwrap();
         let author = CString::new("Dev").unwrap();
         let created = take(rw_create_project(root_arg.as_ptr(), name.as_ptr(), author.as_ptr(), 77));
         assert_eq!(created["ok"], true, "error: {}", created["error"]);
         let file = created["data"]["file"].as_str().unwrap();
-        let project_file = CString::new(file).unwrap();
-        let source = Path::new(file).parent().unwrap().join("assets/bg.png");
+        let source = Path::new(file).parent().unwrap().join("assets/icon.png");
         let source_arg = CString::new(source.to_string_lossy().as_bytes()).unwrap();
 
-        let added = take(rw_backgrounds_add(root_arg.as_ptr(), source_arg.as_ptr()));
+        let added = take(rw_images_add(root_arg.as_ptr(), source_arg.as_ptr()));
         assert_eq!(added["ok"], true, "error: {}", added["error"]);
-        assert_eq!(added["data"]["image"]["file"], "bg.png");
-        let listed = take(rw_backgrounds_list(root_arg.as_ptr()));
+        assert_eq!(added["data"]["image"]["file"], "icon.png");
+        let listed = take(rw_images_list(root_arg.as_ptr()));
         assert_eq!(listed["data"]["images"].as_array().unwrap().len(), 1);
 
-        let image = CString::new("bg.png").unwrap();
-        let set = take(rw_set_background(project_file.as_ptr(), image.as_ptr(), 1, root_arg.as_ptr()));
-        assert_eq!(set["ok"], true, "error: {}", set["error"]);
-        let background = set["data"]["layers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|layer| layer["id"] == "background")
-            .unwrap()
-            .clone();
-        assert_eq!(background["backgroundImage"], "bg.png");
-        assert_eq!(background["backgroundAutoScale"], true);
-
-        let empty = CString::new("").unwrap();
-        let cleared = take(rw_set_background(project_file.as_ptr(), empty.as_ptr(), 0, root_arg.as_ptr()));
-        assert_eq!(cleared["ok"], true, "error: {}", cleared["error"]);
-        let background = cleared["data"]["layers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|layer| layer["id"] == "background")
-            .unwrap()
-            .clone();
-        assert_eq!(background["backgroundImage"], "black.png");
-
-        // Wbudowane tło „Starry" jest wybieralne przez FFI i wraca do czerni.
-        let starry = CString::new("starry").unwrap();
-        let set_starry = take(rw_set_background(project_file.as_ptr(), starry.as_ptr(), 1, root_arg.as_ptr()));
-        assert_eq!(set_starry["ok"], true, "error: {}", set_starry["error"]);
-        let starry_layer = set_starry["data"]["layers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|layer| layer["id"] == "background")
-            .unwrap()
-            .clone();
-        assert_eq!(starry_layer["backgroundImage"], "starry.png");
-        let restored = take(rw_set_background(project_file.as_ptr(), empty.as_ptr(), 1, root_arg.as_ptr()));
-        assert_eq!(restored["ok"], true, "error: {}", restored["error"]);
-
-        let removed = take(rw_backgrounds_remove(root_arg.as_ptr(), image.as_ptr()));
+        let image = CString::new("icon.png").unwrap();
+        let removed = take(rw_images_remove(root_arg.as_ptr(), image.as_ptr()));
         assert_eq!(removed["ok"], true, "error: {}", removed["error"]);
         std::fs::remove_dir_all(&root).ok();
     }
@@ -2262,8 +2387,8 @@ mod tests {
         let file = created["data"]["file"].as_str().unwrap();
         let project_file = CString::new(file).unwrap();
 
-        // Źródło: istniejący plik bg.png z nowego projektu.
-        let source = Path::new(file).parent().unwrap().join("assets/bg.png");
+        // Źródło: istniejący plik icon.png z nowego projektu.
+        let source = Path::new(file).parent().unwrap().join("assets/icon.png");
         let source_arg = CString::new(source.to_string_lossy().as_bytes()).unwrap();
         let added = take(rw_images_add(root_arg.as_ptr(), source_arg.as_ptr()));
         assert_eq!(added["ok"], true, "error: {}", added["error"]);
@@ -2274,11 +2399,12 @@ mod tests {
             kind.as_ptr(),
             root_arg.as_ptr(),
             root_arg.as_ptr(),
+            root_arg.as_ptr(),
         ));
         assert_eq!(widget["ok"], true, "error: {}", widget["error"]);
         let id = widget["data"]["id"].as_str().unwrap();
         let id_arg = CString::new(id).unwrap();
-        let file_arg = CString::new("bg.png").unwrap();
+        let file_arg = CString::new("icon.png").unwrap();
         let fit = CString::new("cover").unwrap();
         let set = take(rw_set_widget_image(
             project_file.as_ptr(),
@@ -2300,16 +2426,17 @@ mod tests {
         let src = layer["src"].as_str().unwrap();
         assert!(src.starts_with("images/"), "src={src}");
 
+        let flat = rusty_core::export_paths::exported_asset_name(src);
         let js = rusty_core::codegen::generate_index_js(&rusty_core::load_project(Path::new(file)).unwrap());
         assert!(js.contains("hmUI.widget.IMG"));
-        assert!(js.contains(src));
+        assert!(js.contains(&flat), "js: {js}");
 
         let zip_path = root.join("images.zip");
         let output = CString::new(zip_path.to_string_lossy().as_bytes()).unwrap();
         let exported = take(rw_export_zip(project_file.as_ptr(), output.as_ptr()));
         assert_eq!(exported["ok"], true, "error: {}", exported["error"]);
         let names = rusty_core::inspect_zip(&zip_path).unwrap();
-        assert!(names.contains(&format!("assets/active2round/{src}")), "{names}");
+        assert!(names.contains(&format!("assets/{flat}")), "{names}");
 
         std::fs::remove_dir_all(&root).ok();
     }
@@ -2353,4 +2480,166 @@ mod tests {
         let rejected = take(rw_format_date(invalid.as_ptr(), 3, 0, 2026, en.as_ptr()));
         assert_eq!(rejected["ok"], false);
     }
+
+    #[test]
+    fn preview_generation_creates_png_and_7_frame_gif() {
+        let root = std::env::temp_dir().join(format!("rw-ffi-preview-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let dir_arg = CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        let name = CString::new("Preview Face").unwrap();
+        let author = CString::new("Dev").unwrap();
+        let created = take(rw_create_project(dir_arg.as_ptr(), name.as_ptr(), author.as_ptr(), 12_345_678));
+        assert_eq!(created["ok"], true, "error: {}", created["error"]);
+        let project_file = created["data"]["file"].as_str().unwrap().to_string();
+        let project_arg = CString::new(project_file.as_bytes()).unwrap();
+
+        let locale = CString::new("en").unwrap();
+        let series = take(rw_preview_random_series(locale.as_ptr()));
+        assert_eq!(series["ok"], true, "error: {}", series["error"]);
+        let series_json = series["data"].to_string();
+        let series_arg = CString::new(series_json.as_bytes()).unwrap();
+
+        for index in 0..7u32 {
+            let frame = take(rw_render_preview_frame(
+                project_arg.as_ptr(),
+                index,
+                series_arg.as_ptr(),
+            ));
+            assert_eq!(frame["ok"], true, "frame {index}: {}", frame["error"]);
+        }
+        let encoded = take(rw_encode_preview_gif(project_arg.as_ptr(), series_arg.as_ptr()));
+        assert_eq!(encoded["ok"], true, "error: {}", encoded["error"]);
+        assert_eq!(encoded["data"]["frames"], 7);
+        assert_eq!(encoded["data"]["referenceFrame"], 7);
+
+        let png = std::path::Path::new(&project_file)
+            .parent()
+            .unwrap()
+            .join("preview.png");
+        let gif = png.with_extension("gif");
+        assert!(png.is_file() && gif.is_file());
+        assert_eq!(image::open(&png).unwrap().dimensions(), (466, 466));
+        assert!(std::fs::metadata(&gif).unwrap().len() > 1000);
+        assert!(!png.parent().unwrap().join("preview-cache").exists());
+
+        // Statyczny PNG to dokładnie 7. klatka, a GIF ma nieskończone zapętlenie.
+        let again = take(rw_render_preview_frame(
+            project_arg.as_ptr(),
+            6,
+            series_arg.as_ptr(),
+        ));
+        assert_eq!(again["ok"], true, "error: {}", again["error"]);
+        let frame7 = std::path::Path::new(again["data"]["frame"].as_str().unwrap());
+        assert_eq!(std::fs::read(&png).unwrap(), std::fs::read(frame7).unwrap());
+        std::fs::remove_dir_all(frame7.parent().unwrap()).ok();
+        let gif_bytes = std::fs::read(&gif).unwrap();
+        assert!(gif_bytes.windows(11).any(|w| w == b"NETSCAPE2.0"));
+        assert!(gif_bytes.windows(2).any(|w| w == [0xAA, 0x00]), "delay != 170");
+
+        // Placeholder 314x314 trafia do ZIP jako ikona tarczy; GIF zostaje lokalny.
+        let zip = png.parent().unwrap().join("Preview.Face.zip");
+        let exported = rusty_core::export_zip(std::path::Path::new(&project_file), &zip).unwrap();
+        let listing = rusty_core::inspect_zip(&exported).unwrap();
+        assert!(listing.contains("assets/Preview.png"), "listing: {listing}");
+        assert!(!listing.contains("preview.gif"), "listing: {listing}");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn system_widgets_roundtrip_through_ffi() {
+        let root = std::env::temp_dir().join(format!("rw-ffi-system-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../native/RustyWatch/Assets");
+        let root_arg = CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        let fonts_arg = CString::new(bundled.join("Fonts").to_string_lossy().as_bytes()).unwrap();
+        let hands_arg = CString::new(bundled.join("Hands").to_string_lossy().as_bytes()).unwrap();
+        let status_arg = CString::new(bundled.join("Status").to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(
+            take(rw_ensure_defaults(
+                root_arg.as_ptr(),
+                fonts_arg.as_ptr(),
+                hands_arg.as_ptr(),
+                status_arg.as_ptr()
+            ))["ok"],
+            true
+        );
+
+        let name = CString::new("System Test").unwrap();
+        let author = CString::new("Dev").unwrap();
+        let created = take(rw_create_project(root_arg.as_ptr(), name.as_ptr(), author.as_ptr(), 81));
+        assert_eq!(created["ok"], true, "error: {}", created["error"]);
+        let file = created["data"]["file"].as_str().unwrap();
+        let project_file = CString::new(file).unwrap();
+
+        for kind_name in ["battery", "status-alarm", "status-dnd", "status-bluetooth", "status-lock"] {
+            let kind = CString::new(kind_name).unwrap();
+            let added = take(rw_add_widget(
+                project_file.as_ptr(),
+                kind.as_ptr(),
+                root_arg.as_ptr(),
+                hands_arg.as_ptr(),
+                status_arg.as_ptr(),
+            ));
+            assert_eq!(added["ok"], true, "kind={kind_name} error: {}", added["error"]);
+        }
+
+        let project = rusty_core::load_project(Path::new(file)).unwrap();
+        let js = rusty_core::codegen::generate_index_js(&project);
+        assert!(js.contains("hmSensor.createSensor(hmSensor.id.BATTERY)"), "{js}");
+        assert!(js.contains("hmUI.widget.IMG_STATUS"), "{js}");
+        assert!(js.contains("hmUI.system_status.DISTURB"), "{js}");
+        assert!(js.contains("hmUI.system_status.DISCONNECT"), "{js}");
+        assert!(!js.contains("TODO: connect"), "{js}");
+
+        let widget_id = project
+            .widgets
+            .iter()
+            .find(|w| w.kind == rusty_core::model::WidgetKind::StatusIcon)
+            .unwrap()
+            .id
+            .clone();
+        let id_arg = CString::new(widget_id).unwrap();
+        // `Classic` jest jedynym wbudowanym pakietem — żeby przetestować
+        // przełączanie, dodajemy zwykłą paczkę z plików.
+        let custom = root.join("Custom");
+        std::fs::create_dir_all(&custom).unwrap();
+        for file in ["alarm.png", "dnd.png", "bluetooth.png", "lock.png"] {
+            std::fs::copy(bundled.join("Status").join("Classic").join(file), custom.join(file))
+                .unwrap();
+        }
+        let folder_arg = CString::new(custom.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(
+            take(rw_status_packs_add(root_arg.as_ptr(), folder_arg.as_ptr()))["ok"],
+            true
+        );
+        let custom_pack = CString::new("Custom").unwrap();
+        let switched = take(rw_set_status_pack(
+            project_file.as_ptr(),
+            id_arg.as_ptr(),
+            custom_pack.as_ptr(),
+            root_arg.as_ptr(),
+        ));
+        assert_eq!(switched["ok"], true, "error: {}", switched["error"]);
+
+        let project = rusty_core::load_project(Path::new(file)).unwrap();
+        assert!(project.assets.iter().any(|a| a.path == "status/Custom/alarm.png"));
+        let flat = rusty_core::export_paths::exported_asset_name("status/Custom/alarm.png");
+        let js = rusty_core::codegen::generate_index_js(&project);
+        assert!(js.contains(&flat), "{js}");
+
+        let zip_path = root.join("System.zip");
+        let output = CString::new(zip_path.to_string_lossy().as_bytes()).unwrap();
+        let exported = take(rw_export_zip(project_file.as_ptr(), output.as_ptr()));
+        assert_eq!(exported["ok"], true, "error: {}", exported["error"]);
+        let listing = rusty_core::inspect_zip(&zip_path).unwrap();
+        assert!(listing.contains(&format!("assets/{flat}")), "{listing}");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
 }
+
+
+

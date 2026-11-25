@@ -5,9 +5,6 @@ use crate::image_fit::FitMode;
 pub const SCHEMA_VERSION: u32 = 1;
 pub const SCREEN_SIZE: u32 = 466;
 
-/// Identyfikator syntetycznej warstwy tła (zasób `role: background`).
-pub const BACKGROUND_LAYER_ID: &str = "background";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -19,11 +16,8 @@ pub struct Project {
     pub assets: Vec<Asset>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_code: Option<String>,
-    /// Wybrany obraz tła wraz z trybem przygotowania `assets/bg.png`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub background: Option<BackgroundConfig>,
-    /// Kolejność rysowania od spodu do góry: `"background"` oraz id widgetów.
-    /// Pusta lista oznacza domyślny porządek (tło, potem widgety wg `z`).
+    /// Kolejność rysowania od spodu do góry (same ids widgetów).
+    /// Pusta lista oznacza domyślny porządek według `z`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layer_order: Vec<String>,
     /// Domyślny system jednostek dla widgetów dystansu (ustawienie aplikacji).
@@ -150,9 +144,17 @@ impl DeviceId {
                 api_compatible: "3.0.0",
                 api_target: "3.6.0",
                 api_min: "3.0.0",
+                screen_shape: ScreenShape::Round,
             },
         }
     }
+}
+
+/// Kształt ekranu urządzenia — używany m.in. do maskowania ikony tarczy
+/// wyświetlanej na zegarku. `Round` = okrąg wpisany w kwadrat `design_width`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenShape {
+    Round,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -163,21 +165,7 @@ pub struct DeviceProfile {
     pub api_compatible: &'static str,
     pub api_target: &'static str,
     pub api_min: &'static str,
-}
-
-/// Konfiguracja tła zapisana w projekcie. `image` to nazwa pliku z magazynu
-/// `%APPDATA%\RustyWatch\Images`; oryginał jest kopiowany do
-/// `assets/backgrounds/<image>`, a `assets/bg.png` to wersja gotowa dla tarczy.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BackgroundConfig {
-    pub image: String,
-    #[serde(default = "default_auto_scale")]
-    pub auto_scale: bool,
-}
-
-fn default_auto_scale() -> bool {
-    true
+    pub screen_shape: ScreenShape,
 }
 
 /// Warstwa jest domyślnie widoczna — starsze projekty nie mają tego pola.
@@ -201,13 +189,14 @@ pub struct Asset {
 #[serde(rename_all = "snake_case")]
 pub enum AssetRole {
     Icon,
-    Background,
     /// Czcionka skopiowana z `%APPDATA%\RustyWatch\Fonts` do projektu.
     Font,
-    /// Oryginał obrazka (np. źródło tła) zachowany w projekcie.
+    /// Oryginał obrazka zachowany w projekcie.
     Image,
     /// Plik wskazówki skopiowany z `%APPDATA%\RustyWatch\Hands` do projektu.
     Hand,
+    /// Ikona statusu systemu skopiowana z `%APPDATA%\RustyWatch\Status` do projektu.
+    StatusIcon,
     Other,
 }
 
@@ -283,6 +272,73 @@ pub struct Widget {
     /// Domyślnie `true`, więc starsze projekty zachowują dotychczasowy wygląd.
     #[serde(default = "default_show_unit")]
     pub show_unit: bool,
+    /// Nazwa paczki ikon statusu z `%APPDATA%\RustyWatch\Status` (tylko StatusIcon).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_icon_set: Option<String>,
+    /// Który stan systemu reprezentuje ikona (tylko StatusIcon).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_type: Option<StatusType>,
+}
+
+/// Stan systemu wyświetlany przez `hmUI.widget.IMG_STATUS`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatusType {
+    Alarm,
+    Dnd,
+    Bluetooth,
+    Lock,
+}
+
+impl StatusType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Alarm => "alarm",
+            Self::Dnd => "dnd",
+            Self::Bluetooth => "bluetooth",
+            Self::Lock => "lock",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "alarm" | "clock" => Some(Self::Alarm),
+            "dnd" | "disturb" => Some(Self::Dnd),
+            "bluetooth" | "disconnect" => Some(Self::Bluetooth),
+            "lock" => Some(Self::Lock),
+            _ => None,
+        }
+    }
+
+    /// Nazwa pliku w paczce — wspólna konwencja dla magazynu i projektu.
+    pub fn file_name(self) -> &'static str {
+        match self {
+            Self::Alarm => "alarm.png",
+            Self::Dnd => "dnd.png",
+            Self::Bluetooth => "bluetooth.png",
+            Self::Lock => "lock.png",
+        }
+    }
+
+    /// Stała klasycznego API tarczy. Uwaga: `DISCONNECT` oznacza brak połączenia.
+    pub fn js_constant(self) -> &'static str {
+        match self {
+            Self::Alarm => "hmUI.system_status.CLOCK",
+            Self::Dnd => "hmUI.system_status.DISTURB",
+            Self::Bluetooth => "hmUI.system_status.DISCONNECT",
+            Self::Lock => "hmUI.system_status.LOCK",
+        }
+    }
+
+    /// Bit w masce widoczności klatek podglądu.
+    pub fn bit(self) -> u8 {
+        match self {
+            Self::Alarm => 1,
+            Self::Dnd => 2,
+            Self::Bluetooth => 4,
+            Self::Lock => 8,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -326,6 +382,10 @@ pub enum WidgetKind {
     CalorieText,
     /// SpO₂ z `hmSensor.id.SPO2`.
     Spo2Text,
+    /// Poziom baterii z `hmSensor.id.BATTERY` (widget tekstowy).
+    BatteryText,
+    /// Ikona stanu systemu rysowana przez `hmUI.widget.IMG_STATUS`.
+    StatusIcon,
     /// Zegar analogowy: kilka widgetów `IMG` obracanych wokół środka tarczy.
     AnalogTime,
 }
@@ -542,16 +602,10 @@ impl Project {
                 description: format!("{} — created with Rusty Watch", name),
             },
             device: DeviceId::Active2Round,
-            assets: vec![
-                Asset {
-                    path: "bg.png".to_string(),
-                    role: AssetRole::Background,
-                },
-                Asset {
-                    path: "icon.png".to_string(),
-                    role: AssetRole::Icon,
-                },
-            ],
+            assets: vec![Asset {
+                path: "icon.png".to_string(),
+                role: AssetRole::Icon,
+            }],
             // Na tym etapie edytor obsługuje wyłącznie jeden widget — wyświetlacz czasu.
             widgets: vec![
                 Widget {
@@ -578,22 +632,20 @@ impl Project {
                     data_source: Some(DataSource::Time),
                     align: Some(Align::Center),
                     v_align: VAlign::Center,
-                    show_level: ShowLevel::Always,
+                    show_level: ShowLevel::Normal,
                     auto_scale: false,
                     text_style: TextStyle::Ellipsis,
                     visible: true,
                     measurement_system: None,
                     show_unit: true,
+                    status_icon_set: None,
+                    status_type: None,
                 },
             ],
             custom_code: None,
-            background: None,
             measurement_system: MeasurementSystem::Watch,
             first_day_of_week: FirstDayOfWeek::Monday,
-            layer_order: vec![
-                BACKGROUND_LAYER_ID.to_string(),
-                "time".to_string(),
-            ],
+            layer_order: vec!["time".to_string()],
         }
     }
 }

@@ -4,8 +4,8 @@ use serde_json::Value;
 
 use crate::image_fit::FitMode;
 use crate::model::{
-    Align, DataSource, MeasurementSystem, Project, ShowLevel, TextStyle, VAlign, Widget, WidgetKind,
-    SCREEN_SIZE,
+    Align, DataSource, MeasurementSystem, Project, ShowLevel, StatusType, TextStyle, VAlign, Widget,
+    WidgetKind, SCREEN_SIZE,
 };
 use crate::{layers, time_format};
 
@@ -20,6 +20,9 @@ pub const CATEGORY_DATE: &str = "date";
 pub const CATEGORY_DISTANCE: &str = "distance";
 /// Puls, stres, PAI, temperatura, sen, kalorie i SpO₂.
 pub const CATEGORY_HEALTH: &str = "health";
+/// Stan urządzenia: bateria oraz ikony statusu systemu.
+pub const CATEGORY_SYSTEM: &str = "system";
+
 
 /// Pozycja katalogu widgetów czytana przez FFI. `category` pozwala UI grupować
 /// wpisy w zwijalne sekcje — lista jest wspólna dla flyoutu i zakładki Widgets.
@@ -112,6 +115,26 @@ pub fn supported_widgets() -> Vec<SupportedWidget> {
         SupportedWidget {
             kind: "spo2",
             category: CATEGORY_HEALTH,
+        },
+        SupportedWidget {
+            kind: "battery",
+            category: CATEGORY_SYSTEM,
+        },
+        SupportedWidget {
+            kind: "status-alarm",
+            category: CATEGORY_SYSTEM,
+        },
+        SupportedWidget {
+            kind: "status-dnd",
+            category: CATEGORY_SYSTEM,
+        },
+        SupportedWidget {
+            kind: "status-bluetooth",
+            category: CATEGORY_SYSTEM,
+        },
+        SupportedWidget {
+            kind: "status-lock",
+            category: CATEGORY_SYSTEM,
         },
     ]
 }
@@ -510,21 +533,36 @@ fn date_field_spec(
     })
 }
 
+/// Typ ikony statusu dla wpisu katalogu `status-*`.
+fn status_icon_spec(kind: &str) -> Option<StatusType> {
+    match kind {
+        "status-alarm" => Some(StatusType::Alarm),
+        "status-dnd" => Some(StatusType::Dnd),
+        "status-bluetooth" => Some(StatusType::Bluetooth),
+        "status-lock" => Some(StatusType::Lock),
+        _ => None,
+    }
+}
+
 /// Dodaje widget do projektu. Obsługiwane typy: `time` (cyfrowy), `analog-time`,
-/// `date`, `text` (stały tekst), `steps`, `distance` oraz widgety zdrowotne
-/// z kategorii `health` (wszystkie zasilane czujnikami ZeppOS).
+/// `date`, `text` (stały tekst), `steps`, `distance`, widgety zdrowotne
+/// z kategorii `health`, bateria oraz ikony statusu z kategorii `system`.
 pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
     let health = health_spec(kind);
     let date_field = date_field_spec(kind);
+    let status_icon = status_icon_spec(kind);
+    let battery = kind == "battery";
     let (analog, date, user_text, steps, distance, images) = match kind {
-        "time" => (false, false, false, false, false, false),
+        "time" | "battery" => (false, false, false, false, false, false),
         "analog-time" => (true, false, false, false, false, false),
         "date" => (false, true, false, false, false, false),
         "text" => (false, false, true, false, false, false),
         "images" => (false, false, false, false, false, true),
         "steps" => (false, false, false, true, false, false),
         "distance" => (false, false, false, false, true, false),
-        _ if health.is_some() || date_field.is_some() => (false, false, false, false, false, false),
+        _ if health.is_some() || date_field.is_some() || status_icon.is_some() => {
+            (false, false, false, false, false, false)
+        }
         _ => bail!("Nieobsługiwany typ widgetu: {kind}"),
     };
     let prefix = if analog {
@@ -539,6 +577,15 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         "steps"
     } else if distance {
         "distance"
+    } else if battery {
+        "battery"
+    } else if let Some(status) = status_icon {
+        match status {
+            StatusType::Alarm => "status-alarm",
+            StatusType::Dnd => "status-dnd",
+            StatusType::Bluetooth => "status-bluetooth",
+            StatusType::Lock => "status-lock",
+        }
     } else if let Some((_, _, health_prefix, _, _, _)) = health {
         health_prefix
     } else if let Some((_, _, date_prefix, _, _, _)) = date_field {
@@ -592,12 +639,14 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             data_source: None,
             align: None,
             v_align: VAlign::Center,
-            show_level: ShowLevel::Always,
+            show_level: ShowLevel::Normal,
             auto_scale: false,
             text_style: TextStyle::Ellipsis,
             visible: true,
             measurement_system: None,
             show_unit: true,
+            status_icon_set: None,
+            status_type: None,
         }
     } else if images {
         // Statyczny obrazek — plik PNG jest przygotowywany do rozmiaru ramki
@@ -626,12 +675,14 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             data_source: None,
             align: None,
             v_align: VAlign::Center,
-            show_level: ShowLevel::Always,
+            show_level: ShowLevel::Normal,
             auto_scale: false,
             text_style: TextStyle::Ellipsis,
             visible: true,
             measurement_system: None,
             show_unit: true,
+            status_icon_set: None,
+            status_type: None,
         }
     } else if date {
         // Data to widget tekstowy z danymi `Date`. `time_format` przechowuje tu
@@ -661,12 +712,14 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             data_source: Some(DataSource::Date),
             align: Some(Align::Center),
             v_align: VAlign::Center,
-            show_level: ShowLevel::Always,
+            show_level: ShowLevel::Normal,
             auto_scale: false,
             text_style: TextStyle::Ellipsis,
             visible: true,
             measurement_system: None,
             show_unit: true,
+            status_icon_set: None,
+            status_type: None,
         }
     } else if user_text {
         // Zwykły tekst wpisany w inspektorze. Bez `dataSource` i bez wzorca —
@@ -695,12 +748,14 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             data_source: None,
             align: Some(Align::Center),
             v_align: VAlign::Center,
-            show_level: ShowLevel::Always,
+            show_level: ShowLevel::Normal,
             auto_scale: false,
             text_style: TextStyle::Ellipsis,
             visible: true,
             measurement_system: None,
             show_unit: true,
+            status_icon_set: None,
+            status_type: None,
         }
     } else if steps {
         // Licznik kroków czyta wartość z czujnika Zegarka — w podglądzie edytora
@@ -729,12 +784,14 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             data_source: Some(DataSource::Step),
             align: Some(Align::Center),
             v_align: VAlign::Center,
-            show_level: ShowLevel::Always,
+            show_level: ShowLevel::Normal,
             auto_scale: false,
             text_style: TextStyle::Ellipsis,
             visible: true,
             measurement_system: None,
             show_unit: true,
+            status_icon_set: None,
+            status_type: None,
         }
     } else if distance {
         // Dystans czyta czujnik ZeppOS w metrach. Jednostka domyślna pochodzi
@@ -763,12 +820,14 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             data_source: Some(DataSource::Distance),
             align: Some(Align::Center),
             v_align: VAlign::Center,
-            show_level: ShowLevel::Always,
+            show_level: ShowLevel::Normal,
             auto_scale: false,
             text_style: TextStyle::Ellipsis,
             visible: true,
             measurement_system: None,
             show_unit: true,
+            status_icon_set: None,
+            status_type: None,
         }
     } else if let Some((kind, source, _, name, initial, size)) = date_field {
         // Pole daty — wartość jest generowana przez czujnik TIME / WORLD_CLOCK
@@ -797,12 +856,14 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             data_source: Some(source),
             align: Some(Align::Center),
             v_align: VAlign::Center,
-            show_level: ShowLevel::Always,
+            show_level: ShowLevel::Normal,
             auto_scale: false,
             text_style: TextStyle::Ellipsis,
             visible: true,
             measurement_system: None,
             show_unit: true,
+            status_icon_set: None,
+            status_type: None,
         }
     } else if let Some((health_kind, health_source, _, health_name, _, health_size)) = health {
         // Widget zdrowotny — wartość czyta czujnik na zegarku. Na PC podgląd
@@ -831,12 +892,96 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             data_source: Some(health_source),
             align: Some(Align::Center),
             v_align: VAlign::Center,
-            show_level: ShowLevel::Always,
+            show_level: ShowLevel::Normal,
             auto_scale: false,
             text_style: TextStyle::Ellipsis,
             visible: true,
             measurement_system: None,
             show_unit: true,
+            status_icon_set: None,
+            status_type: None,
+        }
+    } else if battery {
+        // Poziom baterii — tekst zasilany `hmSensor.id.BATTERY`. Na PC pokazujemy
+        // neutralne 100%, dopóki zegarek nie prześle pierwszego odczytu.
+        Widget {
+            id: id.clone(),
+            name: format!("Battery{suffix}"),
+            kind: WidgetKind::BatteryText,
+            // Środek ramki w środku tarczy: x = (466-420)/2, y = (466-60)/2.
+            x: 23,
+            y: 203,
+            w: 420,
+            h: 60,
+            z: 0,
+            text: Some("100%".to_string()),
+            text_size: Some(32),
+            font: None,
+            time_format: None,
+            color: Some("0xFFFFFFFF".to_string()),
+            src: None,
+            image_fit: FitMode::default(),
+            hand_set: None,
+            hour_src: None,
+            minute_src: None,
+            second_src: None,
+            cap_src: None,
+            data_source: Some(DataSource::Battery),
+            align: Some(Align::Center),
+            v_align: VAlign::Center,
+            show_level: ShowLevel::Normal,
+            auto_scale: false,
+            text_style: TextStyle::Ellipsis,
+            visible: true,
+            measurement_system: None,
+            show_unit: true,
+            status_icon_set: None,
+            status_type: None,
+        }
+    } else if let Some(status) = status_icon {
+        // Ikona statusu systemu. Pakiety są przypisywane w FFI zaraz po dodaniu
+        // widgetu — tutaj ustawiamy tylko domyślną ramkę w górnym pasku stanu.
+        // Jedna pozioma linia wycentrowana na środku tarczy: 4 × 32 px
+        // z 16 px odstępami = 176 px, start x = (466 - 176) / 2 = 145.
+        let (x, y) = match status {
+            StatusType::Alarm => (145, 24),
+            StatusType::Dnd => (193, 24),
+            StatusType::Bluetooth => (241, 24),
+            StatusType::Lock => (289, 24),
+        };
+        Widget {
+            id: id.clone(),
+            name: format!("{}{}", status.as_str(), suffix),
+            kind: WidgetKind::StatusIcon,
+            x,
+            y,
+            w: 32,
+            h: 32,
+            z: 0,
+            text: None,
+            text_size: None,
+            font: None,
+            time_format: None,
+            color: None,
+            src: None,
+            image_fit: FitMode::default(),
+            hand_set: None,
+            hour_src: None,
+            minute_src: None,
+            second_src: None,
+            cap_src: None,
+            data_source: None,
+            align: None,
+            v_align: VAlign::Center,
+            // Ikony nie powinny świecić w trybie AOD (reguła ZeppOS: <10% pikseli).
+            show_level: ShowLevel::Normal,
+            auto_scale: false,
+            text_style: TextStyle::Ellipsis,
+            visible: true,
+            measurement_system: None,
+            show_unit: true,
+            status_icon_set: None,
+            status_type: Some(status),
         }
     } else {
         Widget {
@@ -863,12 +1008,14 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             data_source: Some(DataSource::Time),
             align: Some(Align::Center),
             v_align: VAlign::Center,
-            show_level: ShowLevel::Always,
+            show_level: ShowLevel::Normal,
             auto_scale: false,
             text_style: TextStyle::Ellipsis,
             visible: true,
             measurement_system: None,
             show_unit: true,
+            status_icon_set: None,
+            status_type: None,
         }
     };
     project.widgets.push(widget.clone());
@@ -880,6 +1027,42 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
 /// Aktualizuje ustawienia wskazanego widgetu z panelu inspektora edytora.
 pub fn update_widget(project: &mut Project, settings: &Value) -> Result<Widget> {
     let id = string_field(settings, "id")?;
+    // Ikona statusu nie ma czcionki ani wzorca — zapisujemy tylko geometrię.
+    let is_status_icon = project
+        .widgets
+        .iter()
+        .find(|widget| widget.id == id)
+        .is_some_and(|widget| widget.kind == WidgetKind::StatusIcon);
+    if is_status_icon {
+        let x = i64_field(settings, "x")?;
+        let y = i64_field(settings, "y")?;
+        let w = i64_field(settings, "w")?;
+        let h = i64_field(settings, "h")?;
+        if w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > SCREEN_SIZE as i64 || y + h > SCREEN_SIZE as i64 {
+            bail!("Widget musi mieścić się w ekranie 466×466");
+        }
+        let existing_auto_scale = project
+            .widgets
+            .iter()
+            .find(|widget| widget.id == id)
+            .map(|widget| widget.auto_scale)
+            .unwrap_or(false);
+        let auto_scale = settings
+            .get("autoScale")
+            .and_then(Value::as_bool)
+            .unwrap_or(existing_auto_scale);
+        let widget = project
+            .widgets
+            .iter_mut()
+            .find(|widget| widget.id == id)
+            .unwrap();
+        widget.x = x as i32;
+        widget.y = y as i32;
+        widget.w = w as i32;
+        widget.h = h as i32;
+        widget.auto_scale = auto_scale;
+        return Ok(widget.clone());
+    }
     let (
         existing_auto_scale,
         existing_text_style,
@@ -1095,6 +1278,51 @@ pub fn update_widget(project: &mut Project, settings: &Value) -> Result<Widget> 
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn status_icon_defaults_fit_inside_round_watchface() {
+        let mut project = crate::model::Project::starter("Test");
+        let mut boxes = Vec::new();
+        for kind in ["status-alarm", "status-dnd", "status-bluetooth", "status-lock"] {
+            let widget = add_widget(&mut project, kind).unwrap();
+            let cx = widget.x as f64 + widget.w as f64 / 2.0;
+            let cy = widget.y as f64 + widget.h as f64 / 2.0;
+            let distance = ((cx - 233.0).powi(2) + (cy - 233.0).powi(2)).sqrt();
+            assert!(distance < 233.0, "{kind}: center distance {distance}");
+            boxes.push((widget.x, widget.y, widget.w, widget.h));
+        }
+        // Jedna linia w poziomie, bez nachodzenia i wycentrowana na środku tarczy.
+        assert!(boxes.iter().all(|(_, y, _, h)| *y == 24 && *h == 32));
+        let left = boxes.iter().map(|b| b.0).min().unwrap();
+        let right = boxes.iter().map(|b| b.0 + b.2).max().unwrap();
+        assert_eq!((left + right) / 2, 233);
+        let mut sorted = boxes.clone();
+        sorted.sort_by_key(|b| b.0);
+        for pair in sorted.windows(2) {
+            assert!(pair[0].0 + pair[0].2 < pair[1].0, "ikony nachodzą na siebie");
+        }
+    }
+
+    #[test]
+    fn battery_default_is_centered_on_watchface() {
+        let mut project = crate::model::Project::starter("Test");
+        let widget = add_widget(&mut project, "battery").unwrap();
+        assert_eq!(widget.x + widget.w / 2, 233);
+        assert_eq!(widget.y + widget.h / 2, 233);
+    }
+
+    #[test]
+    fn status_widget_persists_auto_scale() {
+        let mut project = crate::model::Project::starter("Test");
+        let widget = add_widget(&mut project, "status-dnd").unwrap();
+        let settings = serde_json::json!({
+            "id": widget.id,
+            "x": 145, "y": 24, "w": 32, "h": 32,
+            "autoScale": true,
+        });
+        let updated = update_widget(&mut project, &settings).unwrap();
+        assert!(updated.auto_scale);
+    }
 
     fn frame(handle: &str, dx: i32, dy: i32, snap: bool) -> FrameInput {
         FrameInput {

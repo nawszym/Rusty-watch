@@ -13,13 +13,19 @@ internal sealed record ImageAssetDto(string File, uint Width, uint Height, ulong
 
 internal sealed record ImageListDto(List<ImageAssetDto> Images);
 
-/// <summary>Pozycja katalogu widgetów (id + kategoria) z rw_supported_widgets.</summary>
+/// <summary>Pozycja katalogu widgetów z rw_supported_widgets (subcategory dla STATUS).</summary>
 internal sealed record SupportedWidgetDto(string Kind, string Category);
 
 /// <summary>Zestaw wskazówek z magazynu w %APPDATA%\RustyWatch\Hands.</summary>
-internal sealed record HandSetDto(string Id, string Name, bool HasSecond, bool HasCap, uint Size);
+internal sealed record HandSetDto(string Id, string Name, bool HasSecond, bool HasCap, uint Size,
+    string? Fingerprint = null);
 
 internal sealed record HandSetListDto(List<HandSetDto> Hands);
+
+/// <summary>Paczka ikon statusu z magazynu w %APPDATA%\RustyWatch\Status.</summary>
+internal sealed record StatusPackDto(string Id, string Name, uint Size, string? Fingerprint = null);
+
+internal sealed record StatusPackListDto(List<StatusPackDto> Packs);
 
 /// <summary>Mostek P/Invoke do biblioteki rusty_ffi (rusty-core).</summary>
 internal static class RustNative
@@ -97,7 +103,8 @@ internal static class RustNative
         [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string kind,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledDir);
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledDir,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledStatusDir);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_set_widget")]
     private static extern IntPtr SetWidget(
@@ -119,7 +126,8 @@ internal static class RustNative
     private static extern IntPtr EnsureDefaults(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledFontsDir,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledHandsDir);
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledHandsDir,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledStatusDir);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_fonts_list")]
     private static extern IntPtr FontsList(
@@ -149,20 +157,6 @@ internal static class RustNative
         [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledDir);
 
-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_backgrounds_list")]
-    private static extern IntPtr BackgroundsList(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot);
-
-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_backgrounds_add")]
-    private static extern IntPtr BackgroundsAdd(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string sourcePath);
-
-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_backgrounds_remove")]
-    private static extern IntPtr BackgroundsRemove(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string file);
-
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_set_widget_image")]
     private static extern IntPtr SetWidgetImage(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
@@ -185,20 +179,36 @@ internal static class RustNative
         [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string file);
 
-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_ensure_project_background")]
-    private static extern IntPtr EnsureProjectBackground(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot);
-
-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_set_background")]
-    private static extern IntPtr SetBackground(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string image,
-        int autoScale,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot);
-
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_hands_list")]
     private static extern IntPtr HandsList(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledDir);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_status_packs_list")]
+    private static extern IntPtr StatusPacksList(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledDir);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_status_packs_add")]
+    private static extern IntPtr StatusPacksAdd(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string folder);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_status_packs_remove")]
+    private static extern IntPtr StatusPacksRemove(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_set_status_pack")]
+    private static extern IntPtr SetStatusPack(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string widgetId,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string setId,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_attach_status_pack_to_missing")]
+    private static extern IntPtr AttachStatusPackToMissing(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledDir);
 
@@ -243,6 +253,21 @@ internal static class RustNative
     private static extern IntPtr PrepareEmulatorWorkspace(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string project,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string root);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_preview_random_series")]
+    private static extern IntPtr PreviewRandomSeries(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string locale);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_render_preview_frame")]
+    private static extern IntPtr RenderPreviewFrame(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string project,
+        uint index,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string seriesJson);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_encode_preview_gif")]
+    private static extern IntPtr EncodePreviewGif(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string project,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string seriesJson);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_recent_list")]
     private static extern IntPtr RecentList([MarshalAs(UnmanagedType.LPUTF8Str)] string store);
@@ -324,7 +349,8 @@ internal static class RustNative
         => Call(() => EnsureDefaults(
             AppPaths.DataDirectory,
             AppPaths.BundledFontsDirectory,
-            AppPaths.BundledHandsDirectory), out error);
+            AppPaths.BundledHandsDirectory,
+            AppPaths.BundledStatusDirectory), out error);
 
     public static string? CreateProject(string path, string name, string author, uint appId, out string? error)
         => Call(() => CreateProject(path, name, author, appId), out error);
@@ -368,7 +394,12 @@ internal static class RustNative
 
     public static string? AddWidget(string projectFile, string kind, out string? error)
         => Call(
-            () => AddWidget(projectFile, kind, AppPaths.DataDirectory, AppPaths.BundledHandsDirectory),
+            () => AddWidget(
+                projectFile,
+                kind,
+                AppPaths.DataDirectory,
+                AppPaths.BundledHandsDirectory,
+                AppPaths.BundledStatusDirectory),
             out error);
 
     public static string? SetWidget(string projectFile, string settingsJson, out string? error)
@@ -418,29 +449,6 @@ internal static class RustNative
             () => ApplyDefaultFontToMissing(projectFile, AppPaths.DataDirectory, AppPaths.BundledFontsDirectory),
             out error);
 
-    public static List<ImageAssetDto> BackgroundsList(out string? error)
-    {
-        var raw = Call(() => BackgroundsList(AppPaths.DataDirectory), out error);
-        if (raw is null) return new List<ImageAssetDto>();
-        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-        return JsonSerializer.Deserialize<ImageListDto>(raw, options)?.Images ?? new List<ImageAssetDto>();
-    }
-
-    public static ImageAssetDto? BackgroundsAdd(string sourcePath, out string? error)
-    {
-        var raw = Call(() => BackgroundsAdd(AppPaths.DataDirectory, sourcePath), out error);
-        if (raw is null) return null;
-        using var document = JsonDocument.Parse(raw);
-        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-        return JsonSerializer.Deserialize<ImageAssetDto>(
-            document.RootElement.GetProperty("image").GetRawText(), options);
-    }
-
-    public static void BackgroundsRemove(string file, out string? error)
-    {
-        Call(() => BackgroundsRemove(AppPaths.DataDirectory, file), out error);
-    }
-
     public static string? SetWidgetImage(string projectFile, string widgetId, string file,
         string fit, out string? error)
         => Call(
@@ -471,14 +479,6 @@ internal static class RustNative
         Call(() => ImagesRemove(AppPaths.DataDirectory, file), out error);
     }
 
-    public static void EnsureProjectBackground(string projectFile, out string? error)
-        => Call(() => EnsureProjectBackground(projectFile, AppPaths.DataDirectory), out error);
-
-    public static string? SetBackground(string projectFile, string image, bool autoScale, out string? error)
-        => Call(
-            () => SetBackground(projectFile, image, autoScale ? 1 : 0, AppPaths.DataDirectory),
-            out error);
-
     public static List<SupportedWidgetDto> SupportedWidgetItems(out string? error)
     {
         var raw = SupportedWidgets(out error);
@@ -498,6 +498,45 @@ internal static class RustNative
         var result = JsonSerializer.Deserialize<HandSetListDto>(raw, options);
         return result?.Hands ?? new List<HandSetDto>();
     }
+
+    public static List<StatusPackDto> StatusPacksList(out string? error)
+    {
+        var raw = Call(
+            () => StatusPacksList(AppPaths.DataDirectory, AppPaths.BundledStatusDirectory),
+            out error);
+        if (raw is null) return new List<StatusPackDto>();
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var result = JsonSerializer.Deserialize<StatusPackListDto>(raw, options);
+        return result?.Packs ?? new List<StatusPackDto>();
+    }
+
+    public static StatusPackDto? StatusPacksAdd(string folder, out string? error)
+    {
+        var raw = Call(() => StatusPacksAdd(AppPaths.DataDirectory, folder), out error);
+        if (raw is null) return null;
+        using var document = JsonDocument.Parse(raw);
+        var element = document.RootElement.GetProperty("pack");
+        return new StatusPackDto(
+            element.GetProperty("id").GetString() ?? "",
+            element.GetProperty("name").GetString() ?? "",
+            element.GetProperty("size").GetUInt32());
+    }
+
+    public static string? StatusPacksRemove(string id, out string? error)
+        => Call(() => StatusPacksRemove(AppPaths.DataDirectory, id), out error);
+
+    public static string? SetStatusPack(string projectFile, string widgetId, string setId, out string? error)
+        => Call(
+            () => SetStatusPack(projectFile, widgetId, setId, AppPaths.DataDirectory),
+            out error);
+
+    public static string? AttachStatusPackToMissing(string projectFile, out string? error)
+        => Call(
+            () => AttachStatusPackToMissing(
+                projectFile,
+                AppPaths.DataDirectory,
+                AppPaths.BundledStatusDirectory),
+            out error);
 
     public static HandSetDto? HandsAdd(string folder, out string? error)
     {
@@ -542,6 +581,18 @@ internal static class RustNative
 
     public static string? PrepareEmulatorWorkspace(string project, string root, out string? error)
         => Call(() => PrepareEmulatorWorkspace(project, root), out error);
+
+    /// <summary>Losuje dane 7 klatek podglądu (jedno wywołanie na eksport).</summary>
+    public static string? PreviewRandomSeries(string locale, out string? error)
+        => Call(() => PreviewRandomSeries(locale), out error);
+
+    /// <summary>Rysuje jedną klatkę do cache projektu; postęp raportuje C#.</summary>
+    public static string? RenderPreviewFrame(string project, uint index, string seriesJson, out string? error)
+        => Call(() => RenderPreviewFrame(project, index, seriesJson), out error);
+
+    /// <summary>Składa preview.png i 7-klatkowy preview.gif w folderze projektu.</summary>
+    public static string? EncodePreviewGif(string project, string seriesJson, out string? error)
+        => Call(() => EncodePreviewGif(project, seriesJson), out error);
 
     public static string? RecentList(string store, out string? error)
         => Call(() => RecentList(store), out error);

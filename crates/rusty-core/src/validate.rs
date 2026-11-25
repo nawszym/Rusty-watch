@@ -66,7 +66,8 @@ pub fn validate(project: &Project) -> Vec<String> {
             | WidgetKind::SkinTempText
             | WidgetKind::SleepText
             | WidgetKind::CalorieText
-            | WidgetKind::Spo2Text => {
+            | WidgetKind::Spo2Text
+            | WidgetKind::BatteryText => {
                 if widget.text_size.unwrap_or(0) == 0 {
                     errors.push(format!("Widget tekstowy '{}' nie ma rozmiaru czcionki", widget.id));
                 }
@@ -96,6 +97,22 @@ pub fn validate(project: &Project) -> Vec<String> {
                             widget.id
                         ));
                     }
+                }
+            }
+            WidgetKind::StatusIcon => {
+                if widget.status_icon_set.is_none() || widget.status_type.is_none() {
+                    errors.push(format!(
+                        "Widget statusu '{}' nie ma przypisanej paczki ikon",
+                        widget.id
+                    ));
+                }
+                match &widget.src {
+                    None => errors.push(format!("Widget statusu '{}' nie ma src", widget.id)),
+                    Some(src) if !asset_paths.contains(src.as_str()) => errors.push(format!(
+                        "Widget '{}' odwołuje się do nieistniejącej ikony statusu: {src}",
+                        widget.id
+                    )),
+                    _ => {}
                 }
             }
             WidgetKind::Image | WidgetKind::Images => {

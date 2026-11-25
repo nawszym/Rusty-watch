@@ -155,7 +155,6 @@ public static class LocalizationService
         ("Wersja tarczy nie może zawierać białych znaków", "ErrVersionChars"),
         ("warstwa nie istnieje: ", "ErrNoLayer"),
         ("Nie można przesunąć warstwy dalej", "ErrLayerBounds"),
-        ("Tło jest zablokowane na najniższej warstwie", "ErrBackgroundLocked"),
         ("Projekt musi zawierać przynajmniej jeden widget", "ErrLastWidget"),
         ("Nieobsługiwany typ widgetu: ", "ErrUnsupportedWidget"),
         ("Format czasu nie może być pusty", "ErrTimeEmpty"),

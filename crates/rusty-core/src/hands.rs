@@ -10,14 +10,16 @@
 //! cieniem) jest instalowany przy pierwszym uruchomieniu aplikacji.
 
 use image::imageops::FilterType;
-use image::{GenericImageView, ImageEncoder, RgbaImage};
+use image::{GenericImageView, ImageEncoder, Rgba, RgbaImage};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::asset_cache;
 use crate::codegen::HandPlacement;
 use crate::model::{Asset, AssetRole, Project, WidgetKind, SCREEN_SIZE};
+use crate::preview::rotate_hand;
 
 pub const HAND_DIR: &str = "Hands";
 pub const DEFAULT_HAND_SET: &str = "Classic";
@@ -30,6 +32,11 @@ const CAP_FILE: &str = "cap.png";
 const REQUIRED_FILES: [&str; 2] = [HOUR_FILE, MINUTE_FILE];
 const OPTIONAL_FILES: [&str; 2] = [SECOND_FILE, CAP_FILE];
 
+/// Nazwy wszystkich plików zestawu — jedyne źródło odcisku (opcjonalne są pomijane).
+fn hand_file_names() -> [&'static str; 4] {
+    [HOUR_FILE, MINUTE_FILE, SECOND_FILE, CAP_FILE]
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HandSet {
@@ -39,6 +46,8 @@ pub struct HandSet {
     pub has_cap: bool,
     /// Bok kwadratowego obrazu wskazówki w pikselach (np. 400).
     pub size: u32,
+    /// Odcisk plików wskazówek — miniaturka jest odświeżana tylko przy jego zmianie.
+    pub fingerprint: String,
 }
 
 pub fn hands_dir(app_data_root: &Path) -> PathBuf {
@@ -53,7 +62,7 @@ pub fn js_hand_path(id: &str, file: &str) -> String {
     format!("{JS_HAND_PREFIX}{id}/{file}")
 }
 
-/// Kopiuje wbudowane zestawy do magazynu, jeśli jeszcze ich nie ma.
+/// Kopiuje wbudowane zestawy do magazynu i odświeża je, gdy źródło się zmieniło.
 ///
 /// Nie wolno tu wcześnie wracać po zainstalowaniu `Classic`: nowe zestawy
 /// dołączone do `Assets/Hands` muszą pojawić się także w istniejących
@@ -82,20 +91,79 @@ pub fn ensure_default(app_data_root: &Path, bundled_dir: &Path) -> Result<(), St
             continue;
         }
         valid_set_id(&id)?;
+        let bundled = entry.path();
+        let bundled_fingerprint = asset_cache::files_fingerprint(&bundled, &hand_file_names())?;
         let target = hand_set_dir(app_data_root, &id);
-        if target.join(HOUR_FILE).is_file() && target.join(MINUTE_FILE).is_file() {
+        // Stare instalacje nie mają znacznika — wtedy również trzeba nadpisać
+        // pliki, żeby poprawione wskazówki dotarły do użytkownika po aktualizacji.
+        let unchanged = target.join(HOUR_FILE).is_file()
+            && target.join(MINUTE_FILE).is_file()
+            && asset_cache::read_bundled_version(&target).as_deref()
+                == Some(bundled_fingerprint.as_str());
+        if unchanged {
             continue;
         }
         fs::create_dir_all(&target)
             .map_err(|e| format!("Nie można utworzyć katalogu wskazówek: {e}"))?;
         for file in REQUIRED_FILES.iter().chain(OPTIONAL_FILES.iter()) {
-            let from = entry.path().join(file);
+            let from = bundled.join(file);
             if from.is_file() {
                 fs::copy(&from, target.join(file))
                     .map_err(|e| format!("Nie można skopiować wskazówki {file}: {e}"))?;
+            } else if OPTIONAL_FILES.contains(file) {
+                // Źródło już nie ma tej wskazówki — nie zostawiaj starej kopii.
+                let stale = target.join(file);
+                if stale.is_file() {
+                    let _ = fs::remove_file(stale);
+                }
             }
         }
+        asset_cache::write_bundled_version(&target, &bundled_fingerprint)?;
+        generate_preview(app_data_root, &id)?;
     }
+    ensure_previews(app_data_root)?;
+    Ok(())
+}
+
+/// Generuje `preview.png` tylko dla zestawów, których pliki się zmieniły.
+pub fn ensure_previews(app_data_root: &Path) -> Result<(), String> {
+    for set in list(app_data_root)? {
+        let dir = hand_set_dir(app_data_root, &set.id);
+        if asset_cache::fingerprint_matches(&dir, &hand_file_names())? {
+            continue;
+        }
+        generate_preview(app_data_root, &set.id)?;
+    }
+    Ok(())
+}
+
+/// Rysuje jedną miniaturkę zestawu (hour → minute → second → cap).
+pub fn generate_preview(app_data_root: &Path, id: &str) -> Result<(), String> {
+    const SIZE: u32 = 128;
+    const HAND: u32 = 96;
+    let source = hand_set_dir(app_data_root, id);
+    let mut canvas = RgbaImage::from_pixel(SIZE, SIZE, Rgba([0, 0, 0, 0]));
+    // 21:37:11 — godz. 288.5°, min. 223.1°, sek. 66°.
+    for (file, angle) in [
+        (HOUR_FILE, 288.5),
+        (MINUTE_FILE, 223.1),
+        (SECOND_FILE, 66.0),
+        (CAP_FILE, 0.0),
+    ] {
+        let path = source.join(file);
+        if !path.is_file() {
+            continue;
+        }
+        let original = image::open(&path)
+            .map_err(|e| format!("Nie można odczytać wskazówki {file}: {e}"))?
+            .to_rgba8();
+        let hand = image::imageops::resize(&original, HAND, HAND, FilterType::Lanczos3);
+        let rotated = rotate_hand(&hand, angle);
+        image::imageops::overlay(&mut canvas, &rotated, 16, 16);
+    }
+    fs::write(source.join("preview.png"), encode_png(&canvas)?)
+        .map_err(|e| format!("Nie można zapisać miniaturki wskazówek: {e}"))?;
+    asset_cache::write_fingerprint(&source, &hand_file_names())?;
     Ok(())
 }
 
@@ -166,12 +234,15 @@ pub fn add(app_data_root: &Path, folder: &Path) -> Result<HandSet, String> {
                 .map_err(|e| format!("Nie można skopiować {file}: {e}"))?;
         }
     }
+    generate_preview(app_data_root, &id)?;
+    let fingerprint = asset_cache::files_fingerprint(&target, &hand_file_names())?;
     Ok(HandSet {
         id: id.clone(),
         name: id,
         has_second: target.join(SECOND_FILE).is_file(),
         has_cap: target.join(CAP_FILE).is_file(),
         size,
+        fingerprint,
     })
 }
 
@@ -353,22 +424,6 @@ pub fn prune_unused(project: &mut Project, project_dir: &Path) {
     });
 }
 
-/// Docelowy rozmiar wskazówki dla ścieżki zasobu użytej przez widget analogowy.
-/// ZeppOS nie skaluje zasobu `IMG` w runtime, więc plik PNG musi mieć dokładnie
-/// rozmiar `w/h` widgetu — inaczej tarcza pokazuje tylko środkowy wycinek obrazu.
-fn hand_target_size(project: &Project, path: &str) -> Option<(u32, u32)> {
-    project
-        .widgets
-        .iter()
-        .find(|w| {
-            w.kind == WidgetKind::AnalogTime
-                && [&w.hour_src, &w.minute_src, &w.second_src, &w.cap_src]
-                    .iter()
-                    .any(|src| src.as_deref() == Some(path))
-        })
-        .map(|w| (w.w.max(1) as u32, w.h.max(1) as u32))
-}
-
 /// Skaluje dane PNG do zadanego rozmiaru, zwracając oryginalne bajty, gdy rozmiar
 /// się zgadza. Filter Lanczos3 zachowuje przezroczystość i delikatny cień wskazówek.
 fn resized_png(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
@@ -412,22 +467,60 @@ fn encode_png(image: &RgbaImage) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// Przygotowuje wskazówki do eksportu: dopasowuje rozmiar do ramki widgetu,
-/// a następnie (gdy to bezpieczne) przycina przezroczyste marginesy.
+/// Margines przezroczystości wokół przyciętej wskazówki — dokładnie jak
+/// `imaging.pad_rect(..., 8)` w generatorze Python, z którego pochodzi
+/// działająca tarcza referencyjna.
+const HAND_CROP_MARGIN: u32 = 8;
+
+/// Prostokąt nieprzezroczystych pikseli `(x, y, w, h)` — odpowiednik
+/// `imaging.alpha_bbox()` w generatorze Python. `None` = obraz pusty.
+fn alpha_bbox(image: &RgbaImage) -> Option<(u32, u32, u32, u32)> {
+    let (width, height) = image.dimensions();
+    let mut left = width;
+    let mut right = 0u32;
+    let mut top = height;
+    let mut bottom = 0u32;
+    for y in 0..height {
+        for x in 0..width {
+            if image.get_pixel(x, y).0[3] > 0 {
+                left = left.min(x);
+                right = right.max(x);
+                top = top.min(y);
+                bottom = bottom.max(y);
+            }
+        }
+    }
+    if right < left || bottom < top {
+        None
+    } else {
+        Some((left, top, right - left + 1, bottom - top + 1))
+    }
+}
+
+/// Powiększa bbox o przezroczysty margines, nie wychodząc poza płótno.
+fn pad_bbox(
+    bbox: (u32, u32, u32, u32),
+    width: u32,
+    height: u32,
+    padding: u32,
+) -> (u32, u32, u32, u32) {
+    let (x, y, w, h) = bbox;
+    let x0 = x.saturating_sub(padding);
+    let y0 = y.saturating_sub(padding);
+    let x1 = (x + w + padding).min(width);
+    let y1 = (y + h + padding).min(height);
+    (x0, y0, x1.saturating_sub(x0).max(1), y1.saturating_sub(y0).max(1))
+}
+
+/// Przygotowuje wskazówki do eksportu dokładnie tak jak generator Python:
+/// jedna wspólna skala dla całego zestawu i ciasne przycięcie do widocznej
+/// treści z 8-pikselowym marginesem. `pos_x/pos_y` wskazują oryginalne miejsce
+/// na płótnie, a obrót odbywa się wokół środka tarczy (233,233) w ramce
+/// pełnoekranowej — tak jak w 100% działającej tarczy referencyjnej.
 ///
-/// ZeppOS nie skaluje zasobu `IMG` — rysuje go w naturalnym rozmiarze i przycina
-/// do prostokąta `w×h` widgetu (potwierdzone w dokumentacji API i w symulatorze).
-/// Dlatego przycinanie NIE MOŻE używać ciasnego prostokąta wokół grafiki: po
-/// obrocie wskazówka wychodziłaby poza taki prostokąt i została obcięta do
-/// kilku pikseli przy pivocie. W zamian wycinamy KWADRAT wyśrodkowany na punkcie
-/// obrotu, o promieniu równym maksymalnej odległości nieprzezroczystego piksela
-/// od środka (+1 px zapasu na zaokrąglenia obrotu). Po dowolnym kącie obrotu
-/// wszystkie piksele nadal mieszczą się w tym kwadracie, więc nic nie ginie.
-///
-/// Pivot pozostaje dokładnie w środku kwadratu, dzięki czemu
-/// `x + center_x == widget.x + w/2` i podgląd (który obraca pełny obraz wokół
-/// środka) pozostaje zgodny z tarczą 1:1. Gdy grafika sięga krawędzi ramki albo
-/// zysk byłby pomijalny, zwracamy pełny kwadrat bez zmiany geometrii.
+/// Pełnoekranowa tekstura 466×466 kosztuje ~868 KiB zdekodowanej pamięci;
+/// cztery takie wskazówki potrafią zresetować realny firmware. Przycięte
+/// wskazówki zajmują 20–50 KB każda i wyglądają identycznie.
 pub fn prepare_hand_assets(
     project: &Project,
     project_dir: &Path,
@@ -438,16 +531,7 @@ pub fn prepare_hand_assets(
         .iter()
         .filter(|w| w.kind == WidgetKind::AnalogTime)
     {
-        let target_w = widget.w.max(1) as u32;
-        let target_h = widget.h.max(1) as u32;
-        let full = HandPlacement {
-            x: widget.x,
-            y: widget.y,
-            w: widget.w,
-            h: widget.h,
-            center_x: widget.w / 2,
-            center_y: widget.h / 2,
-        };
+        let mut sources: Vec<(String, RgbaImage)> = Vec::new();
         for src in [
             &widget.hour_src,
             &widget.minute_src,
@@ -460,55 +544,62 @@ pub fn prepare_hand_assets(
             let decoded = image::load_from_memory(&bytes)
                 .map_err(|e| format!("Nie można odczytać wskazówki {src}: {e}"))?
                 .to_rgba8();
-            let image = if decoded.dimensions() == (target_w, target_h) {
+            sources.push((src.clone(), decoded));
+        }
+
+        // `imaging.scale_to_box`: największe płótno zestawu mieści się w ramce.
+        // Wszystkie wskazówki dostają tę samą skalę, więc ich wzajemne długości
+        // pozostają takie same jak w edytorze.
+        let canvas = sources
+            .iter()
+            .map(|(_, image)| image.width().max(image.height()))
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        let scale = (widget.w.max(1) as f64).min(widget.h.max(1) as f64) / canvas as f64;
+        let pivot = HandPlacement {
+            x: widget.x + widget.w / 2,
+            y: widget.y + widget.h / 2,
+            w: 1,
+            h: 1,
+            center_x: widget.w / 2,
+            center_y: widget.h / 2,
+        };
+
+        for (src, decoded) in sources {
+            let target_w = ((decoded.width() as f64) * scale).round().max(1.0) as u32;
+            let target_h = ((decoded.height() as f64) * scale).round().max(1.0) as u32;
+            let scaled = if decoded.dimensions() == (target_w, target_h) {
                 decoded
             } else {
                 image::imageops::resize(&decoded, target_w, target_h, FilterType::Lanczos3)
             };
 
-            let pivot_x = target_w / 2;
-            let pivot_y = target_h / 2;
-            let mut farthest_squared = 0u64;
-            let mut visible = 0u32;
-            for (x, y, pixel) in image.enumerate_pixels() {
-                if pixel[3] > 0 {
-                    visible += 1;
-                    let dx = x as i64 - pivot_x as i64;
-                    let dy = y as i64 - pivot_y as i64;
-                    farthest_squared = farthest_squared.max((dx * dx + dy * dy) as u64);
+            let (bytes, placement) = match alpha_bbox(&scaled) {
+                Some(bbox) => {
+                    let (left, top, crop_w, crop_h) =
+                        pad_bbox(bbox, scaled.width(), scaled.height(), HAND_CROP_MARGIN);
+                    let cropped =
+                        image::imageops::crop_imm(&scaled, left, top, crop_w, crop_h).to_image();
+                    (
+                        encode_png(&cropped)?,
+                        HandPlacement {
+                            x: widget.x + left as i32,
+                            y: widget.y + top as i32,
+                            w: crop_w as i32,
+                            h: crop_h as i32,
+                            center_x: pivot.center_x,
+                            center_y: pivot.center_y,
+                        },
+                    )
                 }
-            }
-
-            // +1 px zapasu na zaokrąglenia przy obrocie (np. 156° dla minut).
-            let radius = (farthest_squared as f64).sqrt().ceil() as u32 + 1;
-            let size = radius.saturating_mul(2).saturating_add(1);
-            let can_crop = visible > 0
-                && size < target_w
-                && size < target_h
-                && (size as u64) * (size as u64)
-                    < (target_w as u64) * (target_h as u64) * 85 / 100;
-
-            let (bytes, placement) = if can_crop {
-                let left = pivot_x - radius;
-                let top = pivot_y - radius;
-                let cropped =
-                    image::imageops::crop_imm(&image, left, top, size, size).to_image();
-                (
-                    encode_png(&cropped)?,
-                    HandPlacement {
-                        x: widget.x + left as i32,
-                        y: widget.y + top as i32,
-                        w: size as i32,
-                        h: size as i32,
-                        center_x: radius as i32,
-                        center_y: radius as i32,
-                    },
-                )
-            } else {
-                (encode_png(&image)?, full)
+                None => (
+                    encode_png(&RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 0])))?,
+                    pivot.clone(),
+                ),
             };
             prepared.insert(
-                src.clone(),
+                src,
                 PreparedHand {
                     bytes,
                     placement,
@@ -519,20 +610,15 @@ pub fn prepare_hand_assets(
     Ok(prepared)
 }
 
-/// Bajty zasobu wstawiane do eksportowanego ZIP-a. Wskazówki są dopasowywane do
-/// rozmiaru ramki widgetu — dzięki temu także starsze projekty (z plikami 400×400
-/// i pomniejszoną ramką) eksportują poprawne, niesprzycinane wskazówki.
+/// Bajty zasobu wstawiane do eksportowanego ZIP-a. Przycięcie wskazówek odbywa
+/// się w `prepare_hand_assets`; pozostałe zasoby przechodzą bez zmian.
 pub fn export_asset_bytes(
-    project: &Project,
+    _project: &Project,
     project_dir: &Path,
     path: &str,
 ) -> Result<Vec<u8>, String> {
-    let bytes = fs::read(project_dir.join("assets").join(path))
-        .map_err(|e| format!("Nie można odczytać zasobu {path}: {e}"))?;
-    match hand_target_size(project, path) {
-        Some((w, h)) => resized_png(&bytes, w, h),
-        None => Ok(bytes),
-    }
+    fs::read(project_dir.join("assets").join(path))
+        .map_err(|e| format!("Nie można odczytać zasobu {path}: {e}"))
 }
 
 /// Fizycznie dopasowuje kopie wskazówek w projekcie do nowego rozmiaru ramki.
@@ -592,12 +678,14 @@ fn describe_set(dir: &Path, id: &str) -> Option<HandSet> {
         return None;
     }
     let size = read_size(&dir.join(HOUR_FILE)).ok()?;
+    let fingerprint = asset_cache::files_fingerprint(dir, &hand_file_names()).ok()?;
     Some(HandSet {
         id: id.to_string(),
         name: id.to_string(),
         has_second: dir.join(SECOND_FILE).is_file(),
         has_cap: dir.join(CAP_FILE).is_file(),
         size,
+        fingerprint,
     })
 }
 
@@ -663,6 +751,19 @@ mod tests {
     use super::*;
     use crate::project::{create_project_in, NewProject};
     use image::{Rgba, RgbaImage};
+    use std::time::{Duration, SystemTime};
+
+    /// Zapisuje wskazówkę tego samego rozmiaru, ale z inną treścią i czasem modyfikacji.
+    fn rewrite_hand(path: &Path, size: u32, color: Rgba<u8>) {
+        crate::project::write_png(path, &RgbaImage::from_pixel(size, size, color)).unwrap();
+        let later = SystemTime::now() + Duration::from_secs(60);
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+    }
 
     fn make_hand(dir: &Path, name: &str, size: u32) {
         fs::create_dir_all(dir).unwrap();
@@ -671,6 +772,20 @@ mod tests {
             &RgbaImage::from_pixel(size, size, Rgba([200, 200, 210, 255])),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn pack_preview_is_rendered_at_21_37_11() {
+        let root = std::env::temp_dir().join(format!("rw-hand-preview-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let pack = hand_set_dir(&root, "Preview");
+        for file in [HOUR_FILE, MINUTE_FILE, SECOND_FILE, CAP_FILE] {
+            make_hand(&pack, file, 32);
+        }
+        generate_preview(&root, "Preview").unwrap();
+        let preview = image::open(pack.join("preview.png")).unwrap();
+        assert_eq!(preview.dimensions(), (128, 128));
+        fs::remove_dir_all(&root).ok();
     }
 
     /// Wskazówka na przezroczystym płótnie 400×400 z grafiką tylko w danym prostokącie.
@@ -831,15 +946,13 @@ mod tests {
     }
 
     #[test]
-    fn cropping_transparent_margins_keeps_rotation_center_1_to_1() {
+    fn hands_are_cropped_to_tight_bbox_like_reference() {
         let root = std::env::temp_dir().join(format!("rw-hands-crop-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         let set = hand_set_dir(&root, "Sparse");
-        // Oba prostokąty zawierają środek płótna (200,200).
         make_sparse_hand(&set, HOUR_FILE, 180, 50, 40, 200);
         make_sparse_hand(&set, MINUTE_FILE, 185, 20, 30, 230);
-        // Grafika nie sięga środka — dla niej nie wolno zmienić pivota.
         make_sparse_hand(&set, CAP_FILE, 10, 10, 30, 30);
 
         let (dir, mut project) = create_project_in(
@@ -859,61 +972,52 @@ mod tests {
 
         let prepared = prepare_hand_assets(&project, &dir).unwrap();
         let hour = &prepared["hands/Sparse/hour.png"];
-        assert!(hour.placement.w < 200 && hour.placement.h < 200);
-        assert_eq!(
-            hour.placement.x + hour.placement.center_x,
-            project.widgets[0].x + 100
-        );
-        assert_eq!(
-            hour.placement.y + hour.placement.center_y,
-            project.widgets[0].y + 100
-        );
+        // Skala 0.5 z 400×400 na 200×200, bbox (90,25,20,100) + 8 px marginesu.
+        assert!(hour.placement.w >= 30 && hour.placement.w <= 50, "{hour:?}");
+        assert!(hour.placement.h >= 110 && hour.placement.h <= 125, "{hour:?}");
+        assert!(hour.placement.w < hour.placement.h, "to nie jest kwadrat");
+        // Lanczos3 rozlewa lekko alfa poza oryginalny prostokąt, więc dokładne
+        // położenie zależy od filtra; istotne, że `pos_x` odtwarza miejsce
+        // wskazówki na płótnie, a nie przesuwa jej do środka ramki.
+        let offset_x = hour.placement.x - project.widgets[0].x;
+        assert!((75..=85).contains(&offset_x), "offset_x={offset_x}");
         let bytes = image::load_from_memory(&hour.bytes).unwrap().to_rgba8();
         assert_eq!(
             bytes.dimensions(),
             (hour.placement.w as u32, hour.placement.h as u32)
         );
-        assert_eq!(hour.placement.w, hour.placement.h, "crop musi być kwadratem");
-        assert_eq!(hour.placement.center_x, hour.placement.w / 2);
-        assert_eq!(hour.placement.center_y, hour.placement.h / 2);
-        // Każdy nieprzezroczysty piksel mieści się w okręgu wpisanym w kwadrat —
-        // po dowolnym obrocie nic nie zostanie obcięte przez ZeppOS.
-        for (x, y, pixel) in bytes.enumerate_pixels() {
-            if pixel[3] > 0 {
-                let dx = x as i64 - hour.placement.center_x as i64;
-                let dy = y as i64 - hour.placement.center_y as i64;
-                assert!(
-                    (dx * dx + dy * dy) as u64
-                        <= (hour.placement.center_x as u64) * (hour.placement.center_x as u64),
-                    "piksel {x},{y} wypada poza okrąg obrotu"
-                );
-            }
-        }
+        // Zgodnie z referencją obrót wokół środka tarczy odbywa się w ramce
+        // pełnoekranowej; pivot z `placement` nie jest używany przez JS.
+        assert_eq!(hour.placement.center_x, 100);
+        assert_eq!(hour.placement.center_y, 100);
 
-        // Wskazówka bez środka w bboxie pozostaje pełnym kwadratem.
         let cap = &prepared["hands/Sparse/cap.png"];
-        assert_eq!((cap.placement.w, cap.placement.h), (200, 200));
-        assert_eq!((cap.placement.center_x, cap.placement.center_y), (100, 100));
+        assert!(cap.placement.w <= 50 && cap.placement.h <= 50, "{cap:?}");
+        let total: u64 = prepared
+            .values()
+            .map(|hand| hand.placement.w as u64 * hand.placement.h as u64 * 4)
+            .sum();
+        assert!(total < 100 * 1024, "za dużo pamięci: {total} B");
 
         let placements = prepared
             .iter()
             .map(|(path, hand)| (path.clone(), hand.placement))
             .collect();
         let js = crate::codegen::generate_index_js_with_hands(&project, &placements);
-        assert!(js.contains(&format!("center_x: {}", hour.placement.center_x)));
-        assert!(js.contains(&format!("w: {}", hour.placement.w)));
+        assert!(js.contains("center_x: 233"));
+        assert!(js.contains(&format!("pos_x: {}", hour.placement.x)));
+        assert!(js.contains("w: 466"));
+        assert!(js.contains("auto_scale: false"));
 
         fs::remove_dir_all(&root).ok();
     }
 
     #[test]
-    fn crop_of_a_horizontal_hand_is_square_not_a_tight_bbox() {
+    fn horizontal_hand_stays_tight_and_uses_full_screen_rotation_frame() {
         let root = std::env::temp_dir().join(format!("rw-hands-square-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         let set = hand_set_dir(&root, "Horizontal");
-        // Wąska wskazówka pozioma: bbox ma 81×5 px, ale po obrocie o 90°
-        // potrzebuje kwadratu co najmniej 81×81, inaczej ZeppOS ją obetnie.
         make_sparse_hand(&set, HOUR_FILE, 120, 198, 160, 4);
         make_sparse_hand(&set, MINUTE_FILE, 185, 20, 30, 230);
 
@@ -934,34 +1038,16 @@ mod tests {
 
         let prepared = prepare_hand_assets(&project, &dir).unwrap();
         let hour = &prepared["hands/Horizontal/hour.png"];
-        // Lanczos3 rozlewa lekko alfa poza oryginalny prostokąt, więc dokładny
-        // rozmiar zależy od filtra — istotne, że to KWADRAT, a nie ciasny bbox
-        // (który miałby wysokość kilku pikseli).
-        assert!(hour.placement.w >= 81 && hour.placement.w <= 110);
-        assert_eq!(hour.placement.w, hour.placement.h);
-        assert_eq!(hour.placement.center_x, hour.placement.w / 2);
-        assert_eq!(hour.placement.center_y, hour.placement.h / 2);
-        assert_eq!(
-            hour.placement.x + hour.placement.center_x,
-            project.widgets[0].x + 100
-        );
-        assert_eq!(
-            hour.placement.y + hour.placement.center_y,
-            project.widgets[0].y + 100
-        );
+        // Wąska pozioma wskazówka zostaje wąska — nie rozdmuchujemy jej do kwadratu.
+        assert!(hour.placement.w >= 80 && hour.placement.w <= 110, "{hour:?}");
+        assert!(hour.placement.h >= 10 && hour.placement.h <= 30, "{hour:?}");
+        let offset_x = hour.placement.x - project.widgets[0].x;
+        assert!((45..=55).contains(&offset_x), "offset_x={offset_x}");
         let img = image::load_from_memory(&hour.bytes).unwrap().to_rgba8();
         assert_eq!(
             img.dimensions(),
             (hour.placement.w as u32, hour.placement.h as u32)
         );
-        let r = hour.placement.center_x as u64;
-        for (x, y, pixel) in img.enumerate_pixels() {
-            if pixel[3] > 0 {
-                let dx = x as i64 - r as i64;
-                let dy = y as i64 - r as i64;
-                assert!((dx * dx + dy * dy) as u64 <= r * r, "piksel {x},{y}");
-            }
-        }
 
         fs::remove_dir_all(&root).ok();
     }
@@ -1019,17 +1105,15 @@ mod tests {
             (120, 120)
         );
 
-        // Eksport starszego projektu (plik 120×120, ramka 175×175) skaluje w locie.
+        // `export_asset_bytes` przepuszcza zasoby bez zmian — przycinanie
+        // wskazówek odbywa się wyłącznie w `prepare_hand_assets`.
         project.widgets[0].w = 175;
         project.widgets[0].h = 175;
         let bytes = export_asset_bytes(&project, &dir, "hands/Full/hour.png").unwrap();
         assert_eq!(
             image::load_from_memory(&bytes).unwrap().dimensions(),
-            (175, 175)
+            (120, 120)
         );
-        // Zwykłe zasoby przechodzą bez zmian.
-        let bg = fs::read(dir.join("assets/bg.png")).unwrap();
-        assert_eq!(export_asset_bytes(&project, &dir, "bg.png").unwrap(), bg);
 
         fs::remove_dir_all(&root).ok();
     }
@@ -1075,6 +1159,78 @@ mod tests {
                 .dimensions(),
             (140, 140)
         );
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn preview_is_regenerated_only_when_hands_change() {
+        let root = std::env::temp_dir().join(format!("rw-hand-cache-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let pack = hand_set_dir(&root, "Cached");
+        for file in [HOUR_FILE, MINUTE_FILE, SECOND_FILE, CAP_FILE] {
+            make_hand(&pack, file, 32);
+        }
+        generate_preview(&root, "Cached").unwrap();
+
+        let names = hand_file_names();
+        let preview = pack.join("preview.png");
+        let sidecar = pack.join("preview.fingerprint");
+        assert!(preview.is_file());
+        assert!(sidecar.is_file());
+        let first_bytes = fs::read(&preview).unwrap();
+        let first_stamp = fs::metadata(&preview).unwrap().modified().unwrap();
+        let first_fp = asset_cache::files_fingerprint(&pack, &names).unwrap();
+        assert_eq!(fs::read_to_string(&sidecar).unwrap().trim(), first_fp);
+
+        // Bez zmian: podgląd pozostaje nietknięty (brak dekodowania/kodowania).
+        std::thread::sleep(Duration::from_millis(30));
+        ensure_previews(&root).unwrap();
+        assert_eq!(fs::read(&preview).unwrap(), first_bytes);
+        assert_eq!(fs::metadata(&preview).unwrap().modified().unwrap(), first_stamp);
+
+        // Zmiana jednej wskazówki musi odnowić miniaturkę i odcisk.
+        rewrite_hand(&pack.join(SECOND_FILE), 32, Rgba([255, 0, 0, 255]));
+        let second_fp = asset_cache::files_fingerprint(&pack, &names).unwrap();
+        assert_ne!(second_fp, first_fp);
+        ensure_previews(&root).unwrap();
+        assert_ne!(fs::read(&preview).unwrap(), first_bytes);
+        assert_eq!(fs::read_to_string(&sidecar).unwrap().trim(), second_fp);
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn ensure_default_refreshes_changed_bundled_hands() {
+        let root = std::env::temp_dir().join(format!("rw-hand-bundled-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let bundled = root.join("bundled");
+        for file in [HOUR_FILE, MINUTE_FILE, SECOND_FILE, CAP_FILE] {
+            make_hand(&bundled.join(DEFAULT_HAND_SET), file, 64);
+        }
+        ensure_default(&root, &bundled).unwrap();
+
+        let installed = hand_set_dir(&root, DEFAULT_HAND_SET);
+        let hour = installed.join(HOUR_FILE);
+        let before = fs::read(&hour).unwrap();
+        let source_dir = bundled.join(DEFAULT_HAND_SET);
+        let source = source_dir.join(HOUR_FILE);
+        rewrite_hand(&source, 64, Rgba([10, 20, 30, 255]));
+        let bundled_fp = asset_cache::files_fingerprint(&source_dir, &hand_file_names()).unwrap();
+
+        ensure_default(&root, &bundled).unwrap();
+        assert_ne!(fs::read(&hour).unwrap(), before);
+        assert_eq!(fs::read(&hour).unwrap(), fs::read(&source).unwrap());
+        assert_eq!(
+            asset_cache::read_bundled_version(&installed).as_deref(),
+            Some(bundled_fp.as_str())
+        );
+
+        let stamp = fs::metadata(&hour).unwrap().modified().unwrap();
+        ensure_default(&root, &bundled).unwrap();
+        assert_eq!(fs::metadata(&hour).unwrap().modified().unwrap(), stamp);
 
         fs::remove_dir_all(&root).ok();
     }
