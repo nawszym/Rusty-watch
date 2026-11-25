@@ -18,7 +18,8 @@ making changes. Key points:
   seeds; runtime catalogs are read from `%APPDATA%\RustyWatch\Localization`. Rust error patterns go
   through `LocalizationService.Error`.
 - Generated JS uses the classic Watchface API (`hmUI`, `hmSensor`, `timer`, `WatchFace({...})`) —
-  NOT `@zos/ui` / `@zos/sensor` (Mini Programs); AOD constant is `hmUI.show_level.ONAL_AOD`.
+  NOT `@zos/ui` / `@zos/sensor` (Mini Programs). Export always emits `hmUI.show_level.ONLY_NORMAL`;
+  AOD is driven by `WIDGET_DELEGATE` + `hmSetting.getScreenType()`, not `ONAL_AOD`.
 - Licence GPL-3.0-or-later + Generation Exception; do not copy SashaCX75 code/assets.
 - Do not reintroduce temporary `RW_DEBUG_*` hooks, downgrade Windows App SDK, or change the
   `CopyRustFfi` target without reading `AGENTS.md` section 6.

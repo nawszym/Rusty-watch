@@ -107,5 +107,30 @@ Icon?
 $RECYCLE.BIN/
 System Volume Information/
 
+# --- Lokalnie generowane podglądy i katalogi testowe CLI --------------------
+/preview.png
+/preview.gif
+/preview-cache/
+**/preview-cache/
+*.gif
+/test-*/
+
+# --- Python (lokalne środowiska narzędziowe) -------------------------------
+.venv/
+venv/
+pyvenv.cfg
+
+# --- Konflikty scalania, skompilowane biblioteki, lokalne bazy ---------------
+*.orig
+*.rej
+*.dll
+*.exe
+*.lib
+*.so
+*.dylib
+*.sqlite
+*.sqlite3
+*.db
+
 # --- Materiał referencyjny trzeciej strony (nie publikujemy cudzego UI) ------
 /reference-ui.png

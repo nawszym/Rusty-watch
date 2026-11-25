@@ -28,7 +28,7 @@ Historical context and decisions: `PLAN.md` (section 8 = confirmed decisions), `
 | Path | Role |
 |---|---|
 | `Cargo.toml` | Rust workspace: `rusty-core`, `rusty-cli`, `rusty-ffi` |
-| `crates/rusty-core/src/` | `model.rs` (Project/Widget/metadata, device constants, starter template), `project.rs` (create/load/save/save-as/folder sanitization/random App ID), `codegen.rs` (generated `app.json`, `app.js`, `watchface/index.js`), `time_format.rs` (shared pattern parser + JS expression builder), `layers.rs` (layer order + editor layer descriptors), `widgets.rs` (add/edit/remove widget), `package.rs` (zip export/inspect), `fonts.rs` (font store, TTF name parser, project attachment/pruning), `recent.rs` (recent-project store), `locale.rs` (watchface language: PL/EN tables + runtime JS detection), `images.rs` (shared image store + background preparation), `image_fit.rs` (reusable Cover/Contain/Stretch scaling), `hands.rs` (shared hand-set store + project attachment), `status_icons.rs` (shared STATUS icon-pack store + project attachment), `preview.rs` (7-frame PNG/GIF renderer, hardcoded presets + random series, round cutout), `validate.rs` |
+| `crates/rusty-core/src/` | `model.rs` (Project/Widget/metadata, device constants, starter template), `project.rs` (create/load/save/save-as/folder sanitization/random App ID), `codegen.rs` (generated `app.json`, `app.js`, `watchface/index.js`), `time_format.rs` (shared pattern parser + JS expression builder), `layers.rs` (layer order + editor layer descriptors), `widgets.rs` (add/edit/remove widget), `package.rs` (zip export/inspect), `fonts.rs` (font store, TTF name parser, project attachment/pruning), `recent.rs` (recent-project store), `locale.rs` (watchface language: PL/EN tables + runtime JS detection), `images.rs` (shared image store + background preparation), `image_fit.rs` (reusable Cover/Contain/Stretch scaling), `hands.rs` (shared hand-set store + project attachment), `status_icons.rs` (shared STATUS icon-pack store + project attachment), `preview.rs` (8-frame PNG/GIF renderer, hardcoded presets + random series, round cutout, branded preview composition), `validate.rs` |
 | `crates/rusty-cli/src/main.rs` | CLI: `new`, `validate`, `export`, `inspect` |
 | `crates/rusty-ffi/src/lib.rs` | C ABI, 57 `rw_*` exports (incl. `rw_free_string`, `rw_ensure_defaults`, `rw_set_hand_visibility`, `rw_preview_random_series`, `rw_render_preview_frame`, `rw_encode_preview_gif`); all take/return UTF-8 JSON; caller frees with `rw_free_string` |
 | `native/RustyWatch/MainWindow.xaml(.cs)` | Shell, HOME, Editor, Assets (Fonts), App Settings, bottom bar, dialogs |
@@ -42,7 +42,7 @@ Historical context and decisions: `PLAN.md` (section 8 = confirmed decisions), `
 
 ## 3. Build, test, run
 
-Workspace root: `D:\.agent - projekty\Rusty-Watch` (Windows, PowerShell).
+Workspace root: this repository directory (Windows, PowerShell).
 
 ```powershell
 cargo test --workspace
@@ -90,15 +90,15 @@ Rust, Windows App SDK via NuGet (self-contained app).
    The export **always** emits `hmUI.show_level.ONLY_NORMAL` (`codegen::JS_SHOW_LEVEL`), even for projects that still store `Always`: `ONAL_AOD` made the real firmware paint an opaque AOD overlay (white square with small hand frames, black screen with full-screen frames). AOD is driven by `WIDGET_DELEGATE` + `hmSetting.getScreenType()` instead. New widgets default to `ShowLevel::Normal`.
    Align / text-style / show-level JS expressions live in `model.rs::as_js()` with an `hmUI.` prefix.
  4a. **The watchface detects its own language at runtime.** `crates/rusty-core/src/locale.rs` owns the PL/EN tables (Polish month abbreviations and AM/PM markers) and emits a JS block (inside the IIFE) calling `DeviceRuntimeCore.HmUtils.getLanguage()` with a guarded `hmSetting.getLanguage()` fallback — `9` = `pl-PL`, **every other value = English**. `codegen` uses `L.months` for Date widgets and `time_format::js_expression_localized` (`L.am`/`L.pm`) for time widgets; the JS locale block includes Polish diacritics directly in the initial widget text. Do not bake one language into the ZIP. The editor has a **watchface preview language** setting (`auto` = Windows UI culture, `pl`, `en`) in `AppSettingsStore`, passed through `rw_format_time`/`rw_month_name`, so the preview matches whichever variant the watch will show.
-  4b. **Generated previews are Rust-only and deterministic per export.** `crates/rusty-core/src/preview.rs` owns the 7 hardcoded presets (`FRAME_PRESETS`: hours 06–21, minutes/seconds strictly increasing), the random `PreviewRandomSeries` (7 real dates 2022-01-03 … 2022-07-31 — Monday…Sunday in months January…July; realistic heart rate/calories/distance), and the renderer. Steps are always derived from distance (`distance_m/1000 * steps_per_km`, 1300–1400 steps/km); battery decreases 100% → 10%. Every date widget in a frame uses that frame's single date (Sakamoto weekday with `project.first_day_of_week`, ISO week, day-of-year, `locale.rs` month names). `FRAME_PRESETS` also carries a `status_mask` (ALARM=1, DND=2, BLUETOOTH=4, LOCK=8): most frames show no icons; frame 7 (21:37:40) shows all four and is the source of `preview.png`. The mask sequence is `2,2,0,3,0,1,4` — non-monotonic, with 2 empty frames; frame 4 has ALARM+DND+LOCK, frame 6 only BLUETOOTH. `preview.png` is exactly frame 7 (21:37:40), `preview.gif` has 7 frames with ~1.7 s per frame and an infinite loop and a black opaque cutout outside radius 233. Neither file is zipped. Custom Data from the editor is deliberately ignored. Never render preview frames with offscreen WinUI controls.
+  4b. **Generated previews are Rust-only and deterministic per export.** `crates/rusty-core/src/preview.rs` owns the 7 hardcoded presets plus an appended exact copy of the 21:37:40 frame (`FRAME_PRESETS`: hours 06–21, minutes/seconds strictly increasing; `SOURCE_FRAME_COUNT = 7`, `FRAME_COUNT = 8`, `PREVIEW_FRAME_INDEX = 7`), the random `PreviewRandomSeries` (7 real dates 2022-01-03 … 2022-07-31 — Monday…Sunday in months January…July; realistic heart rate/calories/distance; the 8th entry duplicates the 7th), and the renderer. Steps are always derived from distance (`distance_m/1000 * steps_per_km`, 1300–1400 steps/km); battery decreases 100% → 10%. Every date widget in a frame uses that frame's single date (Sakamoto weekday with `project.first_day_of_week`, ISO week, day-of-year, `locale.rs` month names). `FRAME_PRESETS` also carries a `status_mask` (ALARM=1, DND=2, BLUETOOTH=4, LOCK=8): most frames show no icons; frame 7 (21:37:40) shows all four; frame 8 is an exact copy and is the source of `preview.png`. The mask sequence is `2,2,0,3,0,1,4,4` — non-monotonic, with 2 empty frames; frame 4 has ALARM+DND+LOCK, frame 6 only BLUETOOTH. The static `preview.png` is **not a raw frame**: `preview::compose_branded_preview()` draws a branded frame around the rendered 21:37 frame — fully transparent outside, outer black safe area, the `logo/gear-outlayer.png` outer layer (brown arc + gear, embedded in Rust), inner black safe area, and the full watchface scaled into the centre with a dark, barely visible outline (`#404040`). `preview.gif` has 8 frames with ~1.7 s per frame and an infinite loop: the 7 original frames have a black opaque cutout outside radius 233, frame 8 is the identical raw 21:37 copy rendered for the composition, and the **composed `preview.png` is the FIRST GIF frame** — the raw copy is dropped so the GIF still has 8 frames (composed frame, then the 7 raw ones). Neither file is zipped. Custom Data from the editor is deliberately ignored. Never render preview frames with offscreen WinUI controls.
   4c. **The generated watchface JS must never use `Date`.** The classic ZeppOS watchface runtime on the real watch does not expose `Date` (it works in the simulator, which has a full JS engine); calling it during `build()` aborts the watchface and leaves a black screen. `date_format.rs` emits `JS_DATE_FROM_T` (plain fields `d`/`m`/`m0`/`y`/`w` computed with Sakamoto's algorithm), `JS_ISO_WEEK` and `JS_DAY_OF_YEAR` using only arithmetic on those fields. `js_expression_localized` reads the same fields instead of `getDate()`/`getMonth()`/`getDay()`/`getFullYear()`. A regression test bans any `Date` API in generated JS. Text widgets emit `char_space: 0`, `line_space: 0` and `font: "fonts/font_<hash>.ttf"` exactly like the working reference (see 6a).
  5. **Layers are the single source of draw order.** `crates/rusty-core/src/layers.rs` resolves
    `Project::layer_order` (bottom → top, **widget ids only**), keeps widget `z` in sync, and exposes
    descriptors for the editor. `codegen::generate_index_js` and the WinUI preview must both use
    `layers::ordered_widgets()` / `layers::describe()`, so the preview matches the exported watchface.
    **There is no background layer and no background asset.** The watchface background is a constant
-   `hmUI.widget.FILL_RECT(x:0,y:0,w:466,h:466,color:0xFF05070D)` emitted before all widgets — exactly
-   like the working Python reference. Do not order by vector index or `z` separately in C#.
+   `hmUI.widget.FILL_RECT(x:0,y:0,w:466,h:466,color:0xFF000000)` emitted before all widgets — fully black
+   (an intentional change from the Python reference's `0xFF05070D`). Do not order by vector index or `z` separately in C#.
    `rw_move_layer` saves the new order immediately.
    Widget creation/editing/removal lives in `crates/rusty-core/src/widgets.rs`
    (`rw_add_widget`, `rw_set_widget`, `rw_remove_widget`). The last remaining widget cannot be
@@ -126,7 +126,7 @@ anchor after scaling or after an inspector change (regression: preview and expor
 `ApplyLayersPayload` only rebuilds the list/preview when layer identity or order changes — geometry edits update existing `LayerRow`/`FrameView` objects in place (`UpdateExistingLayerViews`), otherwise the list jumps and the preview flashes black.
 6a. **Fonts are one shared asset store, but projects are self-contained.** Installed fonts live in `%APPDATA%\RustyWatch\Fonts` (`rusty-core::fonts`); the bundled default is `Inter-Regular.ttf` (SIL OFL 1.1, license in `native/RustyWatch/Assets/Fonts/OFL-Inter.txt`) and is copied there by `ensure_default`. `Widget.font` stores only the file name; `None` = watch system font. Assigning a font copies it into `<project>/assets/fonts/<file>` and registers an `Asset { role: Font }`, so `save as`/ZIP export include it; `prune_unused` removes old copies when the user switches fonts. The generated JS **does set `font: "fonts/font_<hash>.ttf"`** when a widget has a font — exactly like the 100% working reference export (which uses `fonts/Rajdhani-*.ttf`). The TTF is copied into `assets/fonts/` and referenced by `src:`-equivalent name; editor preview and watchface now use the same font. There are deliberately **no** offscreen "glyph warm-up" widgets - they were created before the background and could abort `build()` on a real watch; the initial text already contains the full character set. The WinUI preview renders with the selected TTF (`PreviewFonts.cs` → `ms-appx:///FontCache/...`) for editing; the exported watchface uses the same TTF, so glyph metrics match the editor preview. WinUI unpackaged apps cannot load `file:///` or `%APPDATA%` fonts directly. New projects get the default font via `rw_apply_default_font`; when **opening any project** and after `rw_add_widget`, call `rw_apply_default_font_to_missing` so widgets with `font: null` receive the bundled Inter TTF too. Without it the editor fell back to Segoe UI — identical `x/y/align_h/align_v` then produced different glyph widths/baselines in the preview. Custom fonts are never overwritten.
 6b. **There is no background store.** The watchface background is always the constant `FILL_RECT`
-   in generated JS (`0xFF05070D`), exactly as in the working Python reference. No `Backgrounds`
+   in generated JS (`0xFF000000`, fully black; an intentional change from the Python reference's `0xFF05070D`). No `Backgrounds`
    directory, no `bg.png`, no `background` field in `project.json`, no `AssetRole::Background`, no
    background layer in Layers, no background controls in the editor and no `rw_backgrounds_*` /
    `rw_set_background` FFI. General graphics for the IMAGES widget live in
@@ -262,9 +262,12 @@ Do not "fix" these by reverting to the obvious approach:
   its flyout has two checkable `ToggleMenuFlyoutItem`s: **Preview grid** (shows the 16 px grid via
   `GridLinesCanvas` and enables snapping — `rw_frame_geometry` receives `snap: true`) and
   **Unselected widgets outline** (shows the subtle frame around widgets that are not selected;
-  default on). Both persist in `AppSettingsStore` (`snapToGrid` / `showUnselectedOutline` in
-  settings.json). Flyout item labels are set in code (`RefreshPreviewOptionLabels`) because a
-  flyout does not inherit the page's `DataContext`. Dragging also snaps the
+  default on). There are also two **Custom data** items: a checkable toggle and a gear item
+  opening `CustomDataDialog` (editor-only overrides of time/date/sensor values, stored in
+  `AppSettingsStore`, never in `project.json`; generated previews and the export ignore them).
+  All persist in `AppSettingsStore` (`snapToGrid` / `showUnselectedOutline` /
+  `customPreviewData*` in settings.json). Flyout item labels are set in code
+  (`RefreshPreviewOptionLabels`) because a flyout does not inherit the page's `DataContext`. Dragging also snaps the
   widget's **left/center/right (or top/center/bottom)** to the canvas edges/center and to other
   widgets' edges/centers, showing dashed red `GuideVertical`/`GuideHorizontal` lines — including
   **center-to-center** alignment with the watchface and with other widgets. `resolve_axis` in
@@ -372,8 +375,8 @@ Do not "fix" these by reverting to the obvious approach:
   all projects; the bundled default is Inter (SIL OFL 1.1, safe to commit with a project).
   It also has an **Images** category for general widget graphics and a **Hands** category for analog-watch hand sets: thumbnails, **Add hand set...** (folder picker with
   `hour.png`/`minute.png` + optional `second.png`/`cap.png`), **Remove hand set** and **Open hands folder**.
-- **No background UI exists.** The background is always the fixed dark fill `FILL_RECT(0xFF05070D)`,
-  matching the 100% working reference export. There is no background store, no `bg.png`, no
+- **No background UI exists.** The background is always the fixed full-black fill `FILL_RECT(0xFF000000)`,
+  an intentional change from the reference's `0xFF05070D`. There is no background store, no `bg.png`, no
   background picker, no auto-scale toggle and no `rw_set_background`/`rw_backgrounds_*` FFI.
 - Selecting the **analog-time layer** shows a hand-set ComboBox and one checkbox per hand (hour,
   minute, second, centre cap — only for files present in the selected set), followed by the **same
@@ -415,9 +418,9 @@ Do not "fix" these by reverting to the obvious approach:
 - Bottom bar: Save, Save as..., **Export**, Test in emulator (all disabled until a project is
   open), Sync to Watch (informational). Save uses `rw_load_project` + `rw_save_project`; Save as
   uses `rw_save_project_as` (copies project + assets).
-  **Clicking Export first generates `preview.png` + a 7-frame `preview.gif`, then opens an in-app
+  **Clicking Export first generates the branded `preview.png` + an 8-frame `preview.gif`, then opens an in-app
   `ContentDialog` over the editor** (a direct child of `RootGrid`, per the WinUI rule). While the
-  frames render, the Export button shows a small `ProgressBar` (`1/7 … 7/7`); the dialog opens
+  frames render, the Export button shows a small `ProgressBar` (`1/8 … 8/8`); the dialog opens
   **only after** `preview.gif` exists and shows that GIF **clipped to the round watchface**
   (a `Border` with `CornerRadius="120"`) **above** the project details (name, author, version, App ID) and the
   **Export ZIP** button. The progress bar switches to indeterminate while the GIF is encoded,
@@ -453,13 +456,13 @@ The simulator needs the `Active 2 v1.1.0` device image downloaded inside its own
 that step may require a Zepp account and is always done by the user. The emulator validates JS
 runtime/build, but does not replace the final real-device check.
 
-Generated zip layout is **flat v2**, matching the working reference export: `app.json`, `app.js`, `watchface/index.js`, `assets/*`, with explicit directory entries. Every project asset is written directly into `assets/` under a deterministic, unique hashed name (`hand_<hash>.png`, `font_<hash>.ttf`, `status_<hash>.png`, `img_<hash>.png`); `icon.png` keeps its name. There is no `bg.png`. `crates/rusty-core/src/export_paths.rs` is the single source of truth: `codegen` emits the same names in `src:`/`font:` and `package` uses them as ZIP entries, so the generated JS and the package can never disagree. `app.js` is the exact official `zeus` template (`gettextFactory`, `getPx(454)`, `getApp`/`getCurrentPage`); `app.json` has only `i18n.en-US`. Editor subfolders (`hands/<set>/…`, `status/<set>/…`) are **never** written to the ZIP; `fonts/` is the sole exception and keeps a unique hashed file name. The watch thumbnail `assets/Preview.png` stays 314 × 314 RGBA and is masked to the device screen shape (`DeviceProfile::screen_shape` in `model.rs`; `ScreenShape::Round` for Active 2 → transparent outside the circle). It is a temporary placeholder generated from the bundled `Logo.png`. `preview.gif` and the 466 × 466 `preview.png` stay local (not packaged).
+Generated zip layout is **flat v2**, matching the working reference export: `app.json`, `app.js`, `watchface/index.js`, `assets/*`, with explicit directory entries. Every project asset is written directly into `assets/` under a deterministic, unique hashed name (`hand_<hash>.png`, `font_<hash>.ttf`, `status_<hash>.png`, `img_<hash>.png`); `icon.png` keeps its name. There is no `bg.png`. `crates/rusty-core/src/export_paths.rs` is the single source of truth: `codegen` emits the same names in `src:`/`font:` and `package` uses them as ZIP entries, so the generated JS and the package can never disagree. `app.js` is the exact official `zeus` template (`gettextFactory`, `getPx(454)`, `getApp`/`getCurrentPage`); `app.json` has only `i18n.en-US`. Editor subfolders (`hands/<set>/…`, `status/<set>/…`) are **never** written to the ZIP; `fonts/` is the sole exception and keeps a unique hashed file name. The watch thumbnail `assets/Preview.png` stays 314 × 314 RGBA and is masked to the device screen shape (`DeviceProfile::screen_shape` in `model.rs`; `ScreenShape::Round` for Active 2 → transparent outside the circle). It is the branded 466 × 466 `preview.png` **rescaled** to 314 × 314 (`package::watchface_icon_bytes`), never the old bundled `Logo.png` placeholder; a CLI export without a generated preview renders the 21:37 frame deterministically and applies the same composition. `preview.gif` and the 466 × 466 `preview.png` stay local (not packaged).
 ZIP directory entries are post-processed to DOS metadata (`0x41ff0010`) exactly like the reference package. Prefer performance-friendly generated JS: fewer widgets, correct AOD,
 and no listener leaks.
 
 ## 9. Definition of done for a change
 
-1. `cargo test --workspace` green (currently 139 tests: 112 core + 27 FFI), no new warnings.
+1. `cargo test --workspace` green (currently 144 tests: 117 core + 27 FFI), no new warnings.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. App launches; affected screens verified visually (English **and** Polish if UI changed).
 4. Round-trip `new → export → open → export` preserves data when project model/codegen changes.

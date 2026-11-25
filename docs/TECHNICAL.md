@@ -75,10 +75,10 @@ throws/propagates `error`.
 
 **One export, step by step:**
 
-1. `Export_Click` calls `GeneratePreviewAndShowExportAsync`: it renders 7 frames
-   (progress bar on the Export button), writes `preview.png`/`preview.gif` into the
-   project folder, then shows the export dialog with the animated GIF above the
-   details. Custom Data is deliberately not used here.
+1. `Export_Click` calls `GeneratePreviewAndShowExportAsync`: it renders 8 frames
+   (progress bar on the Export button), writes the branded `preview.png` and the
+   8-frame `preview.gif` into the project folder, then shows the export dialog with
+   the animated GIF above the details. Custom Data is deliberately not used here.
 2. `DialogExportZip_Click` computes
    `<project folder>/<ExportFileName(name)>.zip` and calls `rw_export_zip`.
 3. `export_zip` (`package.rs:17-80`) loads + validates, calls
@@ -176,7 +176,7 @@ xorshift32 seed, returning an 8-digit id in `[10_000_000, 100_000_000)`.
 2. create `assets/`; build `Project::starter_with` from trimmed inputs;
 3. generate `assets/icon.png` (100×100, dark disc + blue ring);
 4. save `project.json`. There is no background asset — the exported JS emits a constant
-   `FILL_RECT(0,0,466,466,0xFF05070D)` before all widgets.
+   `FILL_RECT(0,0,466,466,0xFF000000)` before all widgets (fully black, an intentional change from the Python reference's `0xFF05070D`).
 
 `watchface_folder_name` (`:126-154`) replaces control chars and
 `< > : " / \ | ? *` with `_`, trims trailing dots/spaces, falls back to `Watchface`,
@@ -463,9 +463,10 @@ All stores live in `%APPDATA%\RustyWatch`. Bundled seeds are copied next to the 
   `DispatcherQueue.TryEnqueue` and drops stale results with a version counter. C# memoizes
   `BitmapImage`s by path+fingerprint; only new/changed tiles show a `ProgressRing`, which disappears
   on `ImageOpened`/`ImageFailed`.
-- `FRAME_PRESETS` carries `status_mask`; the 7-frame sequence is
-  `2,2,0,3,0,1,4` (2 empty frames). Frame 7 (`21:37:40`) has all four icons and is
-  reused for `preview.png`; frame 4 has ALARM+DND+LOCK, frame 6 only BLUETOOTH.
+- `FRAME_PRESETS` carries `status_mask`; the 8-frame sequence is
+  `2,2,0,3,0,1,4,4` (2 empty frames). Frame 7 (`21:37:40`) has all four icons;
+  frame 8 is an exact copy and drives the branded `preview.png`; frame 4 has
+  ALARM+DND+LOCK, frame 6 only BLUETOOTH.
 
 ### 7.6 Logo and bundled UI assets
 
@@ -540,7 +541,7 @@ version:{code:1,name}, icon:"Preview.png", cover:["Preview.png"], appIdType:0, e
 and **no `runtime.type`** (`type:2` would mean `.bin` bytecode and block our `.js`),
 top-level `module.watchface:{path:"watchface/index",main:1,editable:0,lockscreen:0,hightCost:0}`,
 eight `platforms` entries (all Active 2 deviceSources), `designWidth=466`, `packageInfo:{mode,timeStamp,expiredTime,zpm:"2.8.2"}`, `i18n["en-US"].appName` (no `pl-PL`),
-and `defaultLanguage:"en-US"` (zeus rejects packages without it). The generated watchface script is an IIFE that registers `__$$module$$__.module = DeviceRuntimeCore.WatchFace({...})` and drives the clock through `hmUI.widget.WIDGET_DELEGATE` (`resume_call`/`pause_call`), using `MINUTEEND` in AOD and `timer.createTimer` otherwise. The thumbnail is `assets/Preview.png` (314 × 314 RGBA, temporary placeholder from the bundled `Logo.png`, alpha-masked to `DeviceProfile::screen_shape`; `Round` gives a circle with transparent corners). `preview.gif` and the 466 × 466 editor `preview.png` are All assets are written flat to `assets/<path>` because generated JS references `hands/…` directly; there is no `bg.png`, and `font:` is emitted as `fonts/font_<hash>.ttf`, exactly like the reference package. `prepare_emulator_workspace` converts the extracted flat export to a v3/`targets` project for `zeus` (workspace only). `app.js` is a static
+and `defaultLanguage:"en-US"` (zeus rejects packages without it). The generated watchface script is an IIFE that registers `__$$module$$__.module = DeviceRuntimeCore.WatchFace({...})` and drives the clock through `hmUI.widget.WIDGET_DELEGATE` (`resume_call`/`pause_call`), using `MINUTEEND` in AOD and `timer.createTimer` otherwise. The thumbnail is `assets/Preview.png` (314 × 314 RGBA — the branded `preview.png` rescaled from the project folder, or rendered deterministically for CLI exports, then alpha-masked to `DeviceProfile::screen_shape`; `Round` gives transparent corners). `preview.gif` and the 466 × 466 editor `preview.png` are All assets are written flat to `assets/<path>` because generated JS references `hands/…` directly; there is no `bg.png`, and `font:` is emitted as `fonts/font_<hash>.ttf`, exactly like the reference package. `prepare_emulator_workspace` converts the extracted flat export to a v3/`targets` project for `zeus` (workspace only). `app.js` is a static
 a `zeus`-compatible bootstrap: try/catch + IIFE, `__$$app$$__.__globals__` (`lang`, `px`, `gettext` via `DeviceRuntimeCore.HmUtils`) and `__$$app$$__.app = DeviceRuntimeCore.App({...})`.
 
 ### 9.2 `watchface/index.js`
@@ -719,15 +720,15 @@ own `assets/fonts` copy so the preview uses exactly the exported TTF.
 `Microsoft.Windows.SDK.BuildTools 10.0.26100.4654`. The `BuildRustFfi` target runs
 `cargo build -p rusty-ffi` before build; `CopyRustFfi` copies `rusty_ffi.dll` after
 build with `SkipUnchangedFiles="false"` because `PreserveNewest` can leave a stale DLL.
-Expected result on both toolchains: 0 errors / 0 warnings (109 tests total: 84 core + 25 FFI).
+Expected result on both toolchains: 0 errors / 0 warnings (144 tests total: 117 core + 27 FFI).
 
-### 11.7 Custom Data preview overrides
+### 11.7 Preview options and Custom Data
 
-The preview-options `MenuFlyout` (`MainWindow.xaml:347-360`) contains a
-`ToggleMenuFlyoutItem` **Custom data** plus a neighbouring `MenuFlyoutItem` with a gear
-glyph (`&#xE713;`) that opens `CustomDataDialog` (a direct child of `RootGrid`).
-Labels are code-set in `RefreshPreviewOptionLabels()` because flyouts do not inherit
-`DataContext`.
+The preview-options flyout (`PreviewOptionsFlyout` in `MainWindow.xaml`) has four items:
+**Preview grid** (16 px grid plus snapping), **Unselected widgets outline** (default
+on), **Custom data** toggle and a neighbouring gear item that opens `CustomDataDialog`
+(a direct child of `RootGrid`). Labels are set in code (`RefreshPreviewOptionLabels()`)
+because flyouts do not inherit `DataContext`.
 
 **State lives in `AppSettingsStore`, never in the project:**
 `customPreviewDataEnabled` (bool) and `customPreviewData` (object of string values) are
@@ -771,14 +772,16 @@ always use their own preset/random values.
 ### 11.8 Generated preview files (`preview.rs`)
 
 `crates/rusty-core/src/preview.rs` is the only renderer for `preview.png` and
-`preview.gif`. It uses `image` for composition/PNG, `gif` for the 7-frame animation,
+`preview.gif`. It uses `image` for composition/PNG, `gif` for the 8-frame animation,
 `ab_glyph` + the widget's own TTF for text and `fastrand` for the random series.
 
 - `FRAME_PRESETS`: 7 hardcoded frames with increasing hours `6,9,12,15,18,20,21`,
-  minutes `5,11,17,23,29,33,37` and seconds `4,10,16,22,28,34,40`. Each frame has a
+  minutes `5,11,17,23,29,33,37` and seconds `4,10,16,22,28,34,40`, plus an 8th frame
+  that is an **exact copy** of frame 7 (`21:37:40`, all four STATUS icons, identical
+  random values and battery). Each of the 7 source frames has a
   **different real date** — 2022-01-03 (Monday) … 2022-07-31 (Sunday), months January…
-  July, weekday numbers 1…7 with default Monday-first. Frame 7 (`21:37:40`, all four
-  STATUS icons) is reused for the static PNG; frames 0 and 6 force HR 56/120.
+  July, weekday numbers 1…7 with default Monday-first. Frames 0 and 6 force HR 56/120;
+  `SOURCE_FRAME_COUNT = 7`, `FRAME_COUNT = 8`, `PREVIEW_FRAME_INDEX = 7`.
 - `PreviewRandomSeries` (one FFI call per export): the 7 dates come from the presets;
   random heart rate (56–120), calories (0→2450), distance (0→12.3 km), stress, PAI,
   skin temperature, sleep and SpO₂ are still randomized. `frameCount` is returned so
@@ -788,14 +791,19 @@ always use their own preset/random values.
 - All date widgets inside one frame use that frame's single date via the shared
   `date_format` / `locale` functions (`weekday_number`, `iso_week`, `day_of_year`,
   month names). `lunar-date`/`festival` remain `--` because the repo has no lunar tables.
-- The round cutout paints everything outside radius 233 opaque black in both formats,
+- The round cutout paints everything outside radius 233 opaque black in the 7 GIF frames,
   avoiding GIF palette/transparency artifacts. The GIF carries a `NETSCAPE2.0` infinite
-  loop extension (~1.7 s per frame). `preview.png` is exactly the 7th frame (21:37:40) from that GIF; the
-  export dialog hosts the animation in a 240 × 240 `Border` with `CornerRadius="120"`,
-  so it matches the round watchface instead of showing a square image.
+  loop extension (~1.7 s per frame). `preview.png` is **not a raw frame**: it is composed from
+  the 8th (21:37:40) copy — transparent outside, outer black safe area, the embedded
+  `logo/gear-outlayer.png` layer (brown arc + gear), inner black safe area and the full
+  watchface scaled into the centre with a dark, barely visible outline (`#404040`). The
+  composed image becomes the **first GIF frame** (the raw 8th copy is dropped, so the GIF still
+  has 8 frames: composed one followed by the 7 raw ones). The export dialog hosts the animation in a 240 × 240 `Border` with
+  `CornerRadius="120"`, so it matches the round watchface instead of showing a square image.
 - Files land in the project folder next to `project.json` and are **not** registered
-  as assets, so `package.rs` never puts them in the ZIP. `preview-cache/` holds the 7
-  intermediate PNGs only until `rw_encode_preview_gif` removes it.
+  as assets, so `package.rs` never puts them in the ZIP. `preview-cache/` holds the 8
+  intermediate PNGs only until `rw_encode_preview_gif` removes it. `package.rs` reads the
+  composed `preview.png` and rescales it to 314 × 314 for `assets/Preview.png`.
 
 ---
 
@@ -814,7 +822,7 @@ These are hard-won constraints; changing them breaks 1:1 preview/export parity.
    alpha bbox with an 8 px margin and placed with `pos_x/pos_y` inside a full-screen
    frame pivoted at (233,233) — same as the working Python reference.
 4. **Constant background.** Generated JS starts with
-   `FILL_RECT(0,0,466,466,0xFF05070D)`; no `bg.png` asset, no background store, no
+   `FILL_RECT(0,0,466,466,0xFF000000)`; no `bg.png` asset, no background store, no
    background FFI and no background UI.
 5. **Shared time/date algorithms.** `time_format.rs` and `date_format.rs` are the sole
    source for both Rust preview strings and generated JS expressions; weekday index

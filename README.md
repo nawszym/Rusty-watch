@@ -45,8 +45,8 @@ no code or assets from that project were copied.
 
 | Feature | Description |
 | --- | --- |
-| 🖥️ **1:1 preview** | Round 466 × 466 watchface with the fixed dark background and every widget in export order. |
-| 🧱 **Layers** | Panel to hide, reorder and remove widgets. The background is always the same dark fill and has no layer. |
+| 🖥️ **1:1 preview** | Round 466 × 466 watchface with the fixed fully black background and every widget in export order. |
+| 🧱 **Layers** | Panel to hide, reorder and remove widgets. The background is always the same full-black fill and has no layer. |
 | 🖱️ **Frames & snapping** | Drag and resize widgets, 16 px grid, alignment guides to edges and centres. |
 | 🕐 **Clocks** | Digital (custom format pattern) and analog (rotating PNG hand sets). |
 | 📅 **Date & time data** | Date with an editable pattern, weekday number, week of year, day of year, lunar date, festivals, world clock. |
@@ -85,9 +85,9 @@ never depend on the application store. Hand textures are cropped to their visibl
 
 ### 📤 Export and simulator
 
-Clicking **Export** first renders `preview.png` (frame `7`, showing `21:37:40`) and a
-7-frame animated, **infinitely looping** `preview.gif` (hours `06`–`21`, ~1.7 s per frame). A small
-progress bar on the Export button counts `1/7 … 7/7` and keeps animating while the
+Clicking **Export** first renders a branded `preview.png` — the 21:37:40 watchface scaled into the `gear-outlayer.png` logo frame with black safe areas and a subtle dark outline — and an
+8-frame animated, **infinitely looping** `preview.gif` (~1.7 s per frame; frame 1 is the composed `preview.png`, followed by the 7 raw frames). A small
+progress bar on the Export button counts `1/8 … 8/8` and keeps animating while the
 GIF is encoded; the dialog opens **only after** the GIF is ready and shows it **cropped
 to the round watchface** above the watchface details and the **Export ZIP** button. Both
 files are saved next to `project.json` and are **not** included in the `.zip`.
@@ -126,9 +126,9 @@ a valid pack must contain **all four** square PNGs: `alarm.png`, `dnd.png`, `blu
 `lock.png`. The only bundled pack is **Classic** (the default) in `native/RustyWatch/Assets/Status/`.
 Choosing a pack in the inspector (or in **Assets → Status icons**) copies it into
 `<project>/assets/status/<pack>/`, keeping the exported ZIP self-contained. Status layers support
-the standard blue-move / red-scale gesture (double-click to toggle scaling). In the 7-frame preview
-the icons appear only in selected frames; frame **7** (`21:37:40`) shows all four and is the source
-of `preview.png`. Pack thumbnails are generated in Rust (hands at 21:37:11, status icons in a 2×2
+the standard blue-move / red-scale gesture (double-click to toggle scaling). In the 8-frame preview
+the icons appear only in selected frames; frame **7** (`21:37:40`) shows all four and frame **8** is
+its exact copy, which drives `preview.png`. Pack thumbnails are generated in Rust (hands at 21:37:11, status icons in a 2×2
 grid), and the Assets page shows at most three tiles per row.
 
 ### 🌐 Interface and watchface languages

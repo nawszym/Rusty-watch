@@ -51,11 +51,11 @@ Projekt powstał jako własna implementacja inspirowana edytorem
 | 🕐 **Zegary** | Cyfrowy (własny wzorzec formatu) oraz analogowy (obracane wskazówki z zestawów PNG). |
 | 📅 **Dane daty i czasu** | Data z edytowalnym wzorcem, dzień tygodnia, tydzień roku, dzień roku, data księżycowa, święta, zegar światowy. |
 | ❤️ **Zdrowie i aktywność** | Kroki, dystans, tętno, stres, PAI, temperatura skóry, sen, kalorie i SpO₂. |
-| 🖼️ **Zasoby** | Czcionki TTF, tła, grafiki widgetu Image i zestawy wskazówek — magazyny współdzielone przez projekty. |
+| 🖼️ **Zasoby** | Czcionki TTF, grafiki widgetu Image, zestawy wskazówek i ikony STATUS — magazyny współdzielone przez projekty. |
+| 🎛️ **Niestandardowe dane podglądu** | Ręczne nadpisanie czasu, daty i czujników w edytorze — nigdy w `.zip`. |
 | 🌐 **Język na zegarku** | Eksportowany ZIP sam wykrywa język (`pl-PL` → polskie nazwy miesięcy i AM/PM). |
 | 📦 **Eksport `.zip`** | Paczka samowystarczalna: zawiera wygenerowany JS i wszystkie użyte zasoby. |
 | 🧪 **Test w symulatorze** | Instalacja eksportu w oficjalnym Zepp OS Simulator jednym przyciskiem. |
-| 🎛️ **Niestandardowe dane podglądu** | Ręczne nadpisanie czasu, daty i wartości czujników w edytorze — pola są filtrowane do widgetów na tarczy i nigdy nie trafiają do `.zip`. |
 
 ### 🧩 Dostępne widgety
 
@@ -85,9 +85,9 @@ wymagają już magazynu aplikacji. Tło jest przygotowywane do dokładnie 466 ×
 
 ### 📤 Eksport i symulator
 
-Kliknięcie **Export** najpierw generuje `preview.png` (klatka `21`, czyli `21:37`) i 7-klatkowy,
-animowany, **zapętlony w nieskończoność** `preview.gif` (godziny `00`–`23`). Na przycisku pojawia się
-mały pasek postępu (`1/7` … `7/7`), który podczas kodowania GIF-a nadal się ładuje; okno eksportu
+Kliknięcie **Export** najpierw generuje oprawiony `preview.png` (tarcza 21:37:40 pomniejszona w ramce z `logo/gear-outlayer.png`, z czarnymi strefami bezpiecznymi i ciemnym, ledwo widocznym obrysem) oraz 8-klatkowy,
+animowany, **zapętlony w nieskończoność** `preview.gif` (pierwsza klatka to oprawiony obraz co `preview.png`, potem 7 surowych klatek). Na przycisku pojawia się
+mały pasek postępu (`1/8` … `8/8`), który podczas kodowania GIF-a nadal się ładuje; okno eksportu
 otwiera się **dopiero po** zapisaniu GIF-a i pokazuje animację **przyciętą do okręgu tarczy** nad
 danymi tarczy oraz przyciskiem **Export ZIP**. Oba pliki lądują obok `project.json` i **nie trafiają
 do `.zip`**.
@@ -96,8 +96,8 @@ Podglądy rysuje wyłącznie Rust (`crates/rusty-core/src/preview.rs`) — bez o
 kontrolek WinUI, które dawniej zostawiały artefakt pod edytorem. 7 klatek ma zahardkodowany czas (godziny 6,9,12,15,18,20,21, minuty i sekundy ściśle rosnące, skrajności tętna 56/120), a każda dostaje **inną, prawdziwą datę**: 2022-01-03 (poniedziałek) … 2022-07-31 (niedziela), miesiące styczeń…lipiec. Wszystkie widgety daty
 w klatce korzystają z tej samej daty, kroki liczone są z dystansu (`1300`–`1400` kroków/km),
 więc `12,3 km` pokazuje około `16 000` kroków. Bateria maleje deterministycznie `100% → 10%`.
-Poza promieniem `233` oba formaty mają czarne, nieprzezroczyste tło. Niestandardowe dane podglądu
-nie wpływają na generowane pliki.
+Poza promieniem `233` surowe klatki GIF-a mają czarne, nieprzezroczyste tło; oprawiony `preview.png`
+ma tam przezroczyste tło wokół ramki logo. Niestandardowe dane podglądu nie wpływają na generowane pliki.
 
 Eksport tworzy plik `.zip` bezpośrednio w folderze projektu — bez okna zapisu i bez
 kolejnych kroków. Tarczę możesz przetestować w oficjalnym
@@ -197,7 +197,7 @@ i formatów, dzięki czemu pozostają w 1:1.
 rusty-watch/
 ├── crates/
 │   ├── rusty-core/src/      # model, project, codegen, widgets, layers, formaty,
-│   │                        #  zasoby (fonts/images/backgrounds/hands), zip, walidacja
+│   │                        #  zasoby (fonts/images/hands/status), zip, walidacja
 │   ├── rusty-cli/src/       # CLI: new | validate | export | inspect
 │   └── rusty-ffi/src/       # eksporty rw_* (57 funkcji)
 ├── native/RustyWatch/       # jedyny frontend WinUI 3
