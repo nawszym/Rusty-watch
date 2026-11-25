@@ -58,6 +58,28 @@ Projekt powstał jako własna implementacja inspirowana edytorem
 | 📦 **Eksport `.zip`** | Paczka samowystarczalna: zawiera wygenerowany JS i wszystkie użyte zasoby. |
 | 🧪 **Test w symulatorze** | Instalacja eksportu w oficjalnym Zepp OS Simulator jednym przyciskiem. |
 
+### 📸 Zrzuty ekranu
+
+| Ekran główny | Edytor — podgląd 1:1 i warstwy |
+| --- | --- |
+| ![Ekran główny Rusty Watch](screenshots/home.png) | ![Edytor z podglądem tarczy i listą warstw](screenshots/editor-preview-layers.png) |
+
+| Katalog widgetów | Dodawanie widgetu |
+| --- | --- |
+| ![Katalog obsługiwanych widgetów](screenshots/widgets-catalog.png) | ![Flyout dodawania widgetu z wyszukiwarką](screenshots/add-widget-flyout.png) |
+
+| Inspektor widgetu | Opcje podglądu |
+| --- | --- |
+| ![Inspektor z kolorami i geometrią](screenshots/widget-inspector.png) | ![Menu opcji podglądu](screenshots/preview-options.png) |
+
+| Okno eksportu | Ustawienia aplikacji |
+| --- | --- |
+| ![Okno eksportu z animowanym podglądem tarczy](screenshots/export-dialog.png) | ![Ustawienia aplikacji](screenshots/app-settings.png) |
+
+| Zasoby — czcionki | Zasoby — obrazy i ikony STATUS |
+| --- | --- |
+| ![Siatka czcionek w Zasobach](screenshots/assets-fonts.png) | ![Obrazy i pakiety ikon STATUS w Zasobach](screenshots/assets-images-status.png) |
+
 ### 🧩 Dostępne widgety
 
 - **Czas** — Digital time, Analog time

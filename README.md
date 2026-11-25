@@ -58,6 +58,28 @@ no code or assets from that project were copied.
 | 🧪 **Simulator test** | Installs the export in the official Zepp OS Simulator at the click of a button. |
 | 🎛️ **Preview options** | Predefined mock data by default; **Live preview** switches only time/date to the real system clock. Custom values are editor-only and never affect the exported `.zip`. |
 
+### 📸 Screenshots
+
+| Home | Editor — 1:1 preview & layers |
+| --- | --- |
+| ![Rusty Watch home screen](screenshots/home.png) | ![Editor with watchface preview and layer list](screenshots/editor-preview-layers.png) |
+
+| Widgets catalog | Add widget flyout |
+| --- | --- |
+| ![Read-only widget catalog](screenshots/widgets-catalog.png) | ![Add widget flyout with search and categories](screenshots/add-widget-flyout.png) |
+
+| Widget inspector | Preview options |
+| --- | --- |
+| ![Widget inspector with colours and geometry](screenshots/widget-inspector.png) | ![Preview options menu](screenshots/preview-options.png) |
+
+| Export dialog | App settings |
+| --- | --- |
+| ![Export dialog with animated watchface preview](screenshots/export-dialog.png) | ![Application settings](screenshots/app-settings.png) |
+
+| Assets — fonts | Assets — images & status icons |
+| --- | --- |
+| ![Fonts grid in Assets](screenshots/assets-fonts.png) | ![Images and status icon packs in Assets](screenshots/assets-images-status.png) |
+
 ### 🧩 Available widgets
 
 - **Time** — Digital time, Analog time
