@@ -423,6 +423,40 @@ Do not "fix" these by reverting to the obvious approach:
   catalog card carries a warning. Each widget also has an **Opacity** slider (0–255):
   `Widget::alpha` is emitted as `alpha:` in generated JS whenever it is below 255, applied
   to the editor preview frame (`Opacity` on the host) and to generated preview frames.
+  **Progress** category (`CATEGORY_PROGRESS`) has `arc-progress` and `bar-progress`: both are driven
+  by one `Widget::progress` (`ProgressSettings`). The inspector exposes only: source, thickness,
+  corner radius, colours (same `ColorPicker`/swatch as text), track, rounded ends and — for the arc
+  only — start/end angle. **New arcs default to 0…360° (full circle)** and the WinUI preview draws
+  that as an `EllipseGeometry` (an `ArcSegment` with identical endpoints draws nothing). Fill is
+  always continuous (no segment/gap UI); older projects with stored `segments`/`gap` still export as
+  one arc/bar. The live editor preview reads the matching Custom Data field (`battery` defaults to
+  **73%**); generated preview files remain deterministic and ignore Custom Data. Codegen emits native `hmUI.widget.ARC_PROGRESS` /
+  `FILL_RECT` (rounded ends via the undocumented `corner_flag`, rounded bar corners via
+  `FILL_RECT.radius`) and refreshes `level`/geometry from `progressTick`. The arc has an extra
+  draggable point at 0° that changes **only** `Progress.Thickness` (never text/size/other settings;
+  `arc_center_radius()` keeps the ring's centre radius fixed so thickness grows symmetrically inward
+  and outward — "center stays"); the frame is **not** expanded — the editor gives the arc `Path` a
+  negative margin and enlarged bounds (plus `Clip = null`) so anything outside the blue outline is
+  still drawn, and `arc_draw_margin()` widens the Rust frame renderer too. The inspector shows one
+  **SIZE slider** (with live value) for the square arc and Width/Height NumberBoxes for the bar.
+  Roundness is only a checkbox: for the arc it maps to `corner_flag`, for the bar it turns the corner
+  radius on/off at `min(w,h)/2` — a square bar with roundness enabled is a circle. The track shape
+  is always created; `ShowTrack` toggles its `Visibility` in `UpdateProgressVisual` (creating it
+  conditionally made the editor ignore the checkbox). `UpdateProgressVisual`
+  must also refresh `StrokeThickness` on both
+  arc `Path` objects, otherwise the editor keeps the line weight from `CreateProgressShape` while JS
+  and PNG frames already show the new one; persisted via `EndFrameDrag`; the bar additionally has explicit
+  **width/height** NumberBoxes so the
+  user can type e.g. 150 × 62. The two colour pickers sit side by side. The Rust frame renderer adds round end caps to partial arcs
+  (same `corner_flag` behaviour as the watch) — full circles have no caps. Its inverse angle must be
+  `dx.atan2(-dy)` to match `x = cx + r*sin(θ)`, `y = cy - r*cos(θ)`; using `atan2(-dy, dx)` detached
+  the caps from the ring and produced isolated „kulki" in `preview.gif`. In the WinUI preview the
+  bar fill lives in a `Grid`, so it is anchored with `HorizontalAlignment.Left` (or
+  `VerticalAlignment.Bottom` when vertical) — **`Canvas.SetLeft/SetTop` are no-ops there** and made
+  the fill grow inwards from both sides. **all JS dimensions are
+  literals from the frame** — never bare `x`/`y`/`w`/`h` identifiers (that caused a `ReferenceError`
+  and left the bar unfilled). The same values drive the WinUI `Path`/`Rectangle` preview and the
+  Rust renderer. No image assets and no `@zos`/`Date`.
   More widget types will be added to the catalog only when explicitly requested.
 - **Project settings** page is real: the watchface **name is shown greyed-out (read-only)** — the project
   folder and recent list depend on it, so it must never be renamed here (use Save as for a copy).
@@ -521,7 +555,7 @@ and no listener leaks.
 
 ## 9. Definition of done for a change
 
-1. `cargo test --workspace` green (currently 177 tests: 141 core + 36 FFI), no new warnings.
+1. `cargo test --workspace` green (currently 186 tests: 149 core + 37 FFI), no new warnings.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. App launches; affected screens verified visually (English **and** Polish if UI changed).
 4. Round-trip `new → export → open → export` preserves data when project model/codegen changes.

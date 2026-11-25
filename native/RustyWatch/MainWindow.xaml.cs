@@ -77,6 +77,29 @@ public sealed class LayerView
     [JsonPropertyName("weatherDayOffset")] public byte WeatherDayOffset { get; set; }
     /// <summary>Faza snu w minutach albo jako procent całego snu.</summary>
     [JsonPropertyName("sleepStageMode")] public string SleepStageMode { get; set; } = "duration";
+    /// <summary>Ustawienia łuku/paska postępu (z Rusta, snake_case).</summary>
+    [JsonPropertyName("progress")] public ProgressSettingsView? Progress { get; set; }
+}
+
+/// <summary>Lustro `ProgressSettings` z rusty-core — nazwy JSON są snake_case.</summary>
+public sealed class ProgressSettingsView
+{
+    [JsonPropertyName("source")] public string Source { get; set; } = "battery";
+    [JsonPropertyName("min")] public double Min { get; set; }
+    [JsonPropertyName("max")] public double Max { get; set; } = 100;
+    [JsonPropertyName("value")] public double Value { get; set; } = 50;
+    [JsonPropertyName("color")] public string Color { get; set; } = "0xFF4FC3F7";
+    [JsonPropertyName("track_color")] public string TrackColor { get; set; } = "0xFF3A3A42";
+    [JsonPropertyName("thickness")] public uint Thickness { get; set; } = 16;
+    [JsonPropertyName("start_angle")] public int StartAngle { get; set; } = -135;
+    [JsonPropertyName("end_angle")] public int EndAngle { get; set; } = 135;
+    [JsonPropertyName("corner")] public string Corner { get; set; } = "round";
+    [JsonPropertyName("radius")] public uint Radius { get; set; } = 8;
+    [JsonPropertyName("segments")] public uint Segments { get; set; } = 1;
+    [JsonPropertyName("gap")] public uint Gap { get; set; } = 4;
+    [JsonPropertyName("orientation")] public string Orientation { get; set; } = "horizontal";
+    [JsonPropertyName("invert")] public bool Invert { get; set; }
+    [JsonPropertyName("show_track")] public bool ShowTrack { get; set; } = true;
 }
 
 /// <summary>Wiersz listy warstw — panel pokazuje warstwę najwyższą na górze.</summary>
@@ -117,6 +140,8 @@ public sealed class LayerRow
         "status-dnd" => L("LayerStatusDnd"),
         "status-bluetooth" => L("LayerStatusBluetooth"),
         "status-lock" => L("LayerStatusLock"),
+        "arc-progress" => L("LayerArcProgress"),
+        "bar-progress" => L("LayerBarProgress"),
         "analog-time" => L("LayerAnalog"),
         "image" => L("LayerImage"),
         "images" => L("LayerImages"),
@@ -438,6 +463,8 @@ public sealed class TimeSettings
     public byte WeatherDayOffset { get; set; }
     /// <summary>Faza snu: duration (minuty) albo percent (%).</summary>
     public string SleepStageMode { get; set; } = "duration";
+    /// <summary>Ustawienia łuku/paska postępu.</summary>
+    public ProgressSettingsView Progress { get; set; } = new();
 }
 
 /// <summary>Ramka tekstowego widgetu w podglądzie wraz z jego blokiem tekstu.</summary>
@@ -450,7 +477,17 @@ public sealed class FrameView
     public TextBlock Text { get; set; } = new();
     /// <summary>Obraz widgetu IMAGES — rozmiar i źródło odświeżane z geometrią ramki.</summary>
     public Microsoft.UI.Xaml.Controls.Image? Picture { get; set; }
+    /// <summary>Elementy rysujące łuk/pasek postępu w edytorze.</summary>
+    public ProgressVisual? Progress { get; set; }
     public List<Border> Handles { get; } = new();
+}
+
+/// <summary>Żywotne elementy widgetu postępu w podglądzie edytora.</summary>
+public sealed class ProgressVisual
+{
+    public Microsoft.UI.Xaml.Shapes.Shape? Track { get; set; }
+    public Microsoft.UI.Xaml.Shapes.Shape? Fill { get; set; }
+    public List<Microsoft.UI.Xaml.Shapes.Shape> Segments { get; } = new();
 }
 
 /// <summary>Widok tarczy zbudowany z tych samych danych co podgląd edytora.</summary>
@@ -533,6 +570,7 @@ public sealed class FrameDragState
     public int StartW { get; set; }
     public int StartH { get; set; }
     public uint StartTextSize { get; set; }
+    public uint StartThickness { get; set; }
     public bool AutoScale { get; set; }
 }
 
@@ -593,6 +631,7 @@ public sealed partial class MainWindow : Window
     private bool _loadingUnits;
     private bool _loadingFirstDay;
     private bool _loadingWidgetOptions;
+    private bool _loadingProgress;
     private bool _loadingImages;
     private bool _loadingHands;
     private bool _loadingStatusPacks;
@@ -919,6 +958,213 @@ public sealed partial class MainWindow : Window
     /// wysokość (ograniczoną MaxHeight), żeby wyrównanie liczyło się od aktualnej ramki.
     /// Bez UI-only marginesów i bez sztywnego Height.
     /// </summary>
+    /// <summary>Promień linii środkowej — nie zależy od grubości (center stays).</summary>
+    private static double ArcCenterRadius(int w, int h)
+        => Math.Max(4, Math.Min(w, h) / 2.0 - 10);
+
+    /// <summary>Margines na grubą linię, żeby Path miał miejsce poza ramką.</summary>
+    private static double ArcStrokeMargin(double thickness)
+        => Math.Max(0, thickness / 2.0 - 8) + 6;
+
+    private static Point ArcPoint(double cx, double cy, double radius, double degrees)
+    {
+        var radians = degrees * Math.PI / 180.0;
+        // 0° = góra, zgodnie z ARC_PROGRESS w tarczy.
+        return new Point(cx + radius * Math.Sin(radians), cy - radius * Math.Cos(radians));
+    }
+
+    private static Geometry ArcGeometry(double cx, double cy, double radius, double start, double end)
+    {
+        var sweep = end - start;
+        // ArcSegment nie potrafi narysować pełnego okręgu (start == koniec) —
+        // wtedy ZeppOS i tak rysuje ARC_PROGRESS 0→360 jako zamknięty łuk.
+        if (Math.Abs(sweep) >= 359.999)
+            return new EllipseGeometry
+            {
+                Center = new Point(cx, cy),
+                RadiusX = radius,
+                RadiusY = radius,
+            };
+        var figure = new PathFigure { StartPoint = ArcPoint(cx, cy, radius, start) };
+        figure.Segments.Add(new ArcSegment
+        {
+            Point = ArcPoint(cx, cy, radius, end),
+            Size = new Size(radius, radius),
+            IsLargeArc = Math.Abs(sweep) > 180.0,
+            SweepDirection = sweep >= 0 ? SweepDirection.Clockwise : SweepDirection.Counterclockwise,
+        });
+        return new PathGeometry { Figures = new PathFigureCollection { figure } };
+    }
+
+    /// <summary>"Zaokrąglone końce" wyłączone = płaskie kapki i radius 0.</summary>
+    /// <summary>Zaokrąglenia są włączone lub wyłączone — kwadrat staje się kołem.</summary>
+    private static double EffectiveProgressRadius(int w, int h, ProgressSettingsView p)
+        => p.Corner == "flat" ? 0.0 : Math.Min(w, h) / 2.0;
+
+    private static PenLineCap ProgressLineCap(ProgressSettingsView p)
+        => p.Corner == "flat" ? PenLineCap.Flat : PenLineCap.Round;
+
+    private static Microsoft.UI.Xaml.Shapes.Shape CreateProgressShape(bool arc, LayerView layer, ProgressSettingsView p, bool track)
+    {
+        var color = ParseArgb(track ? p.TrackColor : p.Color);
+        var brush = new SolidColorBrush(color);
+        if (arc)
+        {
+            var radius = ArcCenterRadius(layer.W, layer.H);
+            var start = track ? p.StartAngle : p.StartAngle;
+            var end = track ? p.EndAngle : p.StartAngle;
+            var offset = ArcStrokeMargin(p.Thickness);
+            return new Microsoft.UI.Xaml.Shapes.Path
+            {
+                Stroke = brush,
+                StrokeThickness = p.Thickness,
+                StrokeStartLineCap = ProgressLineCap(p),
+                StrokeEndLineCap = ProgressLineCap(p),
+                Stretch = Stretch.None,
+                Width = layer.W + 2 * offset,
+                Height = layer.H + 2 * offset,
+                Margin = new Thickness(-offset),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Clip = null,
+                Data = ArcGeometry(layer.W / 2.0 + offset, layer.H / 2.0 + offset, radius, start, end),
+            };
+        }
+        var cornerRadius = EffectiveProgressRadius(layer.W, layer.H, p);
+        return new Microsoft.UI.Xaml.Shapes.Rectangle
+        {
+            Fill = brush,
+            RadiusX = cornerRadius,
+            RadiusY = cornerRadius,
+            // Rodzicem jest Grid — Canvas.Left/Top nie ma tu żadnego efektu.
+            // Wypełnienie kotwimy alignmentem: poziomo do lewej, pionowo do dołu.
+            HorizontalAlignment = track || p.Orientation == "vertical"
+                ? HorizontalAlignment.Stretch : HorizontalAlignment.Left,
+            VerticalAlignment = track || p.Orientation != "vertical"
+                ? VerticalAlignment.Stretch : VerticalAlignment.Bottom,
+        };
+    }
+
+    /// <summary>Predefiniowana wartość czujnika do podglądu postępu na PC.</summary>
+    private static double ProgressPreviewValue(ProgressSettingsView p)
+    {
+        var custom = AppSettingsStore.GetCustomPreviewValue(p.Source);
+        if (custom is not null && double.TryParse(custom, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+            return parsed;
+        var fallback = p.Source switch
+        {
+            "steps" => 16000.0,
+            "distance" => 12.3,
+            "heart" => 72.0,
+            "calories" => 430.0,
+            "stand" => 8.0,
+            "fat-burning" => 32.0,
+            "pai" => 42.0,
+            "spo2" => 97.0,
+            "sleep" => 425.0,
+            "fixed" => p.Value,
+            // Bateria domyślnie 73% — realistyczny stan, nie pełne 100%.
+            "battery" => 73.0,
+            _ => 73.0,
+        };
+        return fallback;
+    }
+
+    private static double ProgressFraction(LayerView layer)
+    {
+        var p = layer.Progress ?? new ProgressSettingsView();
+        var raw = ProgressPreviewValue(p);
+        var hi = p.Max > p.Min ? p.Max : p.Source switch
+        {
+            "steps" => 20000.0,
+            "calories" => 600.0,
+            "stand" => 12.0,
+            "fat-burning" => 60.0,
+            "sleep" => 480.0,
+            _ => 100.0,
+        };
+        var value = hi > p.Min ? (raw - p.Min) / (hi - p.Min) : 0.0;
+        if (p.Invert) value = 1.0 - value;
+        return Math.Max(0.0, Math.Min(1.0, value));
+    }
+
+    private void UpdateProgressVisual(FrameView view)
+    {
+        var visual = view.Progress;
+        if (visual is null) return;
+        var layer = view.Layer;
+        var p = layer.Progress ?? new ProgressSettingsView();
+        var value = ProgressFraction(layer);
+        var arc = layer.Kind == "arc-progress";
+        var radius = ArcCenterRadius(layer.W, layer.H);
+        var offset = arc ? ArcStrokeMargin(p.Thickness) : 0;
+        var cx = layer.W / 2.0 + offset;
+        var cy = layer.H / 2.0 + offset;
+        var sweep = p.EndAngle - p.StartAngle;
+        if (arc)
+        {
+            var arcTrack = visual.Track as Microsoft.UI.Xaml.Shapes.Path;
+            var arcFill = visual.Fill as Microsoft.UI.Xaml.Shapes.Path;
+            foreach (var path in new[] { arcTrack, arcFill })
+            {
+                if (path is null) continue;
+                path.Width = layer.W + 2 * offset;
+                path.Height = layer.H + 2 * offset;
+                path.Margin = new Thickness(-offset);
+                path.Clip = null;
+            }
+        }
+
+        if (visual.Track is not null)
+        {
+            // ShowTrack musi działać na żywo w edytorze — nie tylko po eksporcie.
+            visual.Track.Visibility = p.ShowTrack ? Visibility.Visible : Visibility.Collapsed;
+            if (arc && visual.Track is Microsoft.UI.Xaml.Shapes.Path trackPath)
+            {
+                trackPath.Data = ArcGeometry(cx, cy, radius, p.StartAngle, p.EndAngle);
+                trackPath.StrokeThickness = p.Thickness;
+            }
+            else if (!arc && visual.Track is Microsoft.UI.Xaml.Shapes.Rectangle trackRect)
+            {
+                trackRect.Width = layer.W;
+                trackRect.Height = layer.H;
+                trackRect.RadiusX = EffectiveProgressRadius(layer.W, layer.H, p);
+                trackRect.RadiusY = trackRect.RadiusX;
+            }
+        }
+        // Zawsze jedno ciągłe wypełnienie — tak samo jak w eksportowanym JS.
+        if (visual.Fill is Microsoft.UI.Xaml.Shapes.Path fillPath)
+        {
+            fillPath.Data = ArcGeometry(cx, cy, radius, p.StartAngle, p.StartAngle + sweep * value);
+            fillPath.StrokeThickness = p.Thickness;
+            fillPath.StrokeStartLineCap = ProgressLineCap(p);
+            fillPath.StrokeEndLineCap = ProgressLineCap(p);
+        }
+        else if (visual.Fill is Microsoft.UI.Xaml.Shapes.Rectangle fillRect)
+        {
+            var rounded = EffectiveProgressRadius(layer.W, layer.H, p);
+            fillRect.RadiusX = Math.Min(rounded, Math.Max(1, Math.Min(layer.W, layer.H) / 2));
+            fillRect.RadiusY = fillRect.RadiusX;
+            if (p.Orientation == "vertical")
+            {
+                // Pełny pasek idzie od dołu do góry.
+                fillRect.Width = layer.W;
+                fillRect.Height = Math.Max(0, layer.H * value);
+                fillRect.HorizontalAlignment = HorizontalAlignment.Stretch;
+                fillRect.VerticalAlignment = VerticalAlignment.Bottom;
+            }
+            else
+            {
+                // Pusty = lewo, pełny = prawo. Lewa krawędź jest zawsze zakotwiczona
+                // (Canvas.Left nie działa w Grid — stąd HorizontalAlignment.Left).
+                fillRect.Width = Math.Max(0, layer.W * value);
+                fillRect.Height = layer.H;
+                fillRect.HorizontalAlignment = HorizontalAlignment.Left;
+                fillRect.VerticalAlignment = VerticalAlignment.Top;
+            }
+        }
+    }
+
     private void ApplyFrameGeometry(FrameView view, int x, int y, int w, int h, uint textSize)
         => ApplyFrameGeometry(view, x, y, w, h, textSize, _analogHands);
 
@@ -979,8 +1225,16 @@ public sealed partial class MainWindow : Window
         // Uchwyty siedzą dokładnie na rogach ramki (nie w jej wnętrzu). Ramka jest
         // rysowana poza klipem tarczy, więc nawet rogi dużych wskazówek można złapać.
         var half = HandleSize / 2;
+        var arcRadius = ArcCenterRadius(w, h);
         foreach (var handle in view.Handles)
         {
+            if (handle.Name == "thick")
+            {
+                // Punkt na łuku (0° = góra) — przeciągnięcie zmienia grubość.
+                Canvas.SetLeft(handle, x + w / 2.0 - half);
+                Canvas.SetTop(handle, y + h / 2.0 - arcRadius - half);
+                continue;
+            }
             var west = handle.Name.Contains('w');
             var north = handle.Name.Contains('n');
             Canvas.SetLeft(handle, (west ? x : x + w) - half);
@@ -991,6 +1245,7 @@ public sealed partial class MainWindow : Window
         // przesunąć, a tekst zachował kotwicę z poprzedniego stanu (np. po
         // skalowaniu lub zmianie justowania w inspektorze).
         ApplyTextLayout(view);
+        UpdateProgressVisual(view);
     }
 
     private static void ApplyTextFit(FrameView view, string? fit) => ApplyTextFit(view.Text, fit);
@@ -1089,6 +1344,8 @@ public sealed partial class MainWindow : Window
             if (IsWeatherKind(layer.Kind))
                 ApplyWeatherPreview(layer, view, previewNow);
             else ApplyCustomSensorOverride(layer.Kind, view.Text);
+            // Wartość progressu pochodzi z Custom Data — odśwież kształt razem z tekstem.
+            if (IsProgressKind(layer.Kind)) UpdateProgressVisual(view);
         }
 
         // Wskazówki obracamy tym samym tyknięciem zegara, który odświeża tekst.
@@ -1429,6 +1686,7 @@ public sealed partial class MainWindow : Window
             WeatherSettingsPanel.Visibility = Visibility.Collapsed;
             WeatherDayPanel.Visibility = Visibility.Collapsed;
             SleepStageModePanel.Visibility = Visibility.Collapsed;
+            ProgressSettingsPanel.Visibility = Visibility.Collapsed;
             InspectorTitle.Text = "";
             return;
         }
@@ -1444,9 +1702,10 @@ public sealed partial class MainWindow : Window
         var isGoal = IsGoalKind(layer.Kind);
         var isWeather = IsWeatherKind(layer.Kind);
         var isSleep = IsSleepKind(layer.Kind);
+        var isProgress = IsProgressKind(layer.Kind);
         WidgetInspector.Visibility = Visibility.Visible;
-        DigitalSettingsPanel.Visibility = isAnalog || isImages || isStatus || isWeatherIcon ? Visibility.Collapsed : Visibility.Visible;
-        DigitalAlignPanel.Visibility = isAnalog || isImages || isStatus || isWeatherIcon ? Visibility.Collapsed : Visibility.Visible;
+        DigitalSettingsPanel.Visibility = isAnalog || isImages || isStatus || isWeatherIcon || isProgress ? Visibility.Collapsed : Visibility.Visible;
+        DigitalAlignPanel.Visibility = isAnalog || isImages || isStatus || isWeatherIcon || isProgress ? Visibility.Collapsed : Visibility.Visible;
         // Wzorzec czasu/daty ma tylko to, co katalog z Rusta oznaczył flagą
         // hasPattern (time i date). Bateria i pola pogody czytają czujnik —
         // pokazywanie im presetu HH:MM:SS było mylące i zapisywało timeFormat.
@@ -1482,6 +1741,7 @@ public sealed partial class MainWindow : Window
         SleepStageModePanel.Visibility = layer.Kind is "sleep-deep" or "sleep-light" or "sleep-rem" or "sleep-wake"
             ? Visibility.Visible
             : Visibility.Collapsed;
+        ProgressSettingsPanel.Visibility = isProgress ? Visibility.Visible : Visibility.Collapsed;
         InspectorTitle.Text = isImages
             ? L("ImagesWidgetCardTitle")
             : isAnalog
@@ -1517,7 +1777,9 @@ public sealed partial class MainWindow : Window
             SleepStageMode = string.IsNullOrEmpty(layer.SleepStageMode)
                 ? "duration"
                 : layer.SleepStageMode,
+            Progress = layer.Progress ?? new ProgressSettingsView(),
         };
+        if (isProgress) LoadProgressSettings();
 
         if (isImages)
         {
@@ -1774,6 +2036,21 @@ public sealed partial class MainWindow : Window
                 if (CreateHandImage(layer, layer.CapSrc) is { } cap) { hands.Cap = cap; view.Host.Children.Add(cap); }
                 visual.Hands[layer.Id] = hands;
             }
+            else if (layer.Kind is "arc-progress" or "bar-progress")
+            {
+                var settings = layer.Progress ?? new ProgressSettingsView();
+                var progress = new ProgressVisual();
+                var arc = layer.Kind == "arc-progress";
+                // Podkład jest zawsze tworzony — przełącznik ShowTrack zmienia
+                // tylko jego widoczność w UpdateProgressVisual.
+                var track = CreateProgressShape(arc, layer, settings, true);
+                progress.Track = track;
+                view.Host.Children.Add(track);
+                var fill = CreateProgressShape(arc, layer, settings, false);
+                progress.Fill = fill;
+                view.Host.Children.Add(fill);
+                view.Progress = progress;
+            }
 
             view.Text = new TextBlock
             {
@@ -1830,11 +2107,33 @@ public sealed partial class MainWindow : Window
                     outlineCanvas.Children.Add(handle);
                     view.Handles.Add(handle);
                 }
+
+                if (layer.Kind == "arc-progress")
+                {
+                    // Dodatkowy punkt na łuku — przeciąganie zmienia `Progress.Thickness`.
+                    var thick = new Border
+                    {
+                        Name = "thick",
+                        Width = HandleSize + 4,
+                        Height = HandleSize + 4,
+                        CornerRadius = new CornerRadius(8),
+                        Tag = layer,
+                        Background = new SolidColorBrush(Color.FromArgb(255, 255, 255, 255)),
+                        BorderBrush = new SolidColorBrush(Color.FromArgb(255, 32, 32, 40)),
+                        BorderThickness = new Thickness(1),
+                    };
+                    AutomationProperties.SetName(thick, "ArcThickness_" + layer.Id);
+                    Canvas.SetZIndex(thick, layer.Id == _selectedLayerId ? 102 : 3);
+                    thick.PointerPressed += Frame_PointerPressed;
+                    outlineCanvas.Children.Add(thick);
+                    view.Handles.Add(thick);
+                }
             }
 
             // Ikona pogody jest czystym obrazem — żaden TextBlock nie trafia do
             // drzewa wizualnego, więc nie może wylądować w nim tekst "--".
-            if (layer.Kind != "images" && !IsWeatherIcon(layer)) view.Host.Children.Add(view.Text);
+            if (layer.Kind != "images" && !IsWeatherIcon(layer) && view.Progress is null)
+                view.Host.Children.Add(view.Text);
             view.Host.Opacity = layer.Alpha / 255.0;
             ApplyFrameGeometry(view, layer.X, layer.Y, layer.W, layer.H, layer.TextSize ?? 64, visual.Hands);
             watchCanvas.Children.Add(view.Host);
@@ -1863,9 +2162,20 @@ public sealed partial class MainWindow : Window
         if (layer.Kind is "image") return;
         SelectFrameLayer(layer);
 
+        // Grafika (wskazówki, przyszłe widgety) w niebieskim trybie ma tylko
+        // przesuwać się — dopiero czerwony tryb pozwala ją skalować.
+        var handle = element.Name switch
+        {
+            "nw" or "ne" or "sw" or "se" => element.Name,
+            "thick" => "thick",
+            _ => "move",
+        };
+        if (IsImageLayer(layer) && !layer.AutoScale) handle = "move";
+
         // Podwójne kliknięcie ramki przełącza tryb skalowania (tekstu albo wskazówek).
+        // Punkt grubości łuku ma własny gest — nie przełączamy tam trybu.
         var now = Environment.TickCount64;
-        if (_lastFramePressId == layer.Id && now - _lastFramePressAt < 450)
+        if (handle != "thick" && _lastFramePressId == layer.Id && now - _lastFramePressAt < 450)
         {
             _lastFramePressAt = 0;
             ToggleScaleMode(layer);
@@ -1874,11 +2184,6 @@ public sealed partial class MainWindow : Window
         _lastFramePressId = layer.Id;
         _lastFramePressAt = now;
         if (_settings is null) return;
-
-        // Grafika (wskazówki, przyszłe widgety) w niebieskim trybie ma tylko
-        // przesuwać się — dopiero czerwony tryb pozwala ją skalować.
-        var handle = element.Name is "nw" or "ne" or "sw" or "se" ? element.Name : "move";
-        if (IsImageLayer(layer) && !layer.AutoScale) handle = "move";
 
         _drag = new FrameDragState
         {
@@ -1890,6 +2195,7 @@ public sealed partial class MainWindow : Window
             StartW = layer.W,
             StartH = layer.H,
             StartTextSize = layer.TextSize ?? 64,
+            StartThickness = layer.Progress?.Thickness ?? 16,
             AutoScale = layer.AutoScale,
         };
         OutlineCanvas.CapturePointer(e.Pointer);
@@ -1901,6 +2207,39 @@ public sealed partial class MainWindow : Window
         var point = e.GetCurrentPoint(OutlineCanvas).Position;
         var dx = (int)Math.Round(point.X - _drag.StartPointer.X);
         var dy = (int)Math.Round(point.Y - _drag.StartPointer.Y);
+
+        if (_drag.Handle == "thick")
+        {
+            // Punkt na łuku: środek pierścienia pozostaje na miejscu, a przeciągnięcie
+            // na zewnątrz pogrubia łuk (do środka odchudza). Wszystkie zmiany idą
+            // przez ProgressSettings i rw_set_widget
+            // dopiero przy puszczeniu pointera (EndFrameDrag).
+            var cx = view.Layer.X + view.Layer.W / 2.0;
+            var cy = view.Layer.Y + view.Layer.H / 2.0;
+            var startDistance = Math.Sqrt(
+                (_drag.StartPointer.X - cx) * (_drag.StartPointer.X - cx)
+                + (_drag.StartPointer.Y - cy) * (_drag.StartPointer.Y - cy));
+            var distance = Math.Sqrt(
+                (point.X - cx) * (point.X - cx) + (point.Y - cy) * (point.Y - cy));
+            var thickness = Math.Clamp(
+                _drag.StartThickness + 2.0 * (distance - startDistance), 1, 233);
+            var roundedThickness = (uint)Math.Round(thickness);
+            var layerProgress = view.Layer.Progress ?? new ProgressSettingsView();
+            layerProgress.Thickness = roundedThickness;
+            view.Layer.Progress = layerProgress;
+            if (_settings is not null)
+            {
+                _settings.Progress.Thickness = roundedThickness;
+                if (!_loadingProgress) ProgressThicknessBox.Value = roundedThickness;
+            }
+            // Ramka pozostaje bez zmian — grubszy łuk jest rysowany z marginesem
+            // poza jej obrys, więc nie jest przycinany.
+            ApplyFrameGeometry(view, view.Layer.X, view.Layer.Y, view.Layer.W, view.Layer.H,
+                view.Layer.TextSize ?? 64);
+            e.Handled = true;
+            return;
+        }
+
         // Kandydaci do wyrównania: środek i krawędzie płótna oraz krawędzie/środki
         // pozostałych widgetów. Matematykę przyciągania robi rusty-core.
         var alignX = new List<int> { 0, ScreenSize / 2, ScreenSize };
@@ -1927,7 +2266,7 @@ public sealed partial class MainWindow : Window
             dx,
             dy,
             autoScale = _drag.AutoScale,
-            square = view.Layer.Kind == "analog-time",
+            square = view.Layer.Kind is "analog-time" or "arc-progress",
             snap = PreviewGridToggle.IsChecked == true,
             alignX,
             alignY,
@@ -2669,6 +3008,8 @@ public sealed partial class MainWindow : Window
             Glyph = item.Kind switch
             {
                 "analog-time" => "\uE823",
+                "arc-progress" => "\uE823",
+                "bar-progress" => "\uE8B2",
                 "world-clock" => "\uE823",
                 "date" => "\uE787",
                 "text" => "\uE8A5",
@@ -2705,6 +3046,7 @@ public sealed partial class MainWindow : Window
         "sleep" => L("WidgetCategorySleep"),
         "system" => L("WidgetCategorySystem"),
         "weather" => L("WidgetCategoryWeather"),
+        "progress" => L("WidgetCategoryProgress"),
         _ => category,
     };
 
@@ -2760,6 +3102,8 @@ public sealed partial class MainWindow : Window
         "sunset" => L("SunsetWidgetCardTitle"),
         "sun-current" => L("SunCurrentWidgetCardTitle"),
         "weather-icon" => L("WeatherIconWidgetCardTitle"),
+        "arc-progress" => L("ArcProgressWidgetCardTitle"),
+        "bar-progress" => L("BarProgressWidgetCardTitle"),
         "battery" => L("BatteryWidgetCardTitle"),
         "status-alarm" => L("StatusAlarmWidgetCardTitle"),
         "status-dnd" => L("StatusDndWidgetCardTitle"),
@@ -2820,6 +3164,8 @@ public sealed partial class MainWindow : Window
         "sunset" => L("SunsetWidgetCardDesc"),
         "sun-current" => L("SunCurrentWidgetCardDesc"),
         "weather-icon" => L("WeatherIconWidgetCardDesc"),
+        "arc-progress" => L("ArcProgressWidgetCardDesc"),
+        "bar-progress" => L("BarProgressWidgetCardDesc"),
         "battery" => L("BatteryWidgetCardDesc"),
         "status-alarm" => L("StatusAlarmWidgetCardDesc"),
         "status-dnd" => L("StatusDndWidgetCardDesc"),
@@ -2853,6 +3199,176 @@ public sealed partial class MainWindow : Window
         or "weather-low" or "sunrise" or "sunset" or "sun-current" or "weather-icon";
 
     private static bool IsWeatherIcon(LayerView? layer) => layer?.Kind == "weather-icon";
+
+    private static bool IsProgressKind(string? kind) => kind is "arc-progress" or "bar-progress";
+
+    private static ChoiceItem[] ProgressSourceChoices() => new[]
+    {
+        new ChoiceItem { Value = "battery", Name = L("ProgressSourceBattery") },
+        new ChoiceItem { Value = "steps", Name = L("ProgressSourceSteps") },
+        new ChoiceItem { Value = "distance", Name = L("ProgressSourceDistance") },
+        new ChoiceItem { Value = "heart", Name = L("ProgressSourceHeart") },
+        new ChoiceItem { Value = "calories", Name = L("ProgressSourceCalories") },
+        new ChoiceItem { Value = "stand", Name = L("ProgressSourceStand") },
+        new ChoiceItem { Value = "fat-burning", Name = L("ProgressSourceFatBurning") },
+        new ChoiceItem { Value = "pai", Name = L("ProgressSourcePai") },
+        new ChoiceItem { Value = "spo2", Name = L("ProgressSourceSpo2") },
+        new ChoiceItem { Value = "sleep", Name = L("ProgressSourceSleep") },
+        new ChoiceItem { Value = "fixed", Name = L("ProgressSourceFixed") },
+    };
+
+    private static void SelectChoice(ComboBox combo, IEnumerable<ChoiceItem> items, string value)
+    {
+        combo.ItemsSource = items;
+        combo.SelectedItem = items.FirstOrDefault(item => item.Value == value);
+    }
+
+    private void UpdateProgressColorUI()
+    {
+        if (_settings is null) return;
+        var p = _settings.Progress;
+        var fill = ParseArgb(p.Color);
+        var track = ParseArgb(p.TrackColor);
+        ProgressColorSwatch.Background = new SolidColorBrush(fill);
+        ProgressTrackColorSwatch.Background = new SolidColorBrush(track);
+        ProgressColorValue.Text = $"#{fill.A:X2}{fill.R:X2}{fill.G:X2}{fill.B:X2}";
+        ProgressTrackColorValue.Text = $"#{track.A:X2}{track.R:X2}{track.G:X2}{track.B:X2}";
+    }
+
+    private void LoadProgressSettings()
+    {
+        if (_settings is null) return;
+        var p = _settings.Progress;
+        var kind = _layers.FirstOrDefault(layer => layer.Id == _selectedLayerId)?.Kind;
+        _loadingProgress = true;
+        SelectChoice(ProgressSourceCombo, ProgressSourceChoices(), p.Source);
+        ProgressThicknessBox.Value = p.Thickness;
+        ProgressArcSizeSlider.Value = Math.Clamp(Math.Min(_settings.W, _settings.H), 24, 466);
+        ProgressArcSizeValue.Text = $"{Math.Round(ProgressArcSizeSlider.Value)} px";
+        ProgressWidthBox.Value = _settings.W;
+        ProgressHeightBox.Value = _settings.H;
+        ProgressArcSizePanel.Visibility = kind == "arc-progress" ? Visibility.Visible : Visibility.Collapsed;
+        ProgressBarSizePanel.Visibility = kind == "bar-progress" ? Visibility.Visible : Visibility.Collapsed;
+        ProgressStartAngleBox.Value = p.StartAngle;
+        ProgressEndAngleBox.Value = p.EndAngle;
+        // Kąty dotyczą wyłącznie łuku — w pasku nie są pokazywane.
+        ProgressAnglePanel.Visibility = kind == "arc-progress" ? Visibility.Visible : Visibility.Collapsed;
+        ProgressRoundedCheckBox.IsChecked = p.Corner != "flat";
+        ProgressTrackCheckBox.IsChecked = p.ShowTrack;
+        UpdateProgressColorUI();
+        _loadingProgress = false;
+    }
+
+    private void ProgressCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_settings is null || _loadingProgress || e.AddedItems.FirstOrDefault() is not ChoiceItem item) return;
+        if (sender is not ComboBox combo || combo != ProgressSourceCombo) return;
+        _settings.Progress.Source = item.Value;
+        ApplyPreview();
+        PersistSettings();
+    }
+
+    private void ProgressNumber_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_settings is null || _loadingProgress || sender is not NumberBox box || double.IsNaN(box.Value)) return;
+        var p = _settings.Progress;
+        if (box == ProgressThicknessBox) p.Thickness = (uint)Math.Clamp(box.Value, 1, 233);
+        else if (box == ProgressStartAngleBox) p.StartAngle = (int)Math.Clamp(box.Value, -360, 360);
+        else if (box == ProgressEndAngleBox) p.EndAngle = (int)Math.Clamp(box.Value, -360, 360);
+        else return;
+        ApplyPreview();
+        PersistSettings();
+    }
+
+    /// <summary>Suwak rozmiaru kwadratowego łuku — środek zostaje w miejscu.</summary>
+    private void ProgressArcSizeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_settings is null || _loadingProgress || sender is not Slider slider) return;
+        var size = (int)Math.Clamp(Math.Round(slider.Value), 24, ScreenSize - 24);
+        ProgressArcSizeValue.Text = $"{size} px";
+        var cx = _settings.X + _settings.W / 2.0;
+        var cy = _settings.Y + _settings.H / 2.0;
+        var x = (int)Math.Clamp(cx - size / 2.0, 0, ScreenSize - size);
+        var y = (int)Math.Clamp(cy - size / 2.0, 0, ScreenSize - size);
+        if (x == _settings.X && y == _settings.Y && size == _settings.W && size == _settings.H) return;
+        _settings.X = x;
+        _settings.Y = y;
+        _settings.W = size;
+        _settings.H = size;
+        if (_frames.TryGetValue(_selectedLayerId ?? "", out var view))
+        {
+            view.Layer.X = x;
+            view.Layer.Y = y;
+            view.Layer.W = size;
+            view.Layer.H = size;
+        }
+        ApplyPreview();
+        PersistSettings();
+    }
+
+    /// <summary>Wpisywanie wymiarów paska (szerokość i wysokość w px).</summary>
+    private void ProgressSize_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_settings is null || _loadingProgress || sender is not NumberBox box || double.IsNaN(box.Value)) return;
+        var width = _settings.W;
+        var height = _settings.H;
+        var x = _settings.X;
+        var y = _settings.Y;
+        if (box == ProgressWidthBox)
+            width = (int)Math.Clamp(box.Value, 24, ScreenSize - _settings.X);
+        else if (box == ProgressHeightBox)
+            height = (int)Math.Clamp(box.Value, 24, ScreenSize - _settings.Y);
+        else return;
+        if (width == _settings.W && height == _settings.H && x == _settings.X && y == _settings.Y) return;
+        _settings.X = x;
+        _settings.Y = y;
+        _settings.W = width;
+        _settings.H = height;
+        if (_frames.TryGetValue(_selectedLayerId ?? "", out var view))
+        {
+            view.Layer.X = x;
+            view.Layer.Y = y;
+            view.Layer.W = width;
+            view.Layer.H = height;
+        }
+        ApplyPreview();
+        PersistSettings();
+    }
+
+    /// <summary>Wybór koloru identyczny jak dla zwykłego tekstu — ten sam ColorPicker i swatch.</summary>
+    private void ProgressColorButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_settings is null || sender is not Button button) return;
+        var track = button == ProgressTrackColorButton;
+        var p = _settings.Progress;
+        var picker = new ColorPicker { Color = ParseArgb(track ? p.TrackColor : p.Color) };
+        picker.ColorChanged += (_, args) =>
+        {
+            if (_settings is null) return;
+            var c = args.NewColor;
+            var hex = $"0x{c.A:X2}{c.R:X2}{c.G:X2}{c.B:X2}";
+            if (track) _settings.Progress.TrackColor = hex;
+            else _settings.Progress.Color = hex;
+            UpdateProgressColorUI();
+            ApplyPreview();
+            PersistSettings();
+        };
+        new Flyout { Content = picker }.ShowAt(button);
+    }
+
+    private void ProgressCheck_Click(object sender, RoutedEventArgs e)
+    {
+        if (_settings is null || _loadingProgress || sender is not CheckBox box) return;
+        if (box == ProgressRoundedCheckBox)
+        {
+            _settings.Progress.Corner = box.IsChecked == true ? "round" : "flat";
+        }
+        else if (box == ProgressTrackCheckBox)
+            _settings.Progress.ShowTrack = box.IsChecked == true;
+        else return;
+        ApplyPreview();
+        PersistSettings();
+    }
 
     /// <summary>Teksty czytane z czujnika/firmware'u: bateria i pola pogody (bez ikony).</summary>
     private static bool IsSensorTextKind(string? kind)
@@ -3030,6 +3546,25 @@ public sealed partial class MainWindow : Window
             imageFit = _settings.ImageFit,
             weatherDayOffset = _settings.WeatherDayOffset,
             sleepStageMode = _settings.SleepStageMode,
+            progress = new
+            {
+                source = _settings.Progress.Source,
+                min = _settings.Progress.Min,
+                max = _settings.Progress.Max,
+                value = _settings.Progress.Value,
+                color = _settings.Progress.Color,
+                trackColor = _settings.Progress.TrackColor,
+                thickness = _settings.Progress.Thickness,
+                startAngle = _settings.Progress.StartAngle,
+                endAngle = _settings.Progress.EndAngle,
+                corner = _settings.Progress.Corner,
+                radius = _settings.Progress.Radius,
+                segments = _settings.Progress.Segments,
+                gap = _settings.Progress.Gap,
+                orientation = _settings.Progress.Orientation,
+                invert = _settings.Progress.Invert,
+                showTrack = _settings.Progress.ShowTrack,
+            },
             deferAssets,
         });
         var raw = RustNative.SetWidget(_projectFile, payload, out var error);
@@ -3188,6 +3723,7 @@ public sealed partial class MainWindow : Window
         target.CapSrc = source.CapSrc;
         target.WeatherDayOffset = source.WeatherDayOffset;
         target.SleepStageMode = source.SleepStageMode;
+        target.Progress = source.Progress;
     }
 
     private static Color ParseArgb(string value)
@@ -4090,11 +4626,29 @@ public sealed partial class MainWindow : Window
         "sleep" => L("LayerSleep"),
         "calories" => L("LayerCalories"),
         "spo2" => L("LayerSpo2"),
+        "battery" => L("LayerBattery"),
+        "fat-burning" => L("LayerFatBurning"),
         "lunar-date" => L("LayerLunarDate"),
         "festival" => L("LayerFestival"),
         "world-clock" => L("LayerWorldClock"),
         "weather-current" => L("LayerWeatherCurrent"),
         _ => kind,
+    };
+
+    /// <summary>Realistyczna domyślna wartość źródła progressu (placeholder w Custom Data).</summary>
+    private static string ProgressSourceDefaultText(string source) => source switch
+    {
+        "steps" => "16000",
+        "distance" => "12.3",
+        "heart" => "72",
+        "calories" => "430",
+        "stand" => "8",
+        "fat-burning" => "32",
+        "pai" => "42",
+        "spo2" => "97",
+        "sleep" => "425",
+        "fixed" => "50",
+        _ => "73",
     };
 
     /// <summary>Buduje pola na nowo przy każdym otwarciu — lista widgetów mogła się zmienić.</summary>
@@ -4111,8 +4665,22 @@ public sealed partial class MainWindow : Window
         var hasDate = kinds.Contains("date") || kinds.Any(IsDateFieldKind);
         var hasWeather = kinds.Any(IsWeatherKind);
         var sensorKinds = kinds.Where(kind => CustomValueKeyForKind(kind) is not null).ToList();
+        // Widgety postępu nie mają własnego kindu w CustomValueKeyForKind —
+        // ich pole wynika z wybranego źródła (np. bateria = 73%).
+        var dataFields = new Dictionary<string, (string Label, string Fallback)>();
+        foreach (var kind in sensorKinds)
+        {
+            var key = CustomValueKeyForKind(kind)!;
+            dataFields[key] = (CustomLayerLabel(kind), _layers.FirstOrDefault(l => l.Kind == kind)?.Text ?? "");
+        }
+        foreach (var layer in _layers.Where(layer => IsProgressKind(layer.Kind)))
+        {
+            var source = layer.Progress?.Source;
+            if (string.IsNullOrWhiteSpace(source) || source == "fixed" || dataFields.ContainsKey(source)) continue;
+            dataFields[source] = (CustomLayerLabel(source), ProgressSourceDefaultText(source));
+        }
 
-        if (!hasTime && !hasDate && !hasWeather && sensorKinds.Count == 0)
+        if (!hasTime && !hasDate && !hasWeather && dataFields.Count == 0)
         {
             CustomDataFieldsPanel.Children.Add(new TextBlock
             {
@@ -4147,16 +4715,12 @@ public sealed partial class MainWindow : Window
                     AddCustomFirstDay(body);
             });
         }
-        if (sensorKinds.Count > 0)
+        if (dataFields.Count > 0)
         {
             AddCustomGroup("CustomDataGroupValues", body =>
             {
-                foreach (var kind in sensorKinds)
-                {
-                    var key = CustomValueKeyForKind(kind)!;
-                    var fallback = _layers.FirstOrDefault(layer => layer.Kind == kind)?.Text ?? "";
-                    AddCustomText(body, CustomLayerLabel(kind), key, fallback);
-                }
+                foreach (var field in dataFields)
+                    AddCustomText(body, field.Value.Label, field.Key, field.Value.Fallback);
             });
         }
         if (hasWeather)

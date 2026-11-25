@@ -128,6 +128,22 @@ pub fn validate(project: &Project) -> Vec<String> {
                     }
                 }
             }
+            WidgetKind::ArcProgress | WidgetKind::BarProgress => {
+                match &widget.progress {
+                    None => errors.push(format!("Widget postępu '{}' nie ma ustawień", widget.id)),
+                    Some(progress) => {
+                        if progress.segments == 0 || progress.segments > 24 {
+                            errors.push(format!("Widget postępu '{}' ma nieprawidłową liczbę segmentów", widget.id));
+                        }
+                        if progress.thickness == 0 || progress.thickness > 233 {
+                            errors.push(format!("Widget postępu '{}' ma nieprawidłową grubość", widget.id));
+                        }
+                        if !valid_color(&progress.color) || !valid_color(&progress.track_color) {
+                            errors.push(format!("Widget postępu '{}' ma nieprawidłowy kolor", widget.id));
+                        }
+                    }
+                }
+            }
             WidgetKind::StatusIcon => {
                 if widget.status_icon_set.is_none() || widget.status_type.is_none() {
                     errors.push(format!(

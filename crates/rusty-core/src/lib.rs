@@ -1489,6 +1489,168 @@ mod tests {
     }
 
     #[test]
+    fn progress_widgets_generate_native_arc_and_bar() {
+        for kind in ["arc-progress", "bar-progress"] {
+            let entry = widgets::supported_widgets()
+                .into_iter()
+                .find(|item| item.kind == kind)
+                .unwrap_or_else(|| panic!("missing {kind}"));
+            assert_eq!(entry.category, widgets::CATEGORY_PROGRESS);
+        }
+        let mut project = Project::starter("Progress");
+        let arc = widgets::add_widget(&mut project, "arc-progress").unwrap();
+        let bar = widgets::add_widget(&mut project, "bar-progress").unwrap();
+        assert!(arc.progress.is_some() && bar.progress.is_some());
+        assert!(validate(&project).is_empty());
+
+        let arc_settings = serde_json::json!({
+            "id": arc.id,
+            "x": 33, "y": 33, "w": 400, "h": 400,
+            "alpha": 255,
+            "progress": {
+                "source": "steps", "min": 0, "max": 10000,
+                "color": "0xFF00FF00", "trackColor": "0xFF333333",
+                "thickness": 20, "startAngle": -135, "endAngle": 135,
+                "corner": "round", "segments": 4, "gap": 6, "showTrack": true
+            }
+        });
+        let updated = widgets::update_widget(&mut project, &arc_settings).unwrap();
+        let p = updated.progress.unwrap();
+        assert_eq!(p.segments, 4);
+        assert_eq!(p.gap, 6);
+        assert_eq!(p.source, crate::model::ProgressSource::Steps);
+
+        let js = codegen::generate_index_js(&project);
+        for token in [
+            "hmUI.widget.ARC_PROGRESS",
+            "hmUI.widget.FILL_RECT",
+            "corner_flag: 0",
+            "_progApply_",
+            "_createProgSensor('STEP')",
+            "view.fill.setProperty(hmUI.prop.MORE",
+            "Math.round(420 * v)",
+            "hmUI.show_level.ONLY_NORMAL",
+        ] {
+            assert!(js.contains(token), "generated JS lacks {token}");
+        }
+        // Regresja: wcześniej generowało się `Math.round(w * v)` bez zdefiniowanego `w`.
+        assert!(!js.contains("Math.round(w * v)"));
+        assert!(!js.contains("view.segments"));
+        assert!(!js.contains("@zos/ui"));
+        assert!(!js.contains("new Date"));
+    }
+
+    #[test]
+    fn progress_defaults_are_full_circle_and_rounded() {
+        let mut project = Project::starter("Defaults");
+        let arc = widgets::add_widget(&mut project, "arc-progress").unwrap();
+        let bar = widgets::add_widget(&mut project, "bar-progress").unwrap();
+        let defaults = arc.progress.as_ref().unwrap();
+        assert_eq!(defaults.start_angle, 0);
+        assert_eq!(defaults.end_angle, 360);
+        assert_eq!(defaults.corner, crate::model::ProgressCorner::Round);
+        assert_eq!(bar.progress.as_ref().unwrap().orientation, crate::model::ProgressOrientation::Horizontal);
+        assert!(validate(&project).is_empty());
+
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("start_angle: 0, end_angle: 360"), "default arc must be a full circle: {js}");
+        assert!(js.contains("corner_flag: 0"));
+
+        let flat = serde_json::json!({
+            "id": bar.id,
+            "x": 23, "y": 203, "w": 420, "h": 60,
+            "progress": { "corner": "flat" },
+        });
+        widgets::update_widget(&mut project, &flat).unwrap();
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("radius: 0"), "flat bar must have no corner radius: {js}");
+        let flat_arc = serde_json::json!({
+            "id": arc.id,
+            "x": 33, "y": 33, "w": 400, "h": 400,
+            "progress": { "corner": "flat" },
+        });
+        widgets::update_widget(&mut project, &flat_arc).unwrap();
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("corner_flag: 3"), "flat arc must disable rounded ends: {js}");
+    }
+
+    #[test]
+    fn arc_thickness_keeps_center_radius_fixed() {
+        let mut project = Project::starter("Thickness");
+        let widget = widgets::add_widget(&mut project, "arc-progress").unwrap();
+        let base = serde_json::json!({
+            "id": widget.id,
+            "x": 33, "y": 33, "w": 400, "h": 400,
+            "progress": { "thickness": 16 },
+        });
+        widgets::update_widget(&mut project, &base).unwrap();
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("radius: 190"), "center radius for 400px frame: {js}");
+        assert!(js.contains("line_width: 16"));
+
+        // Grubsza linia przesuwa środek do wewnątrz, ale krawędź zewnętrzna
+        // pozostaje w ramce (2 px marginesu) — niebieski obrys jej nie tnie.
+        let thick = serde_json::json!({
+            "id": widget.id,
+            "x": 33, "y": 33, "w": 400, "h": 400,
+            "progress": { "thickness": 40 },
+        });
+        widgets::update_widget(&mut project, &thick).unwrap();
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("radius: 190"), "center must stay fixed: {js}");
+        assert!(js.contains("line_width: 40"));
+        assert!(validate(&project).is_empty());
+    }
+
+    #[test]
+    fn progress_colours_reach_export_and_preview_frames() {
+        let mut project = Project::starter("Colours");
+        let bar = widgets::add_widget(&mut project, "bar-progress").unwrap();
+        let settings = serde_json::json!({
+            "id": bar.id,
+            "x": 183, "y": 220, "w": 100, "h": 20,
+            "progress": {
+                "color": "0xFF112233",
+                "trackColor": "0xFF445566",
+                "corner": "flat",
+                "showTrack": true
+            }
+        });
+        widgets::update_widget(&mut project, &settings).unwrap();
+        assert!(validate(&project).is_empty());
+
+        // JS na zegarku musi dostać oba kolory.
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("color: 0xFF112233"), "fill colour missing: {js}");
+        assert!(js.contains("color: 0xFF445566"), "track colour missing: {js}");
+
+        // Klatki PNG/GIF używają tych samych kolorów.
+        let series = preview::random_series(1234, "en");
+        let full = preview::frame_data(0, &series).unwrap();
+        let image = preview::render_frame(std::path::Path::new("."), &project, &full, &series);
+        assert_eq!(image.get_pixel(188, 230).0, [17, 34, 51, 255]);
+
+        let low = preview::frame_data(6, &series).unwrap();
+        let image = preview::render_frame(std::path::Path::new("."), &project, &low, &series);
+        assert_eq!(image.get_pixel(270, 230).0, [68, 85, 102, 255]);
+    }
+
+    #[test]
+    fn square_bar_roundness_becomes_a_circle() {
+        let mut project = Project::starter("SquareBar");
+        let widget = widgets::add_widget(&mut project, "bar-progress").unwrap();
+        let settings = serde_json::json!({
+            "id": widget.id,
+            "x": 100, "y": 100, "w": 150, "h": 150,
+            "progress": { "corner": "round", "radius": 100 },
+        });
+        widgets::update_widget(&mut project, &settings).unwrap();
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("radius: 75"), "150px square must clamp radius to 75: {js}");
+        assert!(validate(&project).is_empty());
+    }
+
+    #[test]
     fn health_widget_can_hide_its_unit() {
         let mut project = Project::starter("Units");
         let heart = widgets::add_widget(&mut project, "heart").unwrap();

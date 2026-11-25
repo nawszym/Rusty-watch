@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use serde_json::json;
 
 use crate::locale::WatchfaceLocale;
-use crate::model::{Align, DataSource, Project, StatusType, Widget, WidgetKind};
+use crate::model::{
+    Align, DataSource, ProgressSettings, ProgressSource, Project, StatusType, Widget, WidgetKind,
+};
 use crate::time_format;
 
 /// Czujnik zdrowotny obsługiwany przez wspólny mechanizm w generowanym JS.
@@ -457,6 +459,215 @@ pub fn generate_app_js() -> String {
 "#.replace('\n', "\r\n")
 }
 
+/// Ustawienia postępu są zawsze zapisane w `Widget::progress`.
+fn progress_of(w: &Widget) -> &ProgressSettings {
+    w.progress
+        .as_ref()
+        .expect("progress widget without settings")
+}
+
+/// Parametry `ARC_PROGRESS` współdzielone przez `createWidget` i `setProperty`.
+fn arc_params(p: &ProgressSettings, cx: i32, cy: i32, radius: i32, color: &str, level: &str) -> String {
+    format!(
+        "center_x: {cx}, center_y: {cy}, radius: {radius}, start_angle: {}, end_angle: {}, line_width: {}, color: {color}, corner_flag: {}, level: {level}, show_level: {}",
+        p.start_angle, p.end_angle, p.thickness, p.corner.corner_flag(), JS_SHOW_LEVEL
+    )
+}
+
+/// Promień rogów paska — „Zaokrąglone końce" wyłączone oznacza radius 0.
+fn progress_radius(w: &Widget, p: &ProgressSettings) -> u32 {
+    if p.corner.as_str() == "flat" {
+        0
+    } else {
+        // Zaokrąglenia są włączone lub wyłączone — kwadrat staje się kołem.
+        w.w.min(w.h).max(0) as u32 / 2
+    }
+}
+
+/// Parametry `FILL_RECT` współdzielone przez `createWidget` i `setProperty`.
+fn rect_params(x: i32, y: i32, w: i32, h: i32, color: &str, radius: u32) -> String {
+    format!(
+        "x: {x}, y: {y}, w: {w}, h: {h}, color: {color}, radius: {radius}, show_level: {}",
+        JS_SHOW_LEVEL
+    )
+}
+
+/// Geometria łuku wyliczona z ramki widgetu (zachowuje kwadrat `w == h`).
+fn arc_geometry(w: &Widget) -> (i32, i32, i32) {
+    let cx = w.x + w.w / 2;
+    let cy = w.y + w.h / 2;
+    let radius = crate::model::arc_center_radius(w.w, w.h);
+    (cx, cy, radius)
+}
+
+/// Getter czujnika dla wybranego źródła postępu (bez duplikowania ticków tekstu).
+fn progress_sensor_id(source: ProgressSource) -> Option<&'static str> {
+    match source {
+        ProgressSource::Battery => Some("BATTERY"),
+        ProgressSource::Steps => Some("STEP"),
+        ProgressSource::Distance => Some("DISTANCE"),
+        ProgressSource::Heart => Some("HEART"),
+        ProgressSource::Calories => Some("CALORIE"),
+        ProgressSource::Stand => Some("STAND"),
+        ProgressSource::FatBurning => Some("FAT_BURRING"),
+        ProgressSource::Pai => Some("PAI"),
+        ProgressSource::Spo2 => Some("SPO2"),
+        ProgressSource::Sleep => Some("SLEEP"),
+        ProgressSource::Fixed => None,
+    }
+}
+
+/// Funkcja zwracająca postęp 0…1 dla jednego widgetu.
+fn progress_value_fn(index: usize, w: &Widget) -> String {
+    let p = progress_of(w);
+    let mut out = format!("let _progSensor_{index} = null\nfunction _progValue_{index}() {{\n");
+    match p.source {
+        ProgressSource::Fixed => {
+            out.push_str(&format!("  return {}\n", (p.value / 100.0).clamp(0.0, 1.0)));
+        }
+        ProgressSource::Sleep => {
+            out.push_str(&format!(
+                "  const s = _progSensor_{index} || (_progSensor_{index} = _createProgSensor('SLEEP'))\n"
+            ));
+            out.push_str("  let raw = 0\n  if (s && s.getTotalTime) { try { raw = s.getTotalTime() || 0 } catch (e) { raw = 0 } }\n");
+            out.push_str("  let hi = 100\n  try { if (typeof hmSetting !== 'undefined' && hmSetting.getSleepTarget) hi = hmSetting.getSleepTarget() || 100 } catch (e) { hi = 100 }\n");
+            out.push_str(&format!("  const lo = {}\n", p.min));
+        }
+        source => {
+            let id = progress_sensor_id(source).unwrap();
+            let field = match source {
+                ProgressSource::Pai => "dailypai",
+                _ => "current",
+            };
+            out.push_str(&format!(
+                "  const s = _progSensor_{index} || (_progSensor_{index} = _createProgSensor('{id}'))\n"
+            ));
+            out.push_str(&format!("  const raw = s ? (s.{field} || 0) : 0\n"));
+            let hi = if p.max > p.min {
+                p.max.to_string()
+            } else if matches!(
+                source,
+                ProgressSource::Steps
+                    | ProgressSource::Calories
+                    | ProgressSource::Stand
+                    | ProgressSource::FatBurning
+            ) {
+                "(s && s.target ? s.target : 100)".to_string()
+            } else {
+                "100".to_string()
+            };
+            out.push_str(&format!("  const lo = {}, hi = {}\n", p.min, hi));
+        }
+    }
+    out.push_str("  let v = hi > lo ? (raw - lo) / (hi - lo) : 0\n");
+    if p.invert {
+        out.push_str("  v = 1 - v\n");
+    }
+    out.push_str("  return v < 0 ? 0 : (v > 1 ? 1 : v)\n}\n");
+    out
+}
+
+/// Funkcja aktualizująca widgety postępu ( Continuous lub segmenty ).
+fn progress_apply_fn(index: usize, w: &Widget) -> String {
+    let p = progress_of(w);
+    let alpha = if w.alpha < 255 {
+        format!("alpha: {}, ", w.alpha)
+    } else {
+        String::new()
+    };
+    let mut out = format!(
+        "function _progApply_{index}() {{\n  const view = refs[{index}]\n  if (!view) return\n  const v = _progValue_{index}()\n"
+    );
+    if w.kind == WidgetKind::ArcProgress {
+        let (cx, cy, radius) = arc_geometry(w);
+        let params = arc_params(p, cx, cy, radius, &p.color, "Math.round(v * 100)");
+        out.push_str(&format!(
+            "  if (view.fill) view.fill.setProperty(hmUI.prop.MORE, {{ {alpha}{params} }})\n"
+        ));
+    } else {
+        // Wszystkie wymiary są literałami z ramki — w JS nie ma zmiennych
+        // `x`, `y`, `w`, `h`. Stąd wcześniejszy ReferenceError i pusty pasek.
+        let (x, y, bw, bh) = match p.orientation {
+            crate::model::ProgressOrientation::Horizontal => (
+                w.x.to_string(),
+                w.y.to_string(),
+                format!("Math.round({} * v)", w.w),
+                w.h.to_string(),
+            ),
+            crate::model::ProgressOrientation::Vertical => (
+                w.x.to_string(),
+                format!("{} + {} - Math.round({} * v)", w.y, w.h, w.h),
+                w.w.to_string(),
+                format!("Math.round({} * v)", w.h),
+            ),
+        };
+        let params = rect_params_js(&x, &y, &bw, &bh, &p.color, progress_radius(w, p), &alpha);
+        out.push_str(&format!(
+            "  if (view.fill) view.fill.setProperty(hmUI.prop.MORE, {{ {params} }})\n"
+        ));
+    }
+    out.push_str("}\n");
+    out
+}
+
+/// `rect_params` z wyrażeniami JS zamiast stałych (używane przy aktualizacji paska).
+fn rect_params_js(
+    x: &str,
+    y: &str,
+    bw: &str,
+    bh: &str,
+    color: &str,
+    radius: u32,
+    alpha: &str,
+) -> String {
+    format!(
+        "{alpha}x: {x}, y: {y}, w: {bw}, h: {bh}, color: {color}, radius: {radius}, show_level: {}",
+        JS_SHOW_LEVEL
+    )
+}
+
+/// `createWidget` dla łuku/paska — zwraca obiekt z podkładem, wypełnieniem
+/// i tablicą segmentów (analogicznie do grupy wskazówek).
+fn progress_widget_call(w: &Widget) -> String {
+    let p = progress_of(w);
+    let alpha = if w.alpha < 255 {
+        format!("alpha: {}, ", w.alpha)
+    } else {
+        String::new()
+    };
+    let mut parts = Vec::new();
+    if p.show_track {
+        let track = if w.kind == WidgetKind::ArcProgress {
+            let (cx, cy, radius) = arc_geometry(w);
+            format!(
+                "hmUI.createWidget(hmUI.widget.ARC_PROGRESS, {{ {alpha}{} }})",
+                arc_params(p, cx, cy, radius, &p.track_color, "100")
+            )
+        } else {
+            format!(
+                "hmUI.createWidget(hmUI.widget.FILL_RECT, {{ {alpha}{} }})",
+                rect_params(w.x, w.y, w.w, w.h, &p.track_color, progress_radius(w, p))
+            )
+        };
+        parts.push(format!("track: {track}"));
+    }
+    // Zawsze jedno ciągłe wypełnienie — segmenty nie są już opcją w edytorze.
+    let fill = if w.kind == WidgetKind::ArcProgress {
+        let (cx, cy, radius) = arc_geometry(w);
+        format!(
+            "hmUI.createWidget(hmUI.widget.ARC_PROGRESS, {{ {alpha}{} }})",
+            arc_params(p, cx, cy, radius, &p.color, "0")
+        )
+    } else {
+        format!(
+            "hmUI.createWidget(hmUI.widget.FILL_RECT, {{ {alpha}{} }})",
+            rect_params(w.x, w.y, 0, w.h, &p.color, progress_radius(w, p))
+        )
+    };
+    parts.push(format!("fill: {fill}"));
+    format!("{{ {} }}", parts.join(", "))
+}
+
 /// Generuje `watchface/index.js` zgodnie z oficjalnym Watchface API (`hmUI`).
 ///
 /// `createWidget` z modułu `@zos/ui` przeznaczony jest dla Mini Program i nie
@@ -539,6 +750,11 @@ pub fn generate_index_js_with_hands(
                 .collect();
             Some((index, names.join(", "), w.weather_day_offset.min(4)))
         })
+        .collect();
+    let progress_widgets: Vec<(usize, &Widget)> = widgets
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| matches!(w.kind, WidgetKind::ArcProgress | WidgetKind::BarProgress))
         .collect();
     let sleep_target_indexes: Vec<usize> = widgets
         .iter()
@@ -683,6 +899,16 @@ pub fn generate_index_js_with_hands(
             "  return String(Math.floor(left / 60)) + ':' + String(left % 60).padStart(2, '0')\n",
             "}\n"
         ));
+    }
+    if !progress_widgets.is_empty() {
+        prelude.push_str("let progressTick = null\n");
+        prelude.push_str("function _createProgSensor(id) {\n");
+        prelude.push_str("  if (!hmSensor || !hmSensor.createSensor || !hmSensor.id || !hmSensor.id[id]) return null\n");
+        prelude.push_str("  try { return hmSensor.createSensor(hmSensor.id[id]) } catch (e) { return null }\n}\n");
+        for (index, w) in &progress_widgets {
+            prelude.push_str(&progress_value_fn(*index, w));
+            prelude.push_str(&progress_apply_fn(*index, w));
+        }
     }
     // Brak czujnika kroków nie może położyć całej tarczy — izolujemy jego
     // utworzenie i pozostawiamy tekst początkowy („0"), gdy API go nie udostępnia.
@@ -1068,6 +1294,16 @@ pub fn generate_index_js_with_hands(
             ));
         }
     }
+    if !progress_widgets.is_empty() {
+        let calls: Vec<String> = progress_widgets
+            .iter()
+            .map(|(index, _)| format!("_progApply_{index}()"))
+            .collect();
+        out.push_str(&format!(
+            "      progressTick = () => {{ {} }}\n      progressTick()\n",
+            calls.join("; ")
+        ));
+    }
 
     out.push_str("      tick = () => {\n");
     out.push_str("        const t = _getTime()\n");
@@ -1399,6 +1635,9 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
             JS_SHOW_LEVEL
         );
     }
+    if matches!(w.kind, WidgetKind::ArcProgress | WidgetKind::BarProgress) {
+        return progress_widget_call(w);
+    }
     let mut props = String::new();
     let pad = "      ";
     props.push_str(&format!("{pad}x: {},\n", w.x));
@@ -1495,6 +1734,9 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
         WidgetKind::StatusIcon | WidgetKind::AnalogTime => {
             unreachable!("image widgets are handled above")
         }
+        WidgetKind::ArcProgress | WidgetKind::BarProgress => {
+            unreachable!("progress widgets are handled above")
+        }
     }
 
     if w.alpha < 255 {
@@ -1563,6 +1805,9 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
             WidgetKind::StatusIcon | WidgetKind::AnalogTime => {
                 unreachable!("image widgets are handled above")
             }
+            WidgetKind::ArcProgress | WidgetKind::BarProgress => {
+                unreachable!("progress widgets are handled above")
+            }
         },
         props
     )
@@ -1573,6 +1818,9 @@ fn update_line(
     w: &Widget,
     default_system: crate::model::MeasurementSystem,
 ) -> Option<String> {
+    if matches!(w.kind, WidgetKind::ArcProgress | WidgetKind::BarProgress) {
+        return Some(format!("_progApply_{index}()"));
+    }
     if w.kind == WidgetKind::AnalogTime {
         let mut lines = Vec::new();
         if w.hour_src.is_some() {

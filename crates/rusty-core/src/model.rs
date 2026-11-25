@@ -183,6 +183,187 @@ fn default_alpha() -> u8 {
     255
 }
 
+/// Źródło wartości widgetu postępu (łuk/pasek). Wartość jest liczona w JS
+/// z istniejących czujników albo wpisana ręcznie (`fixed`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressSource {
+    #[default]
+    Battery,
+    Steps,
+    Distance,
+    Heart,
+    Calories,
+    Stand,
+    FatBurning,
+    Pai,
+    Spo2,
+    Sleep,
+    Fixed,
+}
+
+impl ProgressSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Battery => "battery",
+            Self::Steps => "steps",
+            Self::Distance => "distance",
+            Self::Heart => "heart",
+            Self::Calories => "calories",
+            Self::Stand => "stand",
+            Self::FatBurning => "fat-burning",
+            Self::Pai => "pai",
+            Self::Spo2 => "spo2",
+            Self::Sleep => "sleep",
+            Self::Fixed => "fixed",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "battery" => Some(Self::Battery),
+            "steps" => Some(Self::Steps),
+            "distance" => Some(Self::Distance),
+            "heart" => Some(Self::Heart),
+            "calories" => Some(Self::Calories),
+            "stand" => Some(Self::Stand),
+            "fat-burning" => Some(Self::FatBurning),
+            "pai" => Some(Self::Pai),
+            "spo2" => Some(Self::Spo2),
+            "sleep" => Some(Self::Sleep),
+            "fixed" => Some(Self::Fixed),
+            _ => None,
+        }
+    }
+}
+
+/// Sposób zaokrąglenia końców łuku (`corner_flag` w ZeppOS).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ProgressCorner {
+    #[default]
+    Round,
+    Flat,
+    Start,
+    End,
+}
+
+impl ProgressCorner {
+    /// 0/inny = oba końce, 1 = początek, 2 = koniec, 3 = brak (wg dokumentacji społeczności).
+    pub fn corner_flag(self) -> u8 {
+        match self {
+            Self::Round => 0,
+            Self::Start => 1,
+            Self::End => 2,
+            Self::Flat => 3,
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Round => "round",
+            Self::Flat => "flat",
+            Self::Start => "start",
+            Self::End => "end",
+        }
+    }
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "round" => Some(Self::Round),
+            "flat" => Some(Self::Flat),
+            "start" => Some(Self::Start),
+            "end" => Some(Self::End),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ProgressOrientation {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
+impl ProgressOrientation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Horizontal => "horizontal",
+            Self::Vertical => "vertical",
+        }
+    }
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "vertical" => Some(Self::Vertical),
+            _ => Some(Self::Horizontal),
+        }
+    }
+}
+
+/// Promień linii środkowej łuku zależy tylko od ramki — zmiana grubości
+/// rozszerza pierścień jednakowo do środka i na zewnątrz, bez przesuwania środka.
+/// Ewentualne wyjście poza ramkę jest rysowane (edytor nie przycina łuku).
+pub fn arc_center_radius(w: i32, h: i32) -> i32 {
+    (w.min(h) / 2 - 10).max(4)
+}
+
+/// O ile pikseli wykracza łuk poza ramkę widgetu przy danej grubości.
+pub fn arc_draw_margin(thickness: u32) -> i32 {
+    (thickness as i32 - 16).max(0) / 2 + 3
+}
+
+/// Wszystkie ustawienia wizualne i źródło danych widgetu postępu.
+/// Jedno pole w `Widget` zamiast kilkunastu osobnych — łatwy round-trip.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProgressSettings {
+    pub source: ProgressSource,
+    /// Wartość minimalna (dolna granica skali).
+    pub min: f32,
+    /// Wartość maksymalna; gdy <= min, generator używa 100 (albo `.target` czujnika).
+    pub max: f32,
+    /// Wartość dla źródła `fixed`.
+    pub value: f32,
+    pub color: String,
+    pub track_color: String,
+    pub thickness: u32,
+    pub start_angle: i32,
+    pub end_angle: i32,
+    pub corner: ProgressCorner,
+    /// Promień rogów paska (FILL_RECT.radius).
+    pub radius: u32,
+    /// Liczba segmentów; 1 = ciągły pasek/łuk.
+    pub segments: u8,
+    /// Przerwa: stopnie dla łuku, piksele dla paska.
+    pub gap: u32,
+    pub orientation: ProgressOrientation,
+    pub invert: bool,
+    pub show_track: bool,
+}
+
+impl Default for ProgressSettings {
+    fn default() -> Self {
+        Self {
+            source: ProgressSource::Battery,
+            min: 0.0,
+            max: 100.0,
+            value: 50.0,
+            color: "0xFF4FC3F7".to_string(),
+            track_color: "0xFF3A3A42".to_string(),
+            thickness: 16,
+            start_angle: 0,
+            end_angle: 360,
+            corner: ProgressCorner::Round,
+            radius: 8,
+            segments: 1,
+            gap: 4,
+            orientation: ProgressOrientation::Horizontal,
+            invert: false,
+            show_track: true,
+        }
+    }
+}
+
 /// Sposób prezentacji fazy snu: minuty albo udział procentowy całego snu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -328,6 +509,9 @@ pub struct Widget {
     /// Czas fazy snu w minutach albo jako % całego snu.
     #[serde(default)]
     pub sleep_stage_mode: SleepStageMode,
+    /// Ustawienia widgetu postępu (łuk/pasek). Starsze projekty ich nie mają.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ProgressSettings>,
 }
 
 /// Stan systemu wyświetlany przez `hmUI.widget.IMG_STATUS`.
@@ -498,6 +682,10 @@ pub enum WidgetKind {
     StatusIcon,
     /// Zegar analogowy: kilka widgetów `IMG` obracanych wokół środka tarczy.
     AnalogTime,
+    /// Łuk postępu: `hmUI.widget.ARC_PROGRESS` (podkład + wartość lub segmenty).
+    ArcProgress,
+    /// Pasek postępu: `hmUI.widget.FILL_RECT` z zaokrąglonymi rogami.
+    BarProgress,
 }
 
 impl WidgetKind {
@@ -883,7 +1071,9 @@ impl Project {
                     weather_icon_set: None,
                 weather_day_offset: 0,
                 sleep_stage_mode: Default::default(),
-                },
+                progress: None,
+                }
+,
             ],
             custom_code: None,
             measurement_system: MeasurementSystem::Watch,

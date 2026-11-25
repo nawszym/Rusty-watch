@@ -792,6 +792,132 @@
                                                   SelectionChanged="WeatherDayCombo_SelectionChanged" />
                                     </StackPanel>
 
+                                    <!-- Ustawienia łuku i paska postępu — tylko opcje widoczne
+                                         w inspektorze: źródło, grubość/promień, kąty (łuk),
+                                         kolory, podkład i zaokrąglenia. -->
+                                    <StackPanel x:Name="ProgressSettingsPanel" Spacing="6" Visibility="Collapsed">
+                                        <TextBlock Text="{Binding Strings[ProgressSourceLabel]}" FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <ComboBox x:Name="ProgressSourceCombo" HorizontalAlignment="Stretch"
+                                                  DisplayMemberPath="Name"
+                                                  SelectionChanged="ProgressCombo_SelectionChanged" />
+
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{Binding Strings[ProgressThicknessLabel]}" FontSize="11"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <muxc:NumberBox x:Name="ProgressThicknessBox" Minimum="1" Maximum="233"
+                                                            SpinButtonPlacementMode="Compact"
+                                                            ValueChanged="ProgressNumber_ValueChanged" />
+                                        </StackPanel>
+
+                                        <!-- Łuk jest kwadratem — jeden suwak SIZE z wartością. -->
+                                        <StackPanel x:Name="ProgressArcSizePanel" Spacing="2" Visibility="Collapsed">
+                                            <Grid>
+                                                <TextBlock Text="{Binding Strings[ProgressSizeLabel]}" FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock x:Name="ProgressArcSizeValue" Text="0 px" FontSize="11"
+                                                           HorizontalAlignment="Right"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </Grid>
+                                            <Slider x:Name="ProgressArcSizeSlider" Minimum="24" Maximum="466"
+                                                    TickFrequency="1" StepFrequency="1"
+                                                    ValueChanged="ProgressArcSizeSlider_ValueChanged" />
+                                        </StackPanel>
+
+                                        <!-- Pasek ma osobne wymiary. -->
+                                        <StackPanel x:Name="ProgressBarSizePanel" Spacing="6" Visibility="Collapsed">
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Spacing="2">
+                                                    <TextBlock Text="{Binding Strings[ProgressWidthLabel]}" FontSize="11"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <muxc:NumberBox x:Name="ProgressWidthBox" Minimum="24" Maximum="466"
+                                                                    SpinButtonPlacementMode="Compact"
+                                                                    ValueChanged="ProgressSize_ValueChanged" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" Spacing="2">
+                                                    <TextBlock Text="{Binding Strings[ProgressHeightLabel]}" FontSize="11"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <muxc:NumberBox x:Name="ProgressHeightBox" Minimum="24" Maximum="466"
+                                                                    SpinButtonPlacementMode="Compact"
+                                                                    ValueChanged="ProgressSize_ValueChanged" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </StackPanel>
+
+                                        <StackPanel x:Name="ProgressAnglePanel" Spacing="6">
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Spacing="2">
+                                                    <TextBlock Text="{Binding Strings[ProgressStartAngleLabel]}" FontSize="11"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <muxc:NumberBox x:Name="ProgressStartAngleBox" Minimum="-360" Maximum="360"
+                                                                    SpinButtonPlacementMode="Compact"
+                                                                    ValueChanged="ProgressNumber_ValueChanged" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" Spacing="2">
+                                                    <TextBlock Text="{Binding Strings[ProgressEndAngleLabel]}" FontSize="11"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <muxc:NumberBox x:Name="ProgressEndAngleBox" Minimum="-360" Maximum="360"
+                                                                    SpinButtonPlacementMode="Compact"
+                                                                    ValueChanged="ProgressNumber_ValueChanged" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </StackPanel>
+
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0" Spacing="4">
+                                                <TextBlock Text="{Binding Strings[ProgressColorLabel]}" FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <Button x:Name="ProgressColorButton" Click="ProgressColorButton_Click"
+                                                        HorizontalAlignment="Stretch"
+                                                        HorizontalContentAlignment="Left">
+                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                        <Border x:Name="ProgressColorSwatch" Width="26" Height="16" CornerRadius="3"
+                                                                Background="White"
+                                                                BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                                                BorderThickness="1" />
+                                                        <TextBlock x:Name="ProgressColorValue" Text="#FFFFFFFF" FontSize="10"
+                                                                   VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Button>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Spacing="4">
+                                                <TextBlock Text="{Binding Strings[ProgressTrackColorLabel]}" FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <Button x:Name="ProgressTrackColorButton" Click="ProgressColorButton_Click"
+                                                        HorizontalAlignment="Stretch"
+                                                        HorizontalContentAlignment="Left">
+                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                        <Border x:Name="ProgressTrackColorSwatch" Width="26" Height="16" CornerRadius="3"
+                                                                Background="White"
+                                                                BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                                                BorderThickness="1" />
+                                                        <TextBlock x:Name="ProgressTrackColorValue" Text="#FFFFFFFF" FontSize="10"
+                                                                   VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Button>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <CheckBox x:Name="ProgressRoundedCheckBox"
+                                                  Content="{Binding Strings[ProgressRoundedLabel]}"
+                                                  Click="ProgressCheck_Click" />
+                                        <CheckBox x:Name="ProgressTrackCheckBox"
+                                                  Content="{Binding Strings[ProgressShowTrackLabel]}"
+                                                  Click="ProgressCheck_Click" />
+                                    </StackPanel>
+
                                     <!-- Pozycja X i Y obok siebie. Wartość: jedno kliknięcie kopiuje,
                                          podwójne włącza edycję liczby. -->
                                     <Grid ColumnSpacing="12" Margin="0,12,0,0">

@@ -2827,6 +2827,60 @@ mod tests {
     }
 
     #[test]
+    fn progress_widgets_roundtrip_through_ffi() {
+        let catalog = take(rw_supported_widgets());
+        let kinds: Vec<&str> = catalog["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["category"] == "progress")
+            .map(|item| item["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, vec!["arc-progress", "bar-progress"]);
+
+        let root = std::env::temp_dir().join(format!("rw-ffi-progress-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let root_arg = CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        let name = CString::new("Progress").unwrap();
+        let author = CString::new("Dev").unwrap();
+        let created = take(rw_create_project(root_arg.as_ptr(), name.as_ptr(), author.as_ptr(), 97));
+        assert_eq!(created["ok"], true, "error: {}", created["error"]);
+        let file = created["data"]["file"].as_str().unwrap();
+        let project_file = CString::new(file).unwrap();
+
+        for kind in kinds {
+            let kind_arg = CString::new(kind).unwrap();
+            let added = take(rw_add_widget(
+                project_file.as_ptr(), kind_arg.as_ptr(), root_arg.as_ptr(),
+                root_arg.as_ptr(), root_arg.as_ptr(),
+            ));
+            assert_eq!(added["ok"], true, "kind={kind}: {}", added["error"]);
+        }
+
+        let payload = CString::new(
+            r#"{"id":"arc","x":33,"y":33,"w":400,"h":400,"alpha":255,"progress":{"source":"steps","min":0,"max":10000,"color":"0xFF00FF00","trackColor":"0xFF333333","thickness":20,"startAngle":-135,"endAngle":135,"corner":"round","radius":8,"segments":4,"gap":6,"orientation":"horizontal","invert":false,"showTrack":true}}"#,
+        )
+        .unwrap();
+        let updated = take(rw_set_widget(project_file.as_ptr(), payload.as_ptr(), root_arg.as_ptr()));
+        assert_eq!(updated["ok"], true, "error: {}", updated["error"]);
+
+        let project = rusty_core::load_project(Path::new(file)).unwrap();
+        let arc = project.widgets.iter().find(|w| w.id == "arc").unwrap();
+        let p = arc.progress.as_ref().unwrap();
+        assert_eq!(p.segments, 4);
+        assert_eq!(p.gap, 6);
+        assert_eq!(p.source, rusty_core::model::ProgressSource::Steps);
+        let js = rusty_core::codegen::generate_index_js(&project);
+        assert!(js.contains("hmUI.widget.ARC_PROGRESS"));
+        assert!(js.contains("hmUI.widget.FILL_RECT"));
+        assert!(js.contains("corner_flag: 0"));
+        assert!(rusty_core::validate(&project).is_empty());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn goal_widgets_roundtrip_through_ffi() {
         let value = take(rw_supported_widgets());
         assert_eq!(value["ok"], true);

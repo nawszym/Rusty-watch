@@ -27,7 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::layers::{describe, LayerView};
 use crate::locale::WatchfaceLocale;
-use crate::model::{MeasurementSystem, StatusType, SCREEN_SIZE};
+use crate::model::{MeasurementSystem, ProgressSource, StatusType, SCREEN_SIZE};
 use crate::{date_format, time_format};
 
 /// Liczba klatek animacji: 7 oryginalnych (poniedziałek–niedziela) oraz
@@ -1269,6 +1269,9 @@ pub fn render_frame(
                     layer.alpha,
                 );
             }
+            "arc-progress" | "bar-progress" => {
+                draw_progress(&mut canvas, &layer, frame);
+            }
             _ => {
                 let value = text_for_layer(&layer, frame, project, locale);
                 draw_text(&mut canvas, project_dir, &layer, &value);
@@ -1376,6 +1379,207 @@ fn paint_over(dst: &mut Rgba<u8>, color: Rgba<u8>, factor: f64) {
     dst.0[3] = (out_alpha * 255.0).round().clamp(0.0, 255.0) as u8;
 }
 
+/// Krycie prostokąta z zaokrąglonymi rogami (`FILL_RECT.radius`).
+fn rounded_rect_coverage(x: i32, y: i32, w: i32, h: i32, radius: u32, px: i32, py: i32) -> f64 {
+    if w <= 0 || h <= 0 || px < x || py < y || px >= x + w || py >= y + h {
+        return 0.0;
+    }
+    let r = (radius as i32).min(w.min(h) / 2).max(0);
+    if r == 0 {
+        return 1.0;
+    }
+    let cx = if px < x + r {
+        x + r
+    } else if px >= x + w - r {
+        x + w - r - 1
+    } else {
+        px
+    };
+    let cy = if py < y + r {
+        y + r
+    } else if py >= y + h - r {
+        y + h - r - 1
+    } else {
+        py
+    };
+    let distance = (((px - cx) as f64).powi(2) + ((py - cy) as f64).powi(2)).sqrt();
+    disc_coverage(r as f64, distance)
+}
+
+/// Krycie łuku o zadanym kącie (0° = góra, zgodnie z `ARC_PROGRESS`).
+fn arc_coverage(
+    cx: i32,
+    cy: i32,
+    radius: i32,
+    thickness: u32,
+    start: i32,
+    end: i32,
+    rounded: bool,
+    px: i32,
+    py: i32,
+) -> f64 {
+    let dx = px as f64 - cx as f64;
+    let dy = py as f64 - cy as f64;
+    let distance = (dx * dx + dy * dy).sqrt();
+    let cap = thickness as f64 / 2.0;
+    let ring = annulus_coverage(
+        distance,
+        radius as f64 - cap,
+        radius as f64 + cap,
+    );
+    if ring <= 0.0 {
+        return 0.0;
+    }
+    let span = {
+        let raw = (end - start) as f64;
+        if raw <= 0.0 || raw >= 360.0 { 360.0 } else { raw }
+    };
+    if span >= 360.0 {
+        // Zamknięty okrąg nie ma końców do zaokrąglenia.
+        return ring;
+    }
+    // Odwrotność `x = cx + r*sin(θ)`, `y = cy - r*cos(θ)` (0° = góra).
+    // `atan2(-dy, dx)` dawał inny układ niż kapki i odrywał je od łuku.
+    let angle = dx.atan2(-dy).to_degrees().rem_euclid(360.0);
+    let from = (start as f64).rem_euclid(360.0);
+    let delta = (angle - from).rem_euclid(360.0);
+    let angular = if delta <= span { ring } else { 0.0 };
+    if !rounded {
+        return angular;
+    }
+    // `ARC_PROGRESS` z corner_flag rysuje półokrągłe kapki na końcach łuku —
+    // edytor WinUI robi to samo przez StrokeStart/EndLineCap=Round. Dodajemy
+    // je do klatek PNG/GIF, żeby podgląd nie miał ostrych ściętych końców.
+    let mut cover = angular;
+    for degrees in [start as f64, end as f64] {
+        let radians = degrees.to_radians();
+        let cap_x = cx as f64 + radius as f64 * radians.sin();
+        let cap_y = cy as f64 - radius as f64 * radians.cos();
+        let cap_distance = ((px as f64 - cap_x).powi(2) + (py as f64 - cap_y).powi(2)).sqrt();
+        cover = cover.max(disc_coverage(cap, cap_distance));
+    }
+    cover
+}
+
+/// Wartość postępu 0…1 dla klatek podglądu — ta sama skala co w JS.
+fn progress_frame_value(layer: &LayerView, frame: &PreviewFrameData) -> f64 {
+    let Some(progress) = &layer.progress else { return 0.0 };
+    let raw = match progress.source {
+        ProgressSource::Battery => frame.battery_pct as f64,
+        ProgressSource::Steps => frame.steps as f64,
+        ProgressSource::Distance => frame.distance_m as f64,
+        ProgressSource::Heart => frame.heart_rate as f64,
+        ProgressSource::Calories => frame.calories as f64,
+        ProgressSource::Stand => frame.stand_hours as f64,
+        ProgressSource::FatBurning => frame.fat_burning_minutes as f64,
+        ProgressSource::Pai => frame.pai as f64,
+        ProgressSource::Spo2 => frame.spo2 as f64,
+        ProgressSource::Sleep => frame.sleep_minutes as f64,
+        ProgressSource::Fixed => progress.value as f64,
+    };
+    let lo = progress.min as f64;
+    let hi = if progress.max > progress.min {
+        progress.max as f64
+    } else {
+        match progress.source {
+            ProgressSource::Steps => frame.steps_target as f64,
+            ProgressSource::Calories => frame.calories_target as f64,
+            ProgressSource::Stand => frame.stand_target.max(1) as f64,
+            ProgressSource::FatBurning => frame.fat_burning_target.max(1) as f64,
+            _ => 100.0,
+        }
+    };
+    let mut value = if hi > lo { (raw - lo) / (hi - lo) } else { 0.0 };
+    if progress.invert {
+        value = 1.0 - value;
+    }
+    value.clamp(0.0, 1.0)
+}
+
+/// Rysuje łuk albo pasek postępu do klatki podglądu. Podkład i wypełnienie
+/// używają dokładnie tych samych parametrów, które trafiają do JS.
+fn draw_progress(canvas: &mut RgbaImage, layer: &LayerView, frame: &PreviewFrameData) {
+    use crate::model::ProgressOrientation;
+
+    let Some(progress) = &layer.progress else { return };
+    let value = progress_frame_value(layer, frame);
+    let alpha = layer.alpha as f64 / 255.0;
+    let fg = {
+        let mut c = parse_argb(Some(&progress.color));
+        c.0[3] = (c.0[3] as f64 * alpha).round().clamp(0.0, 255.0) as u8;
+        c
+    };
+    let bg = {
+        let mut c = parse_argb(Some(&progress.track_color));
+        c.0[3] = (c.0[3] as f64 * alpha).round().clamp(0.0, 255.0) as u8;
+        c
+    };
+    let arc = layer.kind == "arc-progress";
+    let bar_radius = if progress.corner.as_str() == "flat" {
+        0
+    } else {
+        // Włączone zaokrąglenia = połowa krótszego boku (kwadrat to koło).
+        layer.w.min(layer.h).max(0) as u32 / 2
+    };
+    let (cx, cy, radius) = (
+        layer.x + layer.w / 2,
+        layer.y + layer.h / 2,
+        crate::model::arc_center_radius(layer.w, layer.h),
+    );
+
+    // Gruby łuk może wyjść poza ramkę widgetu — rysujemy z marginesem, żeby
+    // krawędź zewnętrzna nie została ucięta (ramka pozostaje bez zmian).
+    let margin = if arc {
+        crate::model::arc_draw_margin(progress.thickness)
+    } else {
+        0
+    };
+    let y0 = (layer.y - margin).max(0);
+    let y1 = (layer.y + layer.h + margin).min(SCREEN_SIZE as i32);
+    let x0 = (layer.x - margin).max(0);
+    let x1 = (layer.x + layer.w + margin).min(SCREEN_SIZE as i32);
+    for py in y0..y1 {
+        for px in x0..x1 {
+            if arc {
+                let rounded = progress.corner.as_str() != "flat";
+                if progress.show_track {
+                    let cover = arc_coverage(
+                        cx, cy, radius, progress.thickness,
+                        progress.start_angle, progress.end_angle, rounded, px, py,
+                    );
+                    paint_over(canvas.get_pixel_mut(px as u32, py as u32), bg, cover);
+                }
+                if value > 0.0 {
+                    let end = progress.start_angle
+                        + ((progress.end_angle - progress.start_angle) as f64 * value).round() as i32;
+                    let cover = arc_coverage(
+                        cx, cy, radius, progress.thickness, progress.start_angle, end, rounded, px, py,
+                    );
+                    paint_over(canvas.get_pixel_mut(px as u32, py as u32), fg, cover);
+                }
+            } else {
+                if progress.show_track {
+                    let cover = rounded_rect_coverage(
+                        layer.x, layer.y, layer.w, layer.h, bar_radius, px, py,
+                    );
+                    paint_over(canvas.get_pixel_mut(px as u32, py as u32), bg, cover);
+                }
+                let (fx, fy, fw, fh) = match progress.orientation {
+                    ProgressOrientation::Horizontal => (
+                        layer.x, layer.y, (layer.w as f64 * value).round() as i32, layer.h,
+                    ),
+                    ProgressOrientation::Vertical => {
+                        let fh = (layer.h as f64 * value).round() as i32;
+                        (layer.x, layer.y + layer.h - fh, layer.w, fh)
+                    }
+                };
+                let cover = rounded_rect_coverage(fx, fy, fw, fh, bar_radius, px, py);
+                paint_over(canvas.get_pixel_mut(px as u32, py as u32), fg, cover);
+            }
+        }
+    }
+}
+
 /// Składa oprawiony podgląd: pełna klatka tarczy jest zmniejszana do środkowego
 /// okręgu z ledwo widocznym ciemnym obrysem, wokół niej są czarne strefy
 /// bezpieczne i zewnętrzna warstwa logo z `logo/gear-outlayer.png`. Poza
@@ -1455,6 +1659,94 @@ mod tests {
 
     fn sample_series() -> PreviewRandomSeries {
         random_series(1234, "en")
+    }
+
+    #[test]
+    fn arc_round_caps_extend_past_flat_ends() {
+        // Łuk 0→90° zakończony w punkcie (333,233); punkt tuż za końcem
+        // powinien być pusty przy płaskich końcach, ale pokryty przez okrągłą kapkę.
+        let px = 338;
+        let py = 240;
+        let flat = arc_coverage(233, 233, 100, 20, 0, 90, false, px, py);
+        let round = arc_coverage(233, 233, 100, 20, 0, 90, true, px, py);
+        assert_eq!(flat, 0.0, "flat cap must not cover outside the arc");
+        assert!(round > 0.0, "round cap must cover just past the arc end");
+
+        // Pełny okrąg nie ma kapek — oba warianty dają ten sam pierścień.
+        let full_flat = arc_coverage(233, 233, 100, 20, 0, 360, false, 233, 133);
+        let full_round = arc_coverage(233, 233, 100, 20, 0, 360, true, 233, 133);
+        assert_eq!(full_flat, full_round);
+    }
+
+    #[test]
+    fn arc_angle_matches_point_placement() {
+        let cx = 233;
+        let cy = 233;
+        let radius = 100;
+        let thickness = 16;
+        // 0° = góra, 90° = prawo, 180° = dół — zgodnie z ARC_PROGRESS i ArcPoint.
+        assert!(arc_coverage(cx, cy, radius, thickness, 0, 90, false, cx + radius, cy) > 0.0);
+        assert_eq!(arc_coverage(cx, cy, radius, thickness, 0, 90, false, cx - radius, cy), 0.0);
+        assert!(arc_coverage(cx, cy, radius, thickness, 90, 180, false, cx, cy + radius) > 0.0);
+        assert_eq!(arc_coverage(cx, cy, radius, thickness, 90, 180, false, cx, cy - radius), 0.0);
+    }
+
+    #[test]
+    fn rendered_arc_has_no_detached_caps() {
+        use std::collections::HashSet;
+
+        let mut project = crate::model::Project::starter("ArcTest");
+        let widget = crate::widgets::add_widget(&mut project, "arc-progress").unwrap();
+        let settings = serde_json::json!({
+            "id": widget.id,
+            "x": 29, "y": 194, "w": 67, "h": 67,
+            "progress": {
+                "source": "battery", "min": 0, "max": 100,
+                "color": "0xFF4FC3F7", "trackColor": "0xFF3A3A42",
+                "thickness": 16, "startAngle": 0, "endAngle": 360,
+                "corner": "round", "showTrack": true
+            }
+        });
+        crate::widgets::update_widget(&mut project, &settings).unwrap();
+
+        let series = random_series(1234, "en");
+        // Klatka 3 ma baterię 55% → łuk 0…198°, czyli dokładnie przypadek,
+        // w którym wcześniej odrywała się kapka końcowa.
+        let frame = frame_data(3, &series).unwrap();
+        assert_eq!(frame.battery_pct, 55);
+        let image = render_frame(Path::new("."), &project, &frame, &series);
+
+        let mut points = HashSet::new();
+        for py in 194..261 {
+            for px in 29..96 {
+                let p = image.get_pixel(px as u32, py as u32);
+                if p[2] > 150 && p[1] > 110 && p[0] < 160 {
+                    points.insert((px, py));
+                }
+            }
+        }
+        assert!(!points.is_empty(), "arc was not rendered");
+
+        let mut components = Vec::new();
+        while let Some(&start) = points.iter().next() {
+            points.remove(&start);
+            let mut stack = vec![start];
+            let mut size = 0usize;
+            while let Some((x, y)) = stack.pop() {
+                size += 1;
+                for (nx, ny) in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)] {
+                    if points.remove(&(nx, ny)) {
+                        stack.push((nx, ny));
+                    }
+                }
+            }
+            components.push(size);
+        }
+        assert_eq!(
+            components.len(),
+            1,
+            "detached arc caps / broken ring: {components:?}"
+        );
     }
 
     #[test]

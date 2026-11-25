@@ -4,8 +4,9 @@ use serde_json::Value;
 
 use crate::image_fit::FitMode;
 use crate::model::{
-    Align, DataSource, MeasurementSystem, Project, ShowLevel, SleepStageMode, StatusType, TextStyle,
-    VAlign, Widget, WidgetKind, SCREEN_SIZE,
+    Align, DataSource, MeasurementSystem, ProgressCorner, ProgressOrientation, ProgressSource,
+    Project, ShowLevel, SleepStageMode, StatusType, TextStyle, VAlign, Widget, WidgetKind,
+    SCREEN_SIZE,
 };
 use crate::{layers, time_format};
 
@@ -28,6 +29,8 @@ pub const CATEGORY_SLEEP: &str = "sleep";
 pub const CATEGORY_SYSTEM: &str = "system";
 /// Pogoda: nazwa, miasto, temperatury, wschód/zachód i ikona.
 pub const CATEGORY_WEATHER: &str = "weather";
+/// Postęp: łuk i pasek zasilane czujnikami albo wartością stałą.
+pub const CATEGORY_PROGRESS: &str = "progress";
 
 
 /// Pozycja katalogu widgetów czytana przez FFI. `category` pozwala UI grupować
@@ -42,6 +45,7 @@ pub struct SupportedWidget {
     pub has_pattern: bool,
 }
 
+
 impl SupportedWidget {
     fn new(kind: &'static str, category: &'static str) -> Self {
         Self {
@@ -51,6 +55,7 @@ impl SupportedWidget {
         }
     }
 }
+
 
 /// Typy widgetów, które edytor potrafi dodać. UI czyta tę listę przez FFI.
 pub fn supported_widgets() -> Vec<SupportedWidget> {
@@ -110,6 +115,8 @@ pub fn supported_widgets() -> Vec<SupportedWidget> {
         SupportedWidget::new("sunset", CATEGORY_WEATHER),
         SupportedWidget::new("sun-current", CATEGORY_WEATHER),
         SupportedWidget::new("weather-icon", CATEGORY_WEATHER),
+        SupportedWidget::new("arc-progress", CATEGORY_PROGRESS),
+        SupportedWidget::new("bar-progress", CATEGORY_PROGRESS),
     ]
 }
 
@@ -793,10 +800,91 @@ fn status_icon_spec(kind: &str) -> Option<StatusType> {
     }
 }
 
+/// Dodaje łuk albo pasek postępu. To jedyne widgety, których wygląd jest
+/// opisany jedną strukturą `ProgressSettings` zamiast pol tekstu.
+fn add_progress_widget(project: &mut Project, kind: &str) -> Result<Widget> {
+    use crate::model::{ProgressSettings, WidgetKind};
+
+    let (arc, prefix, name) = match kind {
+        "arc-progress" => (true, "arc", "Arc progress"),
+        _ => (false, "bar", "Bar progress"),
+    };
+    let mut index = 1u32;
+    let id = loop {
+        let candidate = if index == 1 {
+            prefix.to_string()
+        } else {
+            format!("{prefix}-{index}")
+        };
+        if !project.widgets.iter().any(|w| w.id == candidate) {
+            break candidate;
+        }
+        index += 1;
+    };
+    let suffix = if index == 1 {
+        String::new()
+    } else {
+        format!(" {index}")
+    };
+    let (x, y, w, h) = if arc {
+        (33, 33, 400, 400)
+    } else {
+        (23, 203, 420, 60)
+    };
+    let widget = Widget {
+        id,
+        name: format!("{name}{suffix}"),
+        kind: if arc {
+            WidgetKind::ArcProgress
+        } else {
+            WidgetKind::BarProgress
+        },
+        x,
+        y,
+        w,
+        h,
+        z: 0,
+        text: None,
+        text_size: None,
+        font: None,
+        time_format: None,
+        color: Some(ProgressSettings::default().color),
+        src: None,
+        image_fit: FitMode::default(),
+        hand_set: None,
+        hour_src: None,
+        minute_src: None,
+        second_src: None,
+        cap_src: None,
+        data_source: None,
+        align: None,
+        v_align: VAlign::Center,
+        show_level: ShowLevel::Normal,
+        auto_scale: false,
+        text_style: TextStyle::Ellipsis,
+        visible: true,
+        measurement_system: None,
+        show_unit: true,
+        alpha: 255,
+        status_icon_set: None,
+        status_type: None,
+        weather_icon_set: None,
+        weather_day_offset: 0,
+        sleep_stage_mode: Default::default(),
+        progress: Some(ProgressSettings::default()),
+    };
+    project.widgets.push(widget.clone());
+    layers::normalize(project);
+    Ok(widget)
+}
+
 /// Dodaje widget do projektu. Obsługiwane typy: `time` (cyfrowy), `analog-time`,
 /// `date`, `text` (stały tekst), `steps`, `distance`, widgety zdrowotne
 /// z kategorii `health`, bateria oraz ikony statusu z kategorii `system`.
 pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
+    if matches!(kind, "arc-progress" | "bar-progress") {
+        return add_progress_widget(project, kind);
+    }
     let health = health_spec(kind);
     let sleep = sleep_spec(kind);
     let target = target_spec(kind);
@@ -915,7 +1003,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else if images {
         // Statyczny obrazek — plik PNG jest przygotowywany do rozmiaru ramki
         // w `images::set_widget_image` (to samo `image_fit`, co dla tła).
@@ -955,7 +1045,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else if date {
         // Data to widget tekstowy z danymi `Date`. `time_format` przechowuje tu
         // wzorzec daty (inny parser niż dla czasu) — podgląd i wygenerowany JS
@@ -996,7 +1088,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else if user_text {
         // Zwykły tekst wpisany w inspektorze. Bez `dataSource` i bez wzorca —
         // generator JS emituje statyczne `text:`, bez timerów i nasłuchiwania sensorów.
@@ -1036,7 +1130,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else if steps {
         // Licznik kroków czyta wartość z czujnika Zegarka — w podglądzie edytora
         // pokazujemy „0", bo na PC nie ma czujnika kroków.
@@ -1076,7 +1172,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else if distance {
         // Dystans czyta czujnik ZeppOS w metrach. Jednostka domyślna pochodzi
         // z ustawień aplikacji zapisanych w projekcie; widget może ją nadpisać.
@@ -1116,7 +1214,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else if let Some((kind, source, _, name, initial, size)) = date_field {
         // Pole daty — wartość jest generowana przez czujnik TIME / WORLD_CLOCK
         // albo wspólny algorytm JS. Na PC pokazujemy neutralny symbol.
@@ -1156,7 +1256,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else if let Some((target_kind, target_source, _, target_name, initial, size)) = target {
         // Pole celu — wartość czyta czujnik na zegarku (pole `.target`). Na PC
         // i przed pierwszym odczytem zostaje sensowny placeholder z katalogu.
@@ -1196,7 +1298,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else if let Some((sleep_kind, sleep_source, _, sleep_name, sleep_text, sleep_size)) = sleep {
         // Widget snu — dane z `hmSensor.id.SLEEP`, na PC tekst predefiniowany.
         Widget {
@@ -1235,7 +1339,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
             weather_day_offset: 0,
             sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else if let Some((health_kind, health_source, _, health_name, _, health_size)) = health {
         // Widget zdrowotny — wartość czyta czujnik na zegarku. Na PC podgląd
         // pokazuje neutralny symbol, bo komputer nie ma czujników biometrycznych.
@@ -1275,7 +1381,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else if battery {
         // Poziom baterii — tekst zasilany `hmSensor.id.BATTERY`. Na PC pokazujemy
         // neutralne 100%, dopóki zegarek nie prześle pierwszego odczytu.
@@ -1316,7 +1424,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else if let Some(status) = status_icon {
         // Ikona statusu systemu. Pakiety są przypisywane w FFI zaraz po dodaniu
         // widgetu — tutaj ustawiamy tylko domyślną ramkę w górnym pasku stanu.
@@ -1365,7 +1475,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else if let Some((weather_kind, weather_source, _, weather_name, initial, size)) = weather {
         // Widget pogody — wartości czyta `hmSensor.id.WEATHER` na zegarku.
         // Ikona dostaje wyśrodkowaną kwadratową ramkę i domyślny zestaw
@@ -1415,7 +1527,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     } else {
         Widget {
             id: id.clone(),
@@ -1453,7 +1567,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_icon_set: None,
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
+        progress: None,
         }
+
     };
     project.widgets.push(widget.clone());
     // Nowy widget ląduje na samej górze; synchronize layer_order i z.
@@ -1462,8 +1578,117 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
 }
 
 /// Aktualizuje ustawienia wskazanego widgetu z panelu inspektora edytora.
+/// Zapisuje ustawienia widgetu postępu. Zwraca `None`, gdy warstwa nie jest
+/// łukiem ani paskiem — wtedy obsługuje ją zwykła ścieżka tekstowa.
+fn update_progress_widget(project: &mut Project, settings: &Value) -> Result<Option<Widget>> {
+    let id = string_field(settings, "id")?;
+    let is_progress = project.widgets.iter().find(|w| w.id == id).is_some_and(|w| {
+        matches!(w.kind, WidgetKind::ArcProgress | WidgetKind::BarProgress)
+    });
+    if !is_progress {
+        return Ok(None);
+    }
+    let x = i64_field(settings, "x")?;
+    let y = i64_field(settings, "y")?;
+    let w = i64_field(settings, "w")?;
+    let h = i64_field(settings, "h")?;
+    if w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > SCREEN_SIZE as i64 || y + h > SCREEN_SIZE as i64 {
+        bail!("Widget musi mieścić się w ekranie 466×466");
+    }
+    let widget = project
+        .widgets
+        .iter_mut()
+        .find(|widget| widget.id == id)
+        .unwrap();
+
+    let mut progress = widget.progress.clone().unwrap_or_default();
+    let nested = settings.get("progress").unwrap_or(&Value::Null);
+    let valid_color = |value: &str| {
+        let hex = value.strip_prefix("0x").unwrap_or(value);
+        hex.len() == 8 && hex.chars().all(|c| c.is_ascii_hexdigit())
+    };
+    let str_val = |key: &str| -> Option<String> {
+        nested
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    let f_val = |key: &str| -> Option<f32> {
+        nested.get(key).and_then(Value::as_f64).map(|v| v as f32)
+    };
+    let u_val = |key: &str| -> Option<u32> {
+        nested.get(key).and_then(Value::as_u64).map(|v| v.min(u32::MAX as u64) as u32)
+    };
+    if let Some(source) = str_val("source").and_then(|v| ProgressSource::parse(&v)) {
+        progress.source = source;
+    }
+    if let Some(value) = f_val("min") {
+        progress.min = value.clamp(-99999.0, 99999.0);
+    }
+    if let Some(value) = f_val("max") {
+        progress.max = value.clamp(-99999.0, 99999.0);
+    }
+    if let Some(value) = f_val("value") {
+        progress.value = value.clamp(-99999.0, 99999.0);
+    }
+    if let Some(value) = str_val("color") {
+        if valid_color(&value) {
+            progress.color = value;
+        }
+    }
+    if let Some(value) = str_val("trackColor") {
+        if valid_color(&value) {
+            progress.track_color = value;
+        }
+    }
+    if let Some(value) = u_val("thickness") {
+        progress.thickness = value.clamp(1, 233);
+    }
+    if let Some(value) = nested.get("startAngle").and_then(Value::as_i64) {
+        progress.start_angle = value.clamp(-360, 360) as i32;
+    }
+    if let Some(value) = nested.get("endAngle").and_then(Value::as_i64) {
+        progress.end_angle = value.clamp(-360, 360) as i32;
+    }
+    if let Some(value) = str_val("corner").and_then(|v| ProgressCorner::parse(&v)) {
+        progress.corner = value;
+    }
+    if let Some(value) = u_val("radius") {
+        progress.radius = value.clamp(0, 233);
+    }
+    if let Some(value) = u_val("segments") {
+        progress.segments = value.clamp(1, 24) as u8;
+    }
+    if let Some(value) = u_val("gap") {
+        progress.gap = value.clamp(0, 466);
+    }
+    if let Some(value) = str_val("orientation").and_then(|v| ProgressOrientation::parse(&v)) {
+        progress.orientation = value;
+    }
+    if let Some(value) = nested.get("invert").and_then(Value::as_bool) {
+        progress.invert = value;
+    }
+    if let Some(value) = nested.get("showTrack").and_then(Value::as_bool) {
+        progress.show_track = value;
+    }
+    widget.x = x as i32;
+    widget.y = y as i32;
+    widget.w = w as i32;
+    widget.h = h as i32;
+    widget.alpha = settings
+        .get("alpha")
+        .and_then(Value::as_u64)
+        .map(|v| v.clamp(0, 255) as u8)
+        .unwrap_or(widget.alpha);
+    widget.progress = Some(progress);
+    Ok(Some(widget.clone()))
+}
+
 pub fn update_widget(project: &mut Project, settings: &Value) -> Result<Widget> {
     let id = string_field(settings, "id")?;
+    if let Some(widget) = update_progress_widget(project, settings)? {
+        return Ok(widget);
+    }
     // Ikona statusu nie ma czcionki ani wzorca — zapisujemy tylko geometrię.
     let is_status_icon = project
         .widgets

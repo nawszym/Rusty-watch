@@ -81,6 +81,26 @@ Kategoria **Cele** (`goals`) ma cztery pola tekstowe czytające pole `.target` c
 
 Kategoria **System** ma widget `battery` (`BATTERY.current`, zdarzenie `CHANGE`, tekst `NN%`) oraz cztery ikony `status-*`. Generowany JS używa `hmUI.widget.IMG_STATUS` z typami `hmUI.system_status.CLOCK` (alarm), `DISTURB` (DND), `DISCONNECT` (brak Bluetooth) i `LOCK`; system sam pokazuje/ukrywa ikonę — nie ma tu sensora, timera ani nasłuchiwania. Pakiety ikon są skanowane dynamicznie z `%APPDATA%/RustyWatch/Status/<id>/`; ważna paczka musi mieć cztery kwadratowe pliki o tej samej wielkości: `alarm.png`, `dnd.png`, `bluetooth.png`, `lock.png`. Wbudowany jest tylko `Classic` (domyślny, jak czarne tło) w `native/RustyWatch/Assets/Status/`. Wybrana paczka jest kopiowana do `<projekt>/assets/status/<id>/` i zaewidencjonowana jako zasób `status_icon`. Nowy widget `battery` jest wyśrodkowany na tarczy (`x=23,y=203,w=420,h=60`); nowe ikony statusu tworzą jedną wycentrowaną linię (`x=145/193/241/289,y=24,w=h=32`) i korzystają z tego samego modelu niebieski-przesuw / czerwony-skalowanie co inne grafiki. Ramki domyślne mieszczą wszystkie cztery ikony wewnątrz okręgu o promieniu 233. Każda zainstalowana paczka dostaje `preview.png`: dla wskazówek złożenie na godzinę 21:37:11, dla STATUS układ 2×2 (góra: alarm, DND; dół: Bluetooth, blokada). W 8 klatkach podglądu maska `ALARM=1/DND=2/BLUETOOTH=4/LOCK=8` daje ciąg `2,2,0,3,0,1,4,4` (2 puste klatki; klatka 4: alarm+DND+blokada, klatka 6: Bluetooth) - klatka 7 (`21:37:40`) ma wszystkie cztery ikony, a klatka 8 jest jej dokładną kopią i zasila statyczny `preview.png`. Każda z siedmiu oryginalnych klatek ma inną, prawdziwą datę: 2022-01-03 (poniedziałek) … 2022-07-31 (niedziela), miesiące styczeń…lipiec. `preview.png` jest oprawiony: tarcza jest pomniejszona w środku, wokół niej są czarne strefy bezpieczne i zewnętrzna warstwa logo z `logo/gear-outlayer.png`, a obrys tarczy jest ciemny i ledwo widoczny; ikona `assets/Preview.png` to ten sam obraz przeskalowany do `314 × 314`. Pierwsza klatka `preview.gif` to ten oprawiony obraz — surowa kopia 21:37 jest usuwana, więc GIF ma nadal 8 klatek (oprawiona, potem 7 surowych).
 
+Kategoria **Postęp** (`progress`) ma dwa widgety: `arc_progress` i `bar_progress`. Ustawienia
+mieszczą się w jednym polu `progress` widgetu. W inspektorze są: źródło, grubość linii, dwa kolory
+(ten sam `ColorPicker` co dla tekstu), przełącznik podkładu, przełącznik zaokrągleń oraz kąty
+start/end dla łuku. Łuk ma jeden suwak **SIZE** (jest kwadratem), pasek ma osobne pola szerokości
+i wysokości. Nie ma już pola z własnym promieniem rogów: zaokrąglenia są tylko włączone/wyłączone —
+dla łuku daje to `corner_flag` `0/3`, dla paska promień `min(w,h)/2` albo `0` (kwadrat staje się
+kołem). Wypełnienie jest zawsze ciągłe — zapisane w starszych projektach `segments` i `gap` są
+ignorowane. Generator JS tworzy `hmUI.widget.ARC_PROGRESS` (podkład + wypełnienie) albo
+`hmUI.widget.FILL_RECT` z `radius` dla paska; wartość 0…1 liczona jest z wybranego czujnika
+(`_createProgSensor`, `_progValue_N`) i aktualizowana w `progressTick` przez
+`setProperty(hmUI.prop.MORE, …)`. Wszystkie współrzędne i wymiary w tym wywołaniu są **literałami
+z ramki** — użycie gołych identyfikatorów `w`/`h`/`y` powodowało `ReferenceError` i pasek pozostawał
+pusty. Nowy łuk domyślnie ma kąty `0…360` (pełny okrąg); w podglądzie WinUI pełny okrąg rysowany
+jest jako `EllipseGeometry`. Pasek domyślnie rośnie od lewej do prawej (lewo = pusto, prawo = pełno).
+Podkład jest zawsze tworzony w edytorze — `ShowTrack` przełącza tylko jego widoczność. Gruby łuk
+może wyjść poza niebieski obrys: edytor daje jego `Path` powiększone wymiary i ujemny margines,
+a renderer klatek używa `arc_draw_margin()`. Środek linii pozostaje stały, więc grubość rośnie
+symetrycznie. Podgląd na żywo czyta odpowiednie pole Custom Data — bateria domyślnie `73%` — ale
+generowane klatki `preview.png/gif` pozostają deterministyczne i nie biorą Custom Data.
+
 ## Mapowanie przy eksporcie
 
 `.rwf` → pliki w `.zip`:

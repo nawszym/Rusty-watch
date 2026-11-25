@@ -68,6 +68,7 @@ Projekt powstał jako własna implementacja inspirowana edytorem
 - **Cele** — Step target, Calorie target, Stand target, Fat burning target
 - **Zdrowie** — aktualne i ostatnie tętno oraz Najniższe/Najwyższe/Średnie z `HEART.today`, Stress, PAI (dziś, z 7 dni, tygodniowe), Skin temperature, Calories, SpO₂ (aktualne i średnia z godziny), Stand hours, Fat burning
 - **Sen** — czas snu, wynik snu, fazy DEEP/LIGHT/REM, czas czuwania (minuty albo % snu), początek i koniec snu, cel snu
+- **Postęp** — łuk (kwadrat, jeden suwak SIZE) i pasek (wpisywane szerokość/wysokość) z wyborem źródła (bateria, kroki, dystans, tętno, kalorie, stanie, spalanie, PAI, SpO₂, sen, stała), uchwytem grubości linii, zaokrągleniami włącz/wyłącz (kwadratowy pasek staje się kołem), opcjonalnym podkładem i edytowalnymi kątami (tylko łuk)
 - **Pogoda** — nazwa pogody, miasto, **temperatura bieżąca od firmware'u zegarka** (edytowalne wyrównanie, czcionka, rozmiar i kolor — nie wartość), temperatura max/min, wschód/zachód, **czas do wschodu/zachodu** i 29 ikon (Classic). Pola z prognozy mają ustawienie **dnia prognozy**: Dziś / Jutro / Pojutrze / +3 / +4; brakujący dzień pokazuje `--`.
 
 Nowy widget dodajesz przyciskiem **+ Add widget** na pasku podglądu; katalog po lewej
@@ -275,7 +276,7 @@ Nazwa, autor i App ID trafiają do `app.json` jako `appName`, `vender`, `appId` 
 
 ### 🧪 Testy i weryfikacja
 
-1. `cargo test --workspace` — 141 testów core + 36 FFI.
+1. `cargo test --workspace` — 149 testów core + 37 FFI.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 błędów, 0 ostrzeżeń.
 3. Uruchom aplikację i sprawdź ekrany w **EN i PL**.
 4. Round-trip `new → export → open → export` musi zachować dane.

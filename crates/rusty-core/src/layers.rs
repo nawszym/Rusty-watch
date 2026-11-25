@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
-use crate::model::{Align, DataSource, Project, Widget, WidgetKind};
+use crate::model::{Align, DataSource, ProgressSettings, Project, Widget, WidgetKind};
 
 /// Kolejność rysowania od spodu do góry (stabilne sortowanie zachowuje
 /// kolejność z pliku przy równym `z`). Tło nie jest warstwą — jest stałym
@@ -145,11 +145,20 @@ pub struct LayerView {
     pub weather_day_offset: u8,
     /// Sposób prezentacji fazy snu: `duration` albo `percent`.
     pub sleep_stage_mode: String,
+    /// Ustawienia łuku/paska postępu (serializowane do inspektora).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ProgressSettings>,
 }
 
 fn widget_kind(widget: &Widget) -> &'static str {
     if widget.kind == WidgetKind::AnalogTime {
         return "analog-time";
+    }
+    if widget.kind == WidgetKind::ArcProgress {
+        return "arc-progress";
+    }
+    if widget.kind == WidgetKind::BarProgress {
+        return "bar-progress";
     }
     if widget.kind == WidgetKind::StatusIcon {
         return match widget.status_type {
@@ -263,6 +272,7 @@ pub fn describe(project: &Project) -> Vec<LayerView> {
                 weather_icon_set: w.weather_icon_set.clone(),
                 weather_day_offset: w.weather_day_offset,
                 sleep_stage_mode: w.sleep_stage_mode.as_str().to_string(),
+                progress: w.progress.clone(),
             })
         })
         .collect()
