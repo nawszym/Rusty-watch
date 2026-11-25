@@ -1122,12 +1122,14 @@ public sealed partial class MainWindow : Window
             if (arc && visual.Track is Microsoft.UI.Xaml.Shapes.Path trackPath)
             {
                 trackPath.Data = ArcGeometry(cx, cy, radius, p.StartAngle, p.EndAngle);
+                trackPath.Stroke = new SolidColorBrush(ParseArgb(p.TrackColor));
                 trackPath.StrokeThickness = p.Thickness;
             }
             else if (!arc && visual.Track is Microsoft.UI.Xaml.Shapes.Rectangle trackRect)
             {
                 trackRect.Width = layer.W;
                 trackRect.Height = layer.H;
+                trackRect.Fill = new SolidColorBrush(ParseArgb(p.TrackColor));
                 trackRect.RadiusX = EffectiveProgressRadius(layer.W, layer.H, p);
                 trackRect.RadiusY = trackRect.RadiusX;
             }
@@ -1136,12 +1138,14 @@ public sealed partial class MainWindow : Window
         if (visual.Fill is Microsoft.UI.Xaml.Shapes.Path fillPath)
         {
             fillPath.Data = ArcGeometry(cx, cy, radius, p.StartAngle, p.StartAngle + sweep * value);
+            fillPath.Stroke = new SolidColorBrush(ParseArgb(p.Color));
             fillPath.StrokeThickness = p.Thickness;
             fillPath.StrokeStartLineCap = ProgressLineCap(p);
             fillPath.StrokeEndLineCap = ProgressLineCap(p);
         }
         else if (visual.Fill is Microsoft.UI.Xaml.Shapes.Rectangle fillRect)
         {
+            fillRect.Fill = new SolidColorBrush(ParseArgb(p.Color));
             var rounded = EffectiveProgressRadius(layer.W, layer.H, p);
             fillRect.RadiusX = Math.Min(rounded, Math.Max(1, Math.Min(layer.W, layer.H) / 2));
             fillRect.RadiusY = fillRect.RadiusX;
@@ -2267,6 +2271,8 @@ public sealed partial class MainWindow : Window
             dy,
             autoScale = _drag.AutoScale,
             square = view.Layer.Kind is "analog-time" or "arc-progress",
+            // Pasek FILL_RECT może mieć 1 px — łuk wciąż potrzebuje promienia.
+            minSize = view.Layer.Kind == "bar-progress" ? 1 : 24,
             snap = PreviewGridToggle.IsChecked == true,
             alignX,
             alignY,
@@ -3247,6 +3253,7 @@ public sealed partial class MainWindow : Window
         ProgressArcSizeValue.Text = $"{Math.Round(ProgressArcSizeSlider.Value)} px";
         ProgressWidthBox.Value = _settings.W;
         ProgressHeightBox.Value = _settings.H;
+        ProgressThicknessPanel.Visibility = kind == "arc-progress" ? Visibility.Visible : Visibility.Collapsed;
         ProgressArcSizePanel.Visibility = kind == "arc-progress" ? Visibility.Visible : Visibility.Collapsed;
         ProgressBarSizePanel.Visibility = kind == "bar-progress" ? Visibility.Visible : Visibility.Collapsed;
         ProgressStartAngleBox.Value = p.StartAngle;
@@ -3286,10 +3293,12 @@ public sealed partial class MainWindow : Window
         if (_settings is null || _loadingProgress || sender is not Slider slider) return;
         var size = (int)Math.Clamp(Math.Round(slider.Value), 24, ScreenSize - 24);
         ProgressArcSizeValue.Text = $"{size} px";
+        // ALT+drag w Photoshop: rozmiar rośnie wokół środka, więc x/y
+        // przesuwają się o połowę przyrostu w przeciwną stronę.
         var cx = _settings.X + _settings.W / 2.0;
         var cy = _settings.Y + _settings.H / 2.0;
-        var x = (int)Math.Clamp(cx - size / 2.0, 0, ScreenSize - size);
-        var y = (int)Math.Clamp(cy - size / 2.0, 0, ScreenSize - size);
+        var x = (int)Math.Clamp(Math.Round(cx - size / 2.0), 0, ScreenSize - size);
+        var y = (int)Math.Clamp(Math.Round(cy - size / 2.0), 0, ScreenSize - size);
         if (x == _settings.X && y == _settings.Y && size == _settings.W && size == _settings.H) return;
         _settings.X = x;
         _settings.Y = y;
@@ -3315,9 +3324,9 @@ public sealed partial class MainWindow : Window
         var x = _settings.X;
         var y = _settings.Y;
         if (box == ProgressWidthBox)
-            width = (int)Math.Clamp(box.Value, 24, ScreenSize - _settings.X);
+            width = (int)Math.Clamp(box.Value, 1, ScreenSize - _settings.X);
         else if (box == ProgressHeightBox)
-            height = (int)Math.Clamp(box.Value, 24, ScreenSize - _settings.Y);
+            height = (int)Math.Clamp(box.Value, 1, ScreenSize - _settings.Y);
         else return;
         if (width == _settings.W && height == _settings.H && x == _settings.X && y == _settings.Y) return;
         _settings.X = x;

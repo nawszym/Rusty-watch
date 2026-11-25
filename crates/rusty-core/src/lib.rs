@@ -1603,6 +1603,25 @@ mod tests {
     }
 
     #[test]
+    fn progress_bar_allows_one_pixel_frame() {
+        let input: widgets::FrameInput = serde_json::from_value(serde_json::json!({
+            "x": 10, "y": 10, "w": 0, "h": 0, "textSize": 40,
+            "handle": "move", "dx": 0, "dy": 0, "autoScale": false, "minSize": 1
+        }))
+        .unwrap();
+        let frame = widgets::frame_geometry(&input);
+        assert_eq!((frame.w, frame.h), (1, 1));
+
+        let standard: widgets::FrameInput = serde_json::from_value(serde_json::json!({
+            "x": 10, "y": 10, "w": 0, "h": 0, "textSize": 40,
+            "handle": "move", "dx": 0, "dy": 0, "autoScale": false
+        }))
+        .unwrap();
+        let frame = widgets::frame_geometry(&standard);
+        assert_eq!((frame.w, frame.h), (widgets::MIN_FRAME_SIZE, widgets::MIN_FRAME_SIZE));
+    }
+
+    #[test]
     fn progress_colours_reach_export_and_preview_frames() {
         let mut project = Project::starter("Colours");
         let bar = widgets::add_widget(&mut project, "bar-progress").unwrap();
@@ -1835,6 +1854,7 @@ mod tests {
             align_x: vec![],
             align_y: vec![],
             square: false,
+        min_size: crate::widgets::MIN_FRAME_SIZE,
         };
         let moved = frame_geometry(&move_input);
         assert_eq!((moved.x, moved.y), (0, 0));
@@ -1844,6 +1864,7 @@ mod tests {
             handle: "nw".to_string(),
             dx: -500,
             dy: -500,
+            min_size: crate::widgets::MIN_FRAME_SIZE,
             ..move_input
         };
         let resized = frame_geometry(&resize);
@@ -1865,6 +1886,7 @@ mod tests {
             align_x: vec![],
             align_y: vec![],
             square: false,
+        min_size: crate::widgets::MIN_FRAME_SIZE,
         };
         let tiny = frame_geometry(&tiny);
         assert_eq!((tiny.w, tiny.h), (widgets::MIN_FRAME_SIZE, widgets::MIN_FRAME_SIZE));
@@ -1889,6 +1911,7 @@ mod tests {
             align_x: vec![],
             align_y: vec![],
             square: false,
+        min_size: crate::widgets::MIN_FRAME_SIZE,
         };
 
         // Przesunięcie: x=111 → 112 (7*16), y=139 → 144 (9*16).
@@ -1951,6 +1974,7 @@ mod tests {
             align_x: vec![233], // środek płótna
             align_y: vec![64],  // góra innego widgetu
             square: false,
+        min_size: crate::widgets::MIN_FRAME_SIZE,
         };
         let aligned = frame_geometry(&input);
         // Prawa krawędź 229 → 233 (środek), góra 62 → 64.
@@ -1995,6 +2019,7 @@ mod tests {
             align_x: vec![233],
             align_y: vec![],
             square: false,
+        min_size: crate::widgets::MIN_FRAME_SIZE,
         };
         let aligned = frame_geometry(&input);
         assert_eq!(aligned.x, 23);
@@ -2020,6 +2045,7 @@ mod tests {
             align_x: vec![150],
             align_y: vec![],
             square: false,
+        min_size: crate::widgets::MIN_FRAME_SIZE,
         };
         let aligned = frame_geometry(&input);
         assert_eq!(aligned.x, 100);

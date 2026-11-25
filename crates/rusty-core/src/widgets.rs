@@ -461,6 +461,10 @@ fn weather_spec(
 }
 
 pub const MIN_FRAME_SIZE: i32 = 24;
+
+fn default_min_frame_size() -> i32 {
+    MIN_FRAME_SIZE
+}
 pub const MIN_TEXT_SIZE: u32 = 8;
 pub const MAX_TEXT_SIZE: u32 = 160;
 /// Rozmiar kratki przyciągania w pikselach ekranu (466 × 466).
@@ -546,6 +550,10 @@ pub struct FrameInput {
     /// Gdy `true`, rozciąganie zachowuje `w == h`.
     #[serde(default)]
     pub square: bool,
+    /// Minimalny wymiar ramki. Pasek postępu pozwala na 1 px — `FILL_RECT`
+    /// nie ma w ZeppOS praktycznego minimum (poza w/h > 0).
+    #[serde(default = "default_min_frame_size")]
+    pub min_size: i32,
 }
 
 /// Geometria zwracana podglądowi. `text_size` to ta sama wartość, która trafia
@@ -568,10 +576,11 @@ pub struct FrameGeometry {
 /// wywołuje to na każdym ruchu kursora, a zapis następuje dopiero po zwolnieniu.
 pub fn frame_geometry(input: &FrameInput) -> FrameGeometry {
     let screen = SCREEN_SIZE as i32;
-    let mut x = input.x.clamp(0, screen - MIN_FRAME_SIZE);
-    let mut y = input.y.clamp(0, screen - MIN_FRAME_SIZE);
-    let mut w = input.w.clamp(MIN_FRAME_SIZE, screen - x);
-    let mut h = input.h.clamp(MIN_FRAME_SIZE, screen - y);
+    let min_size = input.min_size.max(1);
+    let mut x = input.x.clamp(0, screen - min_size);
+    let mut y = input.y.clamp(0, screen - min_size);
+    let mut w = input.w.clamp(min_size, screen - x);
+    let mut h = input.h.clamp(min_size, screen - y);
     let start_w = w;
     let mut guide_x = None;
     let mut guide_y = None;
@@ -605,7 +614,7 @@ pub fn frame_geometry(input: &FrameInput) -> FrameGeometry {
         let max_x = if west { right } else { screen - x };
         let max_y = if north { bottom } else { screen - y };
         let max_size = max_x.min(max_y).min(screen);
-        size = size.clamp(MIN_FRAME_SIZE, max_size);
+        size = size.clamp(min_size, max_size);
 
         // Jak przy przesuwaniu: prowadnica przed siatką, żeby środek wskazówek
         // mógł trafić w środek tarczy albo innego widgetu.
@@ -631,13 +640,13 @@ pub fn frame_geometry(input: &FrameInput) -> FrameGeometry {
 
         if guide_x.is_none() && guide_y.is_none() && input.snap {
             let (edge, min_edge, max_edge) = if use_vertical && north {
-                (bottom - size, 0, bottom - MIN_FRAME_SIZE)
+                (bottom - size, 0, bottom - min_size)
             } else if use_vertical {
-                (y + size, y + MIN_FRAME_SIZE, screen)
+                (y + size, y + min_size, screen)
             } else if west {
-                (right - size, 0, right - MIN_FRAME_SIZE)
+                (right - size, 0, right - min_size)
             } else {
-                (x + size, x + MIN_FRAME_SIZE, screen)
+                (x + size, x + min_size, screen)
             };
             let snapped = snap_to_grid(edge).clamp(min_edge, max_edge);
             let from_snap = if use_vertical {
@@ -647,7 +656,7 @@ pub fn frame_geometry(input: &FrameInput) -> FrameGeometry {
             } else {
                 snapped - x
             };
-            size = from_snap.clamp(MIN_FRAME_SIZE, max_size);
+            size = from_snap.clamp(min_size, max_size);
         }
 
         if guide_x.is_some() || guide_y.is_some() {
@@ -669,30 +678,30 @@ pub fn frame_geometry(input: &FrameInput) -> FrameGeometry {
         if west {
             // Lewa krawędź się przesuwa, prawa zostaje na miejscu.
             let right = x + w;
-            x = (x + input.dx).clamp(0, right - MIN_FRAME_SIZE);
+            x = (x + input.dx).clamp(0, right - min_size);
             if input.snap {
-                x = snap_to_grid(x).clamp(0, right - MIN_FRAME_SIZE);
+                x = snap_to_grid(x).clamp(0, right - min_size);
             }
             w = right - x;
         } else {
             // Prawa krawędź się przesuwa, lewa zostaje na miejscu.
-            w = (w + input.dx).clamp(MIN_FRAME_SIZE, screen - x);
+            w = (w + input.dx).clamp(min_size, screen - x);
             if input.snap {
-                let right = snap_to_grid(x + w).clamp(x + MIN_FRAME_SIZE, screen);
+                let right = snap_to_grid(x + w).clamp(x + min_size, screen);
                 w = right - x;
             }
         }
         if north {
             let bottom = y + h;
-            y = (y + input.dy).clamp(0, bottom - MIN_FRAME_SIZE);
+            y = (y + input.dy).clamp(0, bottom - min_size);
             if input.snap {
-                y = snap_to_grid(y).clamp(0, bottom - MIN_FRAME_SIZE);
+                y = snap_to_grid(y).clamp(0, bottom - min_size);
             }
             h = bottom - y;
         } else {
-            h = (h + input.dy).clamp(MIN_FRAME_SIZE, screen - y);
+            h = (h + input.dy).clamp(min_size, screen - y);
             if input.snap {
-                let bottom = snap_to_grid(y + h).clamp(y + MIN_FRAME_SIZE, screen);
+                let bottom = snap_to_grid(y + h).clamp(y + min_size, screen);
                 h = bottom - y;
             }
         }
@@ -2102,6 +2111,7 @@ mod tests {
             align_x: vec![],
             align_y: vec![],
             square: true,
+            min_size: MIN_FRAME_SIZE,
         }
     }
 

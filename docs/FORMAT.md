@@ -85,7 +85,10 @@ Kategoria **Postęp** (`progress`) ma dwa widgety: `arc_progress` i `bar_progres
 mieszczą się w jednym polu `progress` widgetu. W inspektorze są: źródło, grubość linii, dwa kolory
 (ten sam `ColorPicker` co dla tekstu), przełącznik podkładu, przełącznik zaokrągleń oraz kąty
 start/end dla łuku. Łuk ma jeden suwak **SIZE** (jest kwadratem), pasek ma osobne pola szerokości
-i wysokości. Nie ma już pola z własnym promieniem rogów: zaokrąglenia są tylko włączone/wyłączone —
+i wysokości. Grubość linii dotyczy tylko łuku; pasek zmienia wyłącznie szerokość i wysokość i może mieć nawet
+`1 × 1` px (`FrameInput.min_size = 1`; `FILL_RECT` nie ma w ZeppOS praktycznego minimum, pozostałe
+widgety zachowują 24 px w geście przeciągania). Nie ma już pola z własnym promieniem rogów:
+zaokrąglenia są tylko włączone/wyłączone —
 dla łuku daje to `corner_flag` `0/3`, dla paska promień `min(w,h)/2` albo `0` (kwadrat staje się
 kołem). Wypełnienie jest zawsze ciągłe — zapisane w starszych projektach `segments` i `gap` są
 ignorowane. Generator JS tworzy `hmUI.widget.ARC_PROGRESS` (podkład + wypełnienie) albo

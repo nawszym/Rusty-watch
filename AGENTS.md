@@ -438,14 +438,16 @@ Do not "fix" these by reverting to the obvious approach:
   and outward — "center stays"); the frame is **not** expanded — the editor gives the arc `Path` a
   negative margin and enlarged bounds (plus `Clip = null`) so anything outside the blue outline is
   still drawn, and `arc_draw_margin()` widens the Rust frame renderer too. The inspector shows one
-  **SIZE slider** (with live value) for the square arc and Width/Height NumberBoxes for the bar.
-  Roundness is only a checkbox: for the arc it maps to `corner_flag`, for the bar it turns the corner
+  **SIZE slider** (with live value) for the square arc and Width/Height NumberBoxes for the bar;
+  the line-weight field is arc-only (the bar is resized purely by width/height). `FrameInput.min_size`
+  lets the bar go down to **1 px** (`FILL_RECT` has no practical minimum on the watch); other widgets
+  keep the 24 px gesture minimum. Roundness is only a checkbox: for the arc it maps to `corner_flag`, for the bar it turns the corner
   radius on/off at `min(w,h)/2` — a square bar with roundness enabled is a circle. The track shape
   is always created; `ShowTrack` toggles its `Visibility` in `UpdateProgressVisual` (creating it
   conditionally made the editor ignore the checkbox). `UpdateProgressVisual`
-  must also refresh `StrokeThickness` on both
-  arc `Path` objects, otherwise the editor keeps the line weight from `CreateProgressShape` while JS
-  and PNG frames already show the new one; persisted via `EndFrameDrag`; the bar additionally has explicit
+  must also refresh `StrokeThickness` **and the `Stroke`/`Fill` brushes** on the arc/bar shapes —
+  otherwise the editor keeps the line weight and colours from `CreateProgressShape` while JS and PNG
+  frames already show the new ones; persisted via `EndFrameDrag`; the bar additionally has explicit
   **width/height** NumberBoxes so the
   user can type e.g. 150 × 62. The two colour pickers sit side by side. The Rust frame renderer adds round end caps to partial arcs
   (same `corner_flag` behaviour as the watch) — full circles have no caps. Its inverse angle must be
@@ -555,7 +557,7 @@ and no listener leaks.
 
 ## 9. Definition of done for a change
 
-1. `cargo test --workspace` green (currently 186 tests: 149 core + 37 FFI), no new warnings.
+1. `cargo test --workspace` green (currently 187 tests: 150 core + 37 FFI), no new warnings.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. App launches; affected screens verified visually (English **and** Polish if UI changed).
 4. Round-trip `new → export → open → export` preserves data when project model/codegen changes.

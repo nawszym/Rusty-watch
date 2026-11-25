@@ -98,7 +98,7 @@ throws/propagates `error`.
 `date_format`, `export_paths`, `fonts`, `hands`, `image_fit`, `images`, `layers`,
 `locale`, `model`, `package`, `preview`, `project`, `recent`, `status_icons`,
 `time_format`, `validate`, `weather`, `widgets`). `lib.rs` itself only re-exports
-types and contains the 149 core tests.
+types and contains the 150 core tests.
 
 ### 2.1 Constants and `Project` (`model.rs:5-37`)
 
@@ -774,7 +774,7 @@ own `assets/fonts` copy so the preview uses exactly the exported TTF.
 `Microsoft.Windows.SDK.BuildTools 10.0.26100.4654`. The `BuildRustFfi` target runs
 `cargo build -p rusty-ffi` before build; `CopyRustFfi` copies `rusty_ffi.dll` after
 build with `SkipUnchangedFiles="false"` because `PreserveNewest` can leave a stale DLL.
-Expected result on both toolchains: 0 errors / 0 warnings (186 tests total: 149 core + 37 FFI).
+Expected result on both toolchains: 0 errors / 0 warnings (187 tests total: 150 core + 37 FFI).
 
 ### 11.7 Preview options and Custom Data
 

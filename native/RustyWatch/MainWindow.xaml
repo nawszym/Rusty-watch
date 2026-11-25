@@ -802,7 +802,7 @@
                                                   DisplayMemberPath="Name"
                                                   SelectionChanged="ProgressCombo_SelectionChanged" />
 
-                                        <StackPanel Spacing="2">
+                                        <StackPanel x:Name="ProgressThicknessPanel" Spacing="2">
                                             <TextBlock Text="{Binding Strings[ProgressThicknessLabel]}" FontSize="11"
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                             <muxc:NumberBox x:Name="ProgressThicknessBox" Minimum="1" Maximum="233"
@@ -834,14 +834,14 @@
                                                 <StackPanel Grid.Column="0" Spacing="2">
                                                     <TextBlock Text="{Binding Strings[ProgressWidthLabel]}" FontSize="11"
                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                    <muxc:NumberBox x:Name="ProgressWidthBox" Minimum="24" Maximum="466"
+                                                    <muxc:NumberBox x:Name="ProgressWidthBox" Minimum="1" Maximum="466"
                                                                     SpinButtonPlacementMode="Compact"
                                                                     ValueChanged="ProgressSize_ValueChanged" />
                                                 </StackPanel>
                                                 <StackPanel Grid.Column="1" Spacing="2">
                                                     <TextBlock Text="{Binding Strings[ProgressHeightLabel]}" FontSize="11"
                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                    <muxc:NumberBox x:Name="ProgressHeightBox" Minimum="24" Maximum="466"
+                                                    <muxc:NumberBox x:Name="ProgressHeightBox" Minimum="1" Maximum="466"
                                                                     SpinButtonPlacementMode="Compact"
                                                                     ValueChanged="ProgressSize_ValueChanged" />
                                                 </StackPanel>
