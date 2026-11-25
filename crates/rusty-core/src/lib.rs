@@ -286,6 +286,52 @@ mod tests {
         }
         assert!(!js.contains("@zos/ui"));
         assert!(!js.contains("new Date("));
+
+        // Regression: the 29 icon paths must be plain JS string literals. The old
+        // `format!("'{}'", js_string(..))` produced '"weather_x.png"' entries, so
+        // setProperty(hmUI.prop.SRC, …) received a path with literal quotes and
+        // the weather icon never rendered on the watch or in the simulator.
+        let array_line = js
+            .lines()
+            .find(|line| line.starts_with("const weatherIcons_"))
+            .expect("weather icon array is missing");
+        let entries = array_line
+            .split_once(" = [")
+            .unwrap()
+            .1
+            .trim_end_matches(']')
+            .split(", ")
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), 29, "{array_line}");
+        assert!(
+            entries.iter().all(|entry| entry.starts_with('"')
+                && entry.ends_with('"')
+                && !entry.contains('\'')),
+            "quoted icon path in {array_line}"
+        );
+        let third = format!(
+            "\"{}\"",
+            export_paths::exported_asset_name(&weather::js_icon_path(
+                weather::DEFAULT_WEATHER_PACK,
+                3
+            ))
+        );
+        assert_eq!(entries[3], third, "{array_line}");
+        assert!(js.contains(&format!("src: {third}")), "initial src differs");
+
+        // Regression: a seconds widget calls weatherTick() every second. Setting
+        // SRC unconditionally made the real firmware smudge the semi-transparent
+        // white edges into a jagged white halo; only replace the icon on change.
+        assert!(js.contains("let _lastWeatherIcon = {}"), "icon cache missing");
+        assert!(
+            js.contains("if (_wi_"),
+            "weather icon update is not guarded: {js}"
+        );
+        assert!(
+            js.lines().any(|line| line.trim() == "if (_wi_8 !== _lastWeatherIcon[8] && weatherIcons_8[_wi_8]) {"),
+            "wrong guard for the icon widget"
+        );
+        assert!(js.contains("_lastWeatherIcon[8] = _wi_8"), "cache not updated");
     }
 
     #[test]

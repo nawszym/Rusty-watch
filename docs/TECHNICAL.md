@@ -98,7 +98,7 @@ throws/propagates `error`.
 `date_format`, `export_paths`, `fonts`, `hands`, `image_fit`, `images`, `layers`,
 `locale`, `model`, `package`, `preview`, `project`, `recent`, `status_icons`,
 `time_format`, `validate`, `weather`, `widgets`). `lib.rs` itself only re-exports
-types and contains the 129 core tests.
+types and contains the 130 core tests.
 
 ### 2.1 Constants and `Project` (`model.rs:5-37`)
 
@@ -568,6 +568,7 @@ and `defaultLanguage:"en-US"` (zeus rejects packages without it). The generated 
 written as `assets/<exported_asset_name(path)>` (`hand_<hash>.png`, `font_<hash>.ttf`,
 `status_<hash>.png`, `img_<hash>.png`, `weather_<hash>.png`); `export_paths.rs` is the
 single source of truth and `codegen` emits exactly the same names in `src:`/`font:`.
+Weather PNGs keep premultiplied RGB (`channel ≤ alpha`, transparent pixels `(0,0,0,0)`) exactly like hand textures — the real firmware renders white RGB at partial alpha as a jagged white halo; `ensure_premultiplied` also fixes legacy project copies at export time. The generated `weatherTick` caches the last code in `_lastWeatherIcon` so `setProperty(hmUI.prop.SRC, …)` runs only when the condition changes instead of every clock tick.
 There is no `bg.png`. `prepare_emulator_workspace` converts the extracted flat export
 to a v3/`targets` project for `zeus` (workspace only). `app.js` is a static
 `zeus`-compatible bootstrap: try/catch + IIFE, `__$$app$$__.__globals__` (`lang`, `px`, `gettext` via `DeviceRuntimeCore.HmUtils`) and `__$$app$$__.app = DeviceRuntimeCore.App({...})`.
@@ -750,7 +751,7 @@ own `assets/fonts` copy so the preview uses exactly the exported TTF.
 `Microsoft.Windows.SDK.BuildTools 10.0.26100.4654`. The `BuildRustFfi` target runs
 `cargo build -p rusty-ffi` before build; `CopyRustFfi` copies `rusty_ffi.dll` after
 build with `SkipUnchangedFiles="false"` because `PreserveNewest` can leave a stale DLL.
-Expected result on both toolchains: 0 errors / 0 warnings (162 tests total: 129 core + 33 FFI).
+Expected result on both toolchains: 0 errors / 0 warnings (163 tests total: 130 core + 33 FFI).
 
 ### 11.7 Preview options and Custom Data
 

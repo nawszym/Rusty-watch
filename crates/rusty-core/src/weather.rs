@@ -411,23 +411,46 @@ fn unpremultiply_alpha(image: &RgbaImage) -> RgbaImage {
     out
 }
 
-/// Zmienia rozmiar PNG przez prywatny bufor. Zawsze czyści RGB pod A=0.
+/// Wyzerowuje RGB tam, gdzie `alpha == 0` — realny firmware rysuje te piksele,
+/// co daje białe prostokąty / ząbkowane brzegi wokół glifu na tarczy.
+fn clear_transparent_rgb(image: &mut RgbaImage) {
+    for pixel in image.pixels_mut() {
+        if pixel.0[3] == 0 {
+            *pixel = Rgba([0, 0, 0, 0]);
+        }
+    }
+}
+
+/// Sprowadza obraz do postaci premultiplied tylko wtedy, gdy nie jest nią już
+/// zapisany. Kopie w projekcie powstają w tej postaci (jak wskazówki w
+/// `hands.rs`), ale stare projekty miały białe RGB przy częściowej alrfie —
+/// bez tej detekcji eksport znów wypuściłby białe ząbki na zegarku.
+fn ensure_premultiplied(image: &RgbaImage) -> RgbaImage {
+    let straight_rgb = image.pixels().any(|pixel| {
+        let alpha = pixel.0[3] as i32;
+        alpha > 0 && alpha < 255 && pixel.0[..3].iter().any(|&channel| channel as i32 > alpha + 2)
+    });
+    if straight_rgb {
+        premultiply_alpha(image)
+    } else {
+        image.clone()
+    }
+}
+
+/// Przygotowuje ikonę do eksportu: kolor krawędzi pozostaje w przestrzeni
+/// premultiplied (jak w działającej tarczy referencyjnej i w `hands.rs`).
+/// Dzięki temu piksele o słabej alrfie są ciemnoszare zamiast białych —
+/// firmware, który ignoruje częściową alrfę, nie rysuje białej obwódki.
 fn resize_png(bytes: &[u8], w: u32, h: u32) -> Result<Vec<u8>, String> {
     let image =
         image::load_from_memory(bytes).map_err(|e| format!("Nie można odczytać ikony pogody: {e}"))?;
-    let resized = if image.dimensions() == (w, h) {
-        image.to_rgba8()
+    let source = ensure_premultiplied(&image.to_rgba8());
+    let mut resized = if source.dimensions() == (w, h) {
+        source
     } else {
-        let premultiplied = premultiply_alpha(&image.to_rgba8());
-        let scaled = image::imageops::resize(&premultiplied, w, h, FilterType::Lanczos3);
-        unpremultiply_alpha(&scaled)
+        image::imageops::resize(&source, w, h, FilterType::Lanczos3)
     };
-    let mut resized = resized;
-    for pixel in resized.pixels_mut() {
-        if pixel.0[3] == 0 {
-            pixel.0 = [0, 0, 0, 0];
-        }
-    }
+    clear_transparent_rgb(&mut resized);
     let mut out = Vec::new();
     image::codecs::png::PngEncoder::new(&mut out).write_image(
         resized.as_raw(),
@@ -542,6 +565,56 @@ mod tests {
         assert_eq!(names[0], "w00.png");
         assert_eq!(names[28], "w28.png");
         assert_eq!(js_icon_path("Classic", 28), "weather/Classic/w28.png");
+    }
+
+    #[test]
+    fn resize_png_never_exports_white_edges() {
+        // Stara kopia w projekcie: białe RGB przy częściowej alrfie.
+        let mut original = RgbaImage::from_pixel(16, 16, Rgba([255, 255, 255, 0]));
+        original.put_pixel(8, 8, Rgba([255, 255, 255, 128]));
+        original.put_pixel(9, 8, Rgba([255, 255, 255, 12]));
+        original.put_pixel(8, 9, Rgba([255, 255, 255, 255]));
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(
+                original.as_raw(),
+                16,
+                16,
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+
+        for size in [16u32, 8] {
+            let out = resize_png(&bytes, size, size).unwrap();
+            let prepared = image::load_from_memory(&out).unwrap().to_rgba8();
+            for pixel in prepared.pixels() {
+                let alpha = pixel.0[3] as i32;
+                if alpha == 0 {
+                    assert_eq!(pixel.0, [0, 0, 0, 0], "transparent RGB not cleared");
+                } else {
+                    // Premultiplied colour: never brighter than the alpha itself,
+                    // otherwise the watch paints a jagged white halo.
+                    assert!(
+                        pixel.0[..3]
+                            .iter()
+                            .all(|&channel| channel as i32 <= alpha + 2),
+                        "bright edge in prepared icon: {pixel:?}"
+                    );
+                }
+            }
+        }
+
+        // Already premultiplied input must not be darkened a second time.
+        let mut source = RgbaImage::from_pixel(8, 8, Rgba([0, 0, 0, 0]));
+        source.put_pixel(4, 4, Rgba([128, 128, 128, 128]));
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(source.as_raw(), 8, 8, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        let out = image::load_from_memory(&resize_png(&bytes, 8, 8).unwrap())
+            .unwrap()
+            .to_rgba8();
+        assert_eq!(out.get_pixel(4, 4).0, [128, 128, 128, 128]);
     }
 
     #[test]

@@ -286,7 +286,7 @@ Name, author and App ID land in `app.json` as `appName`, `appId` (`vender` is al
 
 ### 🧪 Tests and verification
 
-1. `cargo test --workspace` — 129 core + 33 FFI tests.
+1. `cargo test --workspace` — 130 core + 33 FFI tests.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. Launch the app and check affected screens in **EN and PL**.
 4. Round-trip `new → export → open → export` must preserve data.

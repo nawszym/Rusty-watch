@@ -272,7 +272,7 @@ Nazwa, autor i App ID trafiają do `app.json` jako `appName`, `vender`, `appId` 
 
 ### 🧪 Testy i weryfikacja
 
-1. `cargo test --workspace` — 129 testów core + 33 FFI.
+1. `cargo test --workspace` — 130 testów core + 33 FFI.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 błędów, 0 ostrzeżeń.
 3. Uruchom aplikację i sprawdź ekrany w **EN i PL**.
 4. Round-trip `new → export → open → export` musi zachować dane.

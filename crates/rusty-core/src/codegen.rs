@@ -438,8 +438,12 @@ pub fn generate_index_js_with_hands(
         .filter(|(_, w)| w.kind == WidgetKind::WeatherIcon)
         .filter_map(|(index, w)| {
             let set = w.weather_icon_set.as_deref().unwrap_or(crate::weather::DEFAULT_WEATHER_PACK);
+            // `js_string` already emits a complete JS string literal with double
+            // quotes. Wrapping it in apostrophes produced entries like
+            // '"weather_xxxx.png"' — `setProperty(SRC, …)` then received a path
+            // containing literal quotes and the icon never rendered on the watch.
             let names: Vec<String> = (0..crate::weather::ICON_COUNT)
-                .map(|i| format!("'{}'", js_string(&crate::export_paths::exported_asset_name(&crate::weather::js_icon_path(set, i)))))
+                .map(|i| js_string(&crate::export_paths::exported_asset_name(&crate::weather::js_icon_path(set, i))))
                 .collect();
             Some((index, names.join(", ")))
         })
@@ -516,7 +520,7 @@ pub fn generate_index_js_with_hands(
     }
     prelude.push_str("let timeSensor = null\nlet tick = null\nlet tickTimer = null\n");
     if !weather_widgets.is_empty() || !weather_icons.is_empty() {
-        prelude.push_str("let weatherSensor = null\nlet weatherTick = null\nlet _wData = null\nlet _wForecast = { data: [] }\nlet _wTide = { data: [] }\n");
+        prelude.push_str("let weatherSensor = null\nlet weatherTick = null\nlet _wData = null\nlet _wForecast = { data: [] }\nlet _wTide = { data: [] }\nlet _lastWeatherIcon = {}\n");
         prelude.push_str("function _getWeather() {\n");
         prelude.push_str("  if (!weatherSensor && hmSensor && hmSensor.createSensor && hmSensor.id && hmSensor.id.WEATHER) {\n");
         prelude.push_str("    try { weatherSensor = hmSensor.createSensor(hmSensor.id.WEATHER) } catch (e) { weatherSensor = null }\n");
@@ -809,8 +813,11 @@ pub fn generate_index_js_with_hands(
             ));
         }
         for (index, _) in &weather_icons {
+            // Real firmware smears partially transparent edges when SRC is set
+            // again and again (the clock tick calls weatherTick every second).
+            // Cache the last index so the icon is replaced only on a real change.
             out.push_str(&format!(
-                "        const _wi = Math.max(0, Math.min(28, (_wForecast.data[0] ? _wForecast.data[0].index : 25) | 0))\n        if (weatherIcons_{index}[_wi]) refs[{index}].setProperty(hmUI.prop.SRC, weatherIcons_{index}[_wi])\n"
+                "        const _wi_{index} = Math.max(0, Math.min(28, (_wForecast.data[0] ? _wForecast.data[0].index : 25) | 0))\n        if (_wi_{index} !== _lastWeatherIcon[{index}] && weatherIcons_{index}[_wi_{index}]) {{\n          refs[{index}].setProperty(hmUI.prop.SRC, weatherIcons_{index}[_wi_{index}])\n          _lastWeatherIcon[{index}] = _wi_{index}\n        }}\n"
             ));
         }
         out.push_str("      }\n");
