@@ -36,6 +36,12 @@ internal static class AppPaths
     /// <summary>Wbudowana paczka ikon STATUS — tylko Classic (domyślna).</summary>
     public static string BundledStatusDirectory => Path.Combine(AppContext.BaseDirectory, "Assets", "Status");
 
+    /// <summary>Wspólny magazyn paczek ikon pogody (Classic i paczki użytkownika).</summary>
+    public static string WeatherDirectory => Path.Combine(DataDirectory, "Weather");
+
+    /// <summary>Wbudowana paczka ikon pogody — Classic.</summary>
+    public static string BundledWeatherDirectory => Path.Combine(AppContext.BaseDirectory, "Assets", "Weather");
+
     /// <summary>
     /// Katalogi języków czytane w runtime. Użytkownik może tu dorzucić własny
     /// plik <c>&lt;kod&gt;.json</c> — nie wymaga to przebudowy aplikacji.

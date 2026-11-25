@@ -55,6 +55,10 @@ public sealed class LayerView
     [JsonPropertyName("vAlign")] public string? VAlign { get; set; }
     /// <summary>Czy widget zdrowotny pokazuje jednostkę (bpm, °C, kcal, %).</summary>
     [JsonPropertyName("showUnit")] public bool ShowUnit { get; set; } = true;
+    /// <summary>Krycie widgetu 0–255 (255 = pełna nieprzezroczystość).</summary>
+    [JsonPropertyName("alpha")] public byte Alpha { get; set; } = 255;
+    /// <summary>Wybrana paczka ikon pogody (tylko weather-icon).</summary>
+    [JsonPropertyName("weatherIconSet")] public string? WeatherIconSet { get; set; }
     [JsonPropertyName("src")] public string? Src { get; set; }
     [JsonPropertyName("imageFit")] public string ImageFit { get; set; } = "contain";
     [JsonPropertyName("autoScale")] public bool AutoScale { get; set; }
@@ -96,6 +100,14 @@ public sealed class LayerRow
         "sleep" => L("LayerSleep"),
         "calories" => L("LayerCalories"),
         "spo2" => L("LayerSpo2"),
+        "sleep-target" => L("LayerSleepTarget"),
+        "weather-condition" => L("LayerWeatherCondition"),
+        "weather-city" => L("LayerWeatherCity"),
+        "weather-high" => L("LayerWeatherHigh"),
+        "weather-low" => L("LayerWeatherLow"),
+        "sunrise" => L("LayerSunrise"),
+        "sunset" => L("LayerSunset"),
+        "weather-icon" => L("LayerWeatherIcon"),
         "battery" => L("LayerBattery"),
         "status-alarm" => L("LayerStatusAlarm"),
         "status-dnd" => L("LayerStatusDnd"),
@@ -293,6 +305,39 @@ public sealed class StatusPackItem : AssetItemBase
     private static string L(string key) => LocalizationService.Get(key);
 }
 
+/// <summary>Wpis katalogu paczek ikon pogody na stronie Assets.</summary>
+public sealed class WeatherPackItem : AssetItemBase
+{
+    private BitmapImage? _preview;
+
+    public string Id { get; set; } = "";
+    public uint Size { get; set; }
+    public string Fingerprint { get; set; } = "";
+    public string Stamp { get; set; } = "";
+    public string Details => $"{Size} × {Size}";
+    public bool IsDefault => Id == "Classic";
+    public string Badge => IsDefault ? L("AssetsDefaultBadge") : "";
+
+    public BitmapImage? Preview
+    {
+        get => _preview;
+        set { _preview = value; OnChanged(nameof(Preview)); }
+    }
+
+    public bool NeedsRefresh => Stamp != AssetStamp.Status("weather-" + Id) || Preview is null;
+
+    public void RefreshPreview()
+    {
+        var stamp = AssetStamp.Status("weather-" + Id);
+        var image = AssetPreview.Load(AppPaths.WeatherDirectory, Id, "preview.png", stamp);
+        AssetPreview.Observe(image, () => { });
+        Stamp = stamp;
+        Preview = image;
+    }
+
+    private static string L(string key) => LocalizationService.Get(key);
+}
+
 /// <summary>Wpis katalogu zestawów wskazówek na stronie Assets.</summary>
 public sealed class HandSetItem : AssetItemBase
 {
@@ -377,8 +422,12 @@ public sealed class TimeSettings
     public string MeasurementSystem { get; set; } = "watch";
     /// <summary>Czy pokazywać jednostkę w widgetach zdrowotnych.</summary>
     public bool ShowUnit { get; set; } = true;
+    /// <summary>Krycie widgetu w zakresie 0–255.</summary>
+    public byte Alpha { get; set; } = 255;
     /// <summary>Tryb dopasowania obrazka widgetu IMAGES: cover, contain, stretch.</summary>
     public string ImageFit { get; set; } = "contain";
+    /// <summary>Wybrana paczka ikon pogody (Classic albo paczka użytkownika).</summary>
+    public string WeatherIconSet { get; set; } = "Classic";
 }
 
 /// <summary>Ramka tekstowego widgetu w podglądzie wraz z jego blokiem tekstu.</summary>
@@ -479,6 +528,9 @@ public sealed class FrameDragState
 
 public sealed partial class MainWindow : Window
 {
+    /// <summary>Kafelki paczek ikon pogody na stronie Assets (x:Bind w XAML).</summary>
+    public ObservableCollection<WeatherPackItem> WeatherPackItems => _weatherPackItems;
+
     private const int ScreenSize = 466;
     /// <summary>Musi być zgodne z `rusty_core::date_format::DEFAULT_PATTERN`.</summary>
     private const string DefaultDatePattern = "MMM D";
@@ -500,11 +552,14 @@ public sealed partial class MainWindow : Window
     private List<WidgetCatalogGroup> _widgetGroups = new();
     private readonly ObservableCollection<HandSetItem> _handItems = new();
     private readonly ObservableCollection<StatusPackItem> _statusItems = new();
+    private readonly ObservableCollection<WeatherPackItem> _weatherPackItems = new();
+    private string? _selectedWeatherPackId;
     private bool _handsBound;
     private bool _statusBound;
     private string _fontSignature = "";
     private int _assetsRefreshVersion;
     private List<StatusPackDto> _statusPacks = new();
+    private List<WeatherPackDto> _weatherPacks = new();
     private List<FontAssetDto> _fonts = new();
     private string? _selectedFontFile;
     private List<ImageAssetDto> _images = new();
@@ -517,6 +572,8 @@ public sealed partial class MainWindow : Window
     /// <summary>Użytkownik świadomie odznaczył warstwę — nie wybieraj automatycznie pierwszej.</summary>
     private bool _selectionCleared;
     private readonly DispatcherTimer _clockTimer;
+    // Predefiniowany moment pobierany raz z Rusta — na żywo tick go nie dotyka.
+    private PreviewDateTimeDto? _predefinedDateTime;
     private readonly LocalizationBridge _localizationBridge;
     private bool _initialized;
     private bool _loadingSettings;
@@ -528,6 +585,20 @@ public sealed partial class MainWindow : Window
     private bool _loadingImages;
     private bool _loadingHands;
     private bool _loadingStatusPacks;
+    private bool _loadingWeatherPacks;
+    // Skalowanie zasobów (29 ikon pogody, wskazówki, STATUS, obrazki) odbywa się
+    // w tle z debounce — żadny ruch myszy ani suwaka nie blokuje wątku UI.
+    private CancellationTokenSource? _assetJobCts;
+    private Task _assetJob = Task.CompletedTask;
+    // Przełączanie paczki pogody: podgląd zmieniamy natychmiast (jedna ikona z
+    // magazynu), a kopiowanie 29 plików do projektu idzie w tle. Bramka daje
+    // "ostatni wybór wygrywa" — szybkie przełączania nie kolejkują starych paczek.
+    private CancellationTokenSource? _weatherPackCts;
+    // Wspólna bramka dla wszystkich zapisów projektu z wątka tła (skalowanie
+    // zasobów i przełączanie paczek) — zapobiega zgubieniu jednej z zmian.
+    private readonly SemaphoreSlim _assetGate = new(1, 1);
+    private int _weatherPackVersion;
+    private Task _weatherPackJob = Task.CompletedTask;
     // Wartość X/Y: jedno kliknięcie kopiuje (z małym opóźnieniem, żeby podwójne
     // kliknięcie zdążyło je anulować), podwójne otwiera pole do wpisania liczby.
     private readonly DispatcherTimer _positionTapTimer = new()
@@ -582,7 +653,7 @@ public sealed partial class MainWindow : Window
         BuildGridLines();
         PreviewGridToggle.IsChecked = AppSettingsStore.SnapToGrid;
         UnselectedOutlineToggle.IsChecked = AppSettingsStore.ShowUnselectedOutline;
-        CustomDataToggle.IsChecked = AppSettingsStore.CustomPreviewDataEnabled;
+        LivePreviewToggle.IsChecked = AppSettingsStore.LiveTimeDateEnabled;
         GridLinesCanvas.Visibility = AppSettingsStore.SnapToGrid ? Visibility.Visible : Visibility.Collapsed;
         RefreshPreviewOptionLabels();
         EditorStatusText.Text = L("AutoSave");
@@ -629,7 +700,7 @@ public sealed partial class MainWindow : Window
         LoadWidgetCatalog();
         LoadFonts();
         LoadImages();
-        LoadHandSets(); LoadStatusPacks();
+        LoadHandSets(); LoadStatusPacks(); LoadWeatherPacks();
         ShowView(editor: false);
         _initialized = true;
     }
@@ -734,7 +805,7 @@ public sealed partial class MainWindow : Window
         ApplyAppFirstDayOfWeekToProject();
         ApplyDefaultFontToMissing();
         LoadImages();
-        LoadHandSets(); LoadStatusPacks();
+        LoadHandSets(); LoadStatusPacks(); LoadWeatherPacks();
         LoadProjectSettings();
         ShowView(editor: true);
         RefreshRecent();
@@ -761,6 +832,8 @@ public sealed partial class MainWindow : Window
             layer.VAlign = _settings.VAlign;
             layer.AutoScale = _settings.AutoScale;
             layer.TextStyle = _settings.TextStyle;
+            layer.Alpha = _settings.Alpha;
+            view.Host.Opacity = _settings.Alpha / 255.0;
 
             ApplyFrameGeometry(view, _settings.X, _settings.Y, _settings.W, _settings.H, _settings.TextSize);
             // Zegar odświeża tylko tekst czasu/daty — stały tekst użytkownika
@@ -826,7 +899,7 @@ public sealed partial class MainWindow : Window
     /// W niebieskim trybie można je tylko przesuwać — skalowanie wymaga czerwonego trybu.
     /// </summary>
     private static bool IsImageLayer(LayerView layer) => layer.Kind is "analog-time" or "image" or "images"
-        || IsStatusKind(layer.Kind);
+        || IsStatusKind(layer.Kind) || IsWeatherIcon(layer);
 
     /// <summary>
     /// Host i ramka mają dokładnie w/h; tekst ma szerokość ramki i automatyczną
@@ -860,7 +933,17 @@ public sealed partial class MainWindow : Window
             {
                 var picturePath = Path.Combine(
                     Path.GetDirectoryName(_projectFile) ?? "", "assets", view.Layer.Src);
-                if (File.Exists(picturePath)) view.Picture.Source = LoadFreshBitmap(picturePath);
+                // Bitmapa jest dekodowana raz. Podczas przeciągania zmieniamy tylko
+                // Width/Height i Stretch.Fill — dokładnie jedna widoczna ikona jest
+                // skalowana przez kontrolkę, bez odczytu pliku w każdej klatce.
+                // Źródłem ikony pogody jest oryginał z magazynu wskazywany przez
+                // `rw_format_weather_field` — nie nadpisujemy go ścieżką projektu.
+                if (view.Layer.Kind != "weather-icon"
+                    && !Equals(view.Picture.Tag as string, picturePath) && File.Exists(picturePath))
+                {
+                    view.Picture.Source = CachedBitmap(picturePath);
+                    view.Picture.Tag = picturePath;
+                }
             }
         }
         Canvas.SetLeft(view.Host, x);
@@ -934,10 +1017,15 @@ public sealed partial class MainWindow : Window
             // Zaznaczona ramka i jej uchwyty są nad pozostałymi — wybrana na liście
             // warstwa wygrywa hit-testing z warstwą aktualnie najwyższą na tarczy.
             Canvas.SetZIndex(view.Frame, selected ? 100 : 1);
+            // Niebieska ramka obrazu służy wyłącznie do przesuwania — nie pokazujemy
+            // uchwytów, dopóki dwuklik nie przełączy trybu rozciągania (czerwona).
+            var handlesEnabled = view.Layer.Kind != "images" || view.Layer.AutoScale;
             foreach (var handle in view.Handles)
             {
                 handle.Background = brush;
-                handle.Visibility = selected || showUnselected ? Visibility.Visible : Visibility.Collapsed;
+                handle.Visibility = (selected || showUnselected) && handlesEnabled
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
                 Canvas.SetZIndex(handle, selected ? 101 : 2);
             }
         }
@@ -967,15 +1055,16 @@ public sealed partial class MainWindow : Window
         YPositionValue.Text = _settings.Y.ToString(CultureInfo.InvariantCulture);
     }
 
-    /// <summary>Odświeża tekst i wskazówki w podglądzie edytora.</summary>
+    /// <summary>
+    /// Odświeża cały podgląd. Live Preview dotyczy wyłącznie czasu i daty —
+    /// wszystkie pozostałe pola zawsze czytają dane predefiniowane.
+    /// </summary>
     private void UpdateClockText(DateTime? at = null)
     {
         if (_projectFile is null) return;
         var live = at ?? DateTime.Now;
-        var useCustom = AppSettingsStore.CustomPreviewDataEnabled;
-        // Niestandardowy czas nadal formatuje Rust — zmieniamy tylko dane wejściowe.
-        var previewNow = useCustom ? CustomPreviewDateTime(live) : live;
-        var customFirstDay = useCustom ? AppSettingsStore.GetCustomPreviewValue("firstDay") : null;
+        var previewNow = AppSettingsStore.LiveTimeDateEnabled ? live : PredefinedDateTime();
+        var customFirstDay = AppSettingsStore.GetCustomPreviewValue("firstDay");
         foreach (var view in _frames.Values)
         {
             var layer = view.Layer;
@@ -984,23 +1073,62 @@ public sealed partial class MainWindow : Window
                 ? _settings.Pattern
                 : layer.TimeFormat ?? fallback;
             FormatTextForTime(layer.Kind, pattern, view.Text, previewNow, customFirstDay);
-            if (useCustom) ApplyCustomSensorOverride(layer.Kind, view.Text);
+            if (IsWeatherKind(layer.Kind)) ApplyWeatherPreview(layer, view);
+            else ApplyCustomSensorOverride(layer.Kind, view.Text);
         }
 
         // Wskazówki obracamy tym samym tyknięciem zegara, który odświeża tekst.
         foreach (var hands in _analogHands.Values) RotateHandSet(hands, previewNow);
     }
 
-    /// <summary>Data podglądu z wartości niestandardowych; brakujące pola wracają do danych „na żywo".</summary>
-    private static DateTime CustomPreviewDateTime(DateTime live)
+    /// <summary>
+    /// Lekkie tyknięcie Live Preview: tylko TIME/DATE, pola pochodne i wskazówki.
+    /// Nie dotykamy pogody, czujników, FFI dla danych ani przebudowy canvasu.
+    /// </summary>
+    private void UpdateLiveTimeDateOnly()
     {
-        var year = ClampCustomInt("year", live.Year, 1, 9999);
-        var month = ClampCustomInt("month", live.Month, 1, 12);
-        var day = ClampCustomInt("day", live.Day, 1, DateTime.DaysInMonth(year, month));
+        if (_projectFile is null) return;
+        var now = DateTime.Now;
+        var customFirstDay = AppSettingsStore.GetCustomPreviewValue("firstDay");
+        foreach (var view in _frames.Values)
+        {
+            var kind = view.Layer.Kind;
+            if (kind is not ("time" or "analog-time" or "date") && !IsDateFieldKind(kind)) continue;
+            var fallback = kind == "date" ? DefaultDatePattern : "HH:MM:SS";
+            var pattern = view.Layer.Id == _selectedLayerId && _settings is not null
+                ? _settings.Pattern
+                : view.Layer.TimeFormat ?? fallback;
+            FormatTextForTime(kind, pattern, view.Text, now, customFirstDay);
+        }
+        foreach (var hands in _analogHands.Values) RotateHandSet(hands, now);
+    }
+
+    /// <summary>Sam moment z Rusta (bez nadpisów z Custom Data) — do placeholderów.</summary>
+    private static DateTime DefaultPreviewMoment()
+    {
+        var preset = RustNative.PreviewDefaultDateTime(out _);
+        if (preset is null) return DateTime.Now;
+        var year = Math.Clamp(preset.Year, 1, 9999);
+        var month = Math.Clamp(preset.Month, 1, 12);
+        return new DateTime(year, month,
+            Math.Clamp(preset.Day, 1, DateTime.DaysInMonth(year, month)),
+            Math.Clamp(preset.Hour, 0, 23),
+            Math.Clamp(preset.Minute, 0, 59),
+            Math.Clamp(preset.Second, 0, 59));
+    }
+
+    /// <summary>Predefiniowany moment z Rusta z nałożonymi polami z Custom Data.</summary>
+    private DateTime PredefinedDateTime()
+    {
+        var preset = _predefinedDateTime ??= RustNative.PreviewDefaultDateTime(out _);
+        if (preset is null) return DateTime.Now;
+        var year = ClampCustomInt("year", preset.Year, 1, 9999);
+        var month = ClampCustomInt("month", preset.Month, 1, 12);
+        var day = ClampCustomInt("day", preset.Day, 1, DateTime.DaysInMonth(year, month));
         return new DateTime(year, month, day,
-            ClampCustomInt("hour", live.Hour, 0, 23),
-            ClampCustomInt("minute", live.Minute, 0, 59),
-            ClampCustomInt("second", live.Second, 0, 59));
+            ClampCustomInt("hour", preset.Hour, 0, 23),
+            ClampCustomInt("minute", preset.Minute, 0, 59),
+            ClampCustomInt("second", preset.Second, 0, 59));
     }
 
     private static int ClampCustomInt(string key, int fallback, int min, int max)
@@ -1020,6 +1148,77 @@ public sealed partial class MainWindow : Window
         if (value is not null) text.Text = value;
     }
 
+    /// <summary>
+    /// Podgląd pogody na żywo. Rust formatuje tekst i podaje ścieżkę ikony z
+    /// magazynu; brakujące dane Custom Data wracają do domyślnej, pochmurnej
+    /// Warszawy. Tylko widoczna ikona jest skalowana (przez Stretch.Fill kontrolki).
+    /// </summary>
+    private void ApplyWeatherPreview(LayerView layer, FrameView view)
+    {
+        // Pogoda zawsze pochodzi z danych predefiniowanych — Live Preview nie
+        // przełącza żadnych czujników ani pogody na dane systemowe.
+        var overrides = WeatherOverridesJson();
+        var raw = RustNative.FormatWeatherField(
+            layer.Kind, overrides, EffectiveWatchfaceLanguage(),
+            layer.WeatherIconSet ?? "Classic", out var error);
+        if (raw is null) return;
+        using var document = JsonDocument.Parse(raw);
+        var data = document.RootElement;
+        // Ikona nie ma tekstu — Rust zwraca dla niej pusty string; nie wpisujemy
+        // go do TextBlocku, żeby nawet chwilowy artifact nie pojawił się w ramce.
+        if (layer.Kind != "weather-icon" && data.TryGetProperty("text", out var textElement))
+            view.Text.Text = textElement.GetString() ?? view.Text.Text;
+        if (layer.Kind != "weather-icon" || view.Picture is null
+            || !data.TryGetProperty("iconPath", out var iconElement)) return;
+        var iconPath = iconElement.GetString();
+        if (string.IsNullOrEmpty(iconPath) || !File.Exists(iconPath)) return;
+        if (!Equals(view.Picture.Tag as string, iconPath))
+        {
+            view.Picture.Source = CachedBitmap(iconPath);
+            view.Picture.Tag = iconPath;
+        }
+    }
+
+    /// <summary>
+    /// Natychmiastowe przełączenie podglądu po wyborze paczki: dekodujemy tylko
+    /// aktualnie widoczną ikonę z magazynu i skalujemy ją przez Stretch.Fill.
+    /// Nie czekamy na kopiowanie pozostałych 28 plików do projektu.
+    /// </summary>
+    private void RefreshWeatherIconPreview(string packId)
+    {
+        var overrides = WeatherOverridesJson();
+        var locale = EffectiveWatchfaceLanguage();
+        foreach (var view in _frames.Values)
+        {
+            if (!IsWeatherIcon(view.Layer) || view.Picture is null) continue;
+            var raw = RustNative.FormatWeatherField(
+                "weather-icon", overrides, locale, packId, out _);
+            if (raw is null) continue;
+            using var document = JsonDocument.Parse(raw);
+            if (!document.RootElement.TryGetProperty("iconPath", out var iconElement)) continue;
+            var iconPath = iconElement.GetString();
+            if (string.IsNullOrEmpty(iconPath) || !File.Exists(iconPath)) continue;
+            if (Equals(view.Picture.Tag as string, iconPath)) continue;
+            view.Picture.Source = CachedBitmap(iconPath);
+            view.Picture.Tag = iconPath;
+        }
+    }
+
+    /// <summary>Tylko ustawione pola są wysyłane do Rusta — reszta dostaje wartości Warszawy.</summary>
+    private static string WeatherOverridesJson()
+    {
+        var values = new Dictionary<string, string>();
+        foreach (var key in new[]
+        {
+            "city", "index", "high", "low", "sunrise", "sunset",
+        })
+        {
+            var value = AppSettingsStore.GetCustomPreviewValue(key);
+            if (value is not null) values[key] = value;
+        }
+        return JsonSerializer.Serialize(values);
+    }
+
     /// <summary>Wspólny dla podglądu i klatek eksportu formatter tekstu czasu/daty.</summary>
     private void FormatTextForTime(string layerKind, string? pattern, TextBlock text, DateTime now,
         string? firstDayOverride = null)
@@ -1032,7 +1231,7 @@ public sealed partial class MainWindow : Window
                 now.Day, now.Month - 1, now.Year, locale, out _);
             if (dateRaw is null) return;
             using var dateDocument = JsonDocument.Parse(dateRaw);
-            text.Text = dateDocument.RootElement.GetProperty("text").GetString() ?? text.Text;
+            SetTextIfChanged(text, dateDocument.RootElement.GetProperty("text").GetString() ?? text.Text);
             return;
         }
         if (IsDateFieldKind(layerKind))
@@ -1042,14 +1241,14 @@ public sealed partial class MainWindow : Window
                 firstDayOverride ?? AppSettingsStore.FirstDayOfWeek, out _);
             if (fieldRaw is null) return;
             using var fieldDocument = JsonDocument.Parse(fieldRaw);
-            text.Text = fieldDocument.RootElement.GetProperty("text").GetString() ?? text.Text;
+            SetTextIfChanged(text, fieldDocument.RootElement.GetProperty("text").GetString() ?? text.Text);
             return;
         }
         if (layerKind == "battery")
         {
             // Na PC nie ma czujnika baterii — trzymamy neutralny stan początkowy,
             // który może nadpisać Custom Data. Na zegarku JS czyta BATTERY.current.
-            text.Text = "100%";
+            SetTextIfChanged(text, "100%");
             return;
         }
         if (layerKind != "time") return;
@@ -1057,7 +1256,13 @@ public sealed partial class MainWindow : Window
             locale, out _);
         if (raw is null) return;
         using var document = JsonDocument.Parse(raw);
-        text.Text = document.RootElement.GetProperty("text").GetString() ?? text.Text;
+        SetTextIfChanged(text, document.RootElement.GetProperty("text").GetString() ?? text.Text);
+    }
+
+    /// <summary>Tyk Live Preview nie może bez powodu nadpisywać identycznych tekstów.</summary>
+    private static void SetTextIfChanged(TextBlock text, string value)
+    {
+        if (!string.Equals(text.Text, value, StringComparison.Ordinal)) text.Text = value;
     }
 
     private static void RotateHandSet(AnalogHandsView hands, DateTime now)
@@ -1190,37 +1395,51 @@ public sealed partial class MainWindow : Window
             DigitalSettingsPanel.Visibility = Visibility.Collapsed;
             DigitalAlignPanel.Visibility = Visibility.Collapsed;
             StepInfoPanel.Visibility = Visibility.Collapsed;
+            GoalInfoPanel.Visibility = Visibility.Collapsed;
             DistanceUnitPanel.Visibility = Visibility.Collapsed;
             ShowUnitPanel.Visibility = Visibility.Collapsed;
             AnalogSettingsPanel.Visibility = Visibility.Collapsed;
             ImagesSettingsPanel.Visibility = Visibility.Collapsed;
             StatusSettingsPanel.Visibility = Visibility.Collapsed;
+            WeatherSettingsPanel.Visibility = Visibility.Collapsed;
             InspectorTitle.Text = "";
             return;
         }
         var isAnalog = layer.Kind == "analog-time";
         var isImages = layer.Kind == "images";
         var isStatus = IsStatusKind(layer.Kind);
+        var isWeatherIcon = IsWeatherIcon(layer);
         var isDate = layer.Kind == "date";
         var isUserText = layer.Kind == "text";
         var isStep = layer.Kind == "steps";
         var isDistance = layer.Kind == "distance";
         var isHealth = IsHealthKind(layer.Kind);
+        var isGoal = IsGoalKind(layer.Kind);
         WidgetInspector.Visibility = Visibility.Visible;
-        DigitalSettingsPanel.Visibility = isAnalog || isImages || isStatus ? Visibility.Collapsed : Visibility.Visible;
-        DigitalAlignPanel.Visibility = isAnalog || isImages || isStatus ? Visibility.Collapsed : Visibility.Visible;
+        DigitalSettingsPanel.Visibility = isAnalog || isImages || isStatus || isWeatherIcon ? Visibility.Collapsed : Visibility.Visible;
+        DigitalAlignPanel.Visibility = isAnalog || isImages || isStatus || isWeatherIcon ? Visibility.Collapsed : Visibility.Visible;
         // Tekst użytkownika i licznik kroków nie mają wzorca czasu/daty.
         // Dla kroków zamiast pola treści pokazujemy informację o czujniku.
-        FormatPanel.Visibility = isUserText || isStep || isDistance || isHealth || isImages || isStatus || IsDateFieldKind(layer.Kind)
+        FormatPanel.Visibility = isUserText || isStep || isDistance || isHealth || isGoal || isImages || isStatus || isWeatherIcon || IsDateFieldKind(layer.Kind)
             ? Visibility.Collapsed
             : Visibility.Visible;
         UserTextPanel.Visibility = isUserText ? Visibility.Visible : Visibility.Collapsed;
         StepInfoPanel.Visibility = isStep ? Visibility.Visible : Visibility.Collapsed;
+        GoalInfoPanel.Visibility = isGoal ? Visibility.Visible : Visibility.Collapsed;
+        if (isGoal)
+        {
+            // STAND i FAT_BURRING nie są gwarantowane na Active 2 — użytkownik
+            // musi wiedzieć, że pole może zostać na wartości domyślnej.
+            GoalInfoHint.Text = layer.Kind is "stand-target" or "fat-burning-target"
+                ? L("GoalSensorWarning")
+                : L("GoalSensorHint");
+        }
         DistanceUnitPanel.Visibility = isDistance ? Visibility.Visible : Visibility.Collapsed;
         ShowUnitPanel.Visibility = HasUnitKind(layer.Kind) ? Visibility.Visible : Visibility.Collapsed;
         AnalogSettingsPanel.Visibility = isAnalog ? Visibility.Visible : Visibility.Collapsed;
         ImagesSettingsPanel.Visibility = isImages ? Visibility.Visible : Visibility.Collapsed;
         StatusSettingsPanel.Visibility = isStatus ? Visibility.Visible : Visibility.Collapsed;
+        WeatherSettingsPanel.Visibility = isWeatherIcon ? Visibility.Visible : Visibility.Collapsed;
         InspectorTitle.Text = isImages
             ? L("ImagesWidgetCardTitle")
             : isAnalog
@@ -1247,7 +1466,9 @@ public sealed partial class MainWindow : Window
             OwnMeasurementSystem = layer.MeasurementSystem is not null,
             MeasurementSystem = layer.MeasurementSystem ?? AppSettingsStore.MeasurementSystem,
             ShowUnit = layer.ShowUnit,
+            Alpha = layer.Alpha,
             ImageFit = string.IsNullOrEmpty(layer.ImageFit) ? "contain" : layer.ImageFit,
+            WeatherIconSet = layer.WeatherIconSet ?? "Classic",
         };
 
         if (isImages)
@@ -1269,6 +1490,15 @@ public sealed partial class MainWindow : Window
             StatusPackComboBox.SelectedItem = _statusPacks
                 .FirstOrDefault(pack => pack.Id == layer!.StatusIconSet);
             _loadingStatusPacks = false;
+        }
+        if (isWeatherIcon)
+        {
+            _loadingWeatherPacks = true;
+            WeatherPackComboBox.SelectedItem = _weatherPacks
+                .FirstOrDefault(pack => pack.Id == layer!.WeatherIconSet);
+            WeatherScaleModeButtonText.Text = _settings.AutoScale
+                ? L("ScaleModeOnLabel") : L("ScaleModeOffLabel");
+            _loadingWeatherPacks = false;
         }
 
         if (isAnalog)
@@ -1320,6 +1550,8 @@ public sealed partial class MainWindow : Window
         {
             ShowUnitCheckBox.IsChecked = _settings.ShowUnit;
         }
+        OpacitySlider.Value = _settings.Alpha;
+        OpacityValue.Text = _settings.Alpha.ToString();
         if (isDistance)
         {
             _loadingUnits = true;
@@ -1375,6 +1607,28 @@ public sealed partial class MainWindow : Window
         return image;
     }
 
+    /// <summary>
+    /// Dekoduje bitmapę tylko raz na ścieżkę. WinUI skaluje ją przez Stretch.Fill
+    /// przy zmianie Width/Height, więc przeciąganie ramki nie czyta pliku ani nie
+    /// dekoduje PNG w każdym ruchu wskaźnika.
+    /// </summary>
+    private static readonly Dictionary<string, BitmapImage> _bitmapCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private static BitmapImage CachedBitmap(string path)
+    {
+        if (_bitmapCache.TryGetValue(path, out var cached)) return cached;
+        var image = LoadFreshBitmap(path);
+        _bitmapCache[path] = image;
+        return image;
+    }
+
+    private static void InvalidateBitmapCache(string pathPrefix)
+    {
+        foreach (var key in _bitmapCache.Keys.Where(k => k.StartsWith(pathPrefix, StringComparison.OrdinalIgnoreCase)).ToList())
+            _bitmapCache.Remove(key);
+    }
+
     /// <summary>Tworzy obraz wskazówki o rozmiarze ramki z obrotem wokół jej środka.</summary>
     private Image? CreateHandImage(LayerView layer, string? src)
     {
@@ -1425,6 +1679,7 @@ public sealed partial class MainWindow : Window
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     VerticalAlignment = VerticalAlignment.Stretch,
                     IsHitTestVisible = false,
+                    Opacity = layer.Alpha / 255.0,
                 };
                 if (!string.IsNullOrEmpty(layer.Src) && _projectFile is not null)
                 {
@@ -1438,7 +1693,7 @@ public sealed partial class MainWindow : Window
             }
 
             var view = new FrameView { Layer = layer };
-            if (layer.Kind == "images" || IsStatusKind(layer.Kind))
+            if (layer.Kind == "images" || IsStatusKind(layer.Kind) || IsWeatherIcon(layer))
             {
                 // PNG w projekcie ma fizycznie rozmiar ramki — Podgląd rysuje go
                 // bez skalowania, dokładnie jak hmUI.widget.IMG na tarczy.
@@ -1525,7 +1780,10 @@ public sealed partial class MainWindow : Window
                 }
             }
 
-            if (layer.Kind != "images") view.Host.Children.Add(view.Text);
+            // Ikona pogody jest czystym obrazem — żaden TextBlock nie trafia do
+            // drzewa wizualnego, więc nie może wylądować w nim tekst "--".
+            if (layer.Kind != "images" && !IsWeatherIcon(layer)) view.Host.Children.Add(view.Text);
+            view.Host.Opacity = layer.Alpha / 255.0;
             ApplyFrameGeometry(view, layer.X, layer.Y, layer.W, layer.H, layer.TextSize ?? 64, visual.Hands);
             watchCanvas.Children.Add(view.Host);
             if (outlineCanvas is not null) outlineCanvas.Children.Add(view.Frame);
@@ -1707,8 +1965,25 @@ public sealed partial class MainWindow : Window
         SelectFrameLayer(layer);
         if (_settings is null) return;
         _settings.AutoScale = !_settings.AutoScale;
+        if (layer.Kind == "images" && _settings.AutoScale)
+        {
+            // Czerwona ramka obrazu zawsze rozciąga grafikę do nowego rozmiaru.
+            _settings.ImageFit = "stretch";
+            _loadingImages = true;
+            ImageFitComboBox.SelectedItem = (ImageFitComboBox.ItemsSource as IEnumerable<ChoiceItem>)?
+                .FirstOrDefault(item => item.Value == "stretch");
+            _loadingImages = false;
+        }
         PersistSettings();
         UpdateScaleModeUI();
+        if (IsWeatherIcon(layer))
+        {
+            WeatherScaleModeButtonText.Text = _settings.AutoScale
+                ? L("ScaleModeOnLabel") : L("ScaleModeOffLabel");
+        }
+        // Odświeża kolor ramki i widoczność uchwytów (obraz w niebieskim trybie
+        // ma tylko przesuwanie, w czerwonym — uchwyty rozciągania).
+        UpdateFrameVisuals();
         var analog = layer.Kind == "analog-time";
         var key = analog
             ? (_settings.AutoScale ? "ScaleModeOnHands" : "ScaleModeOffHands")
@@ -2097,6 +2372,87 @@ public sealed partial class MainWindow : Window
         RemoveHandsButton.IsEnabled = HandsList.SelectedItem is HandSetItem { Id: not "Classic" };
     }
 
+    private void LoadWeatherPacks()
+    {
+        _weatherPacks = RustNative.WeatherPacksList(out var error);
+        if (error is not null) WeatherStatusText.Text = LocalizationService.Error(error);
+        _loadingWeatherPacks = true;
+        WeatherPackComboBox.ItemsSource = _weatherPacks;
+        var current = _layers.FirstOrDefault(IsWeatherIcon)?.WeatherIconSet ?? "Classic";
+        WeatherPackComboBox.SelectedItem = _weatherPacks.FirstOrDefault(pack => pack.Id == current);
+        _loadingWeatherPacks = false;
+        ApplyWeatherPacks(_weatherPacks);
+    }
+
+    private void ApplyWeatherPacks(List<WeatherPackDto> packs)
+    {
+        foreach (var pack in packs)
+        {
+            var item = _weatherPackItems.FirstOrDefault(p => p.Id == pack.Id);
+            if (item is null)
+            {
+                item = new WeatherPackItem { Id = pack.Id };
+                _weatherPackItems.Add(item);
+            }
+            item.Size = pack.Size;
+            item.Fingerprint = pack.Fingerprint ?? "";
+            if (item.NeedsRefresh) item.RefreshPreview();
+        }
+        var ids = packs.Select(p => p.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var stale in _weatherPackItems.Where(p => !ids.Contains(p.Id)).ToList())
+            _weatherPackItems.Remove(stale);
+        WeatherPacksGrid.SelectedItem = _weatherPackItems.FirstOrDefault(p => p.Id == (_selectedWeatherPackId ?? "Classic"));
+        RemoveWeatherButton.IsEnabled = WeatherPacksGrid.SelectedItem is WeatherPackItem { IsDefault: false };
+    }
+
+    private void WeatherPacksGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if ((WeatherPacksGrid.SelectedItem as WeatherPackItem) is not { } item) return;
+        _selectedWeatherPackId = item.Id;
+        RemoveWeatherButton.IsEnabled = !item.IsDefault;
+    }
+
+    private async void AddWeatherButton_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new FolderPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
+        picker.FileTypeFilter.Add("*");
+        var folder = await picker.PickSingleFolderAsync();
+        if (folder is null) return;
+        WeatherPackDto? pack = null;
+        string? error = null;
+        WeatherStatusText.Text = L("StatusPreparingAssets");
+        await Task.Run(() => pack = RustNative.WeatherPacksAdd(folder.Path, out error))
+            .ConfigureAwait(true);
+        if (pack is null)
+        {
+            WeatherStatusText.Text = error is null ? L("StatusApplyFailed") : LocalizationService.Error(error);
+            return;
+        }
+        _selectedWeatherPackId = pack.Id;
+        LoadWeatherPacks();
+        WeatherStatusText.Text = LF("StatusApplied", pack.Id);
+    }
+
+    private void RemoveWeatherButton_Click(object sender, RoutedEventArgs e)
+    {
+        if ((WeatherPacksGrid.SelectedItem as WeatherPackItem) is not { } item || item.IsDefault) return;
+        var raw = RustNative.WeatherPacksRemove(item.Id, out var error);
+        if (raw is null)
+        {
+            WeatherStatusText.Text = error is null ? L("StatusApplyFailed") : LocalizationService.Error(error);
+            return;
+        }
+        if (_selectedWeatherPackId == item.Id) _selectedWeatherPackId = null;
+        LoadWeatherPacks();
+        WeatherStatusText.Text = L("AssetsStatusRemoved");
+    }
+
+    private async void OpenWeatherFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        await Launcher.LaunchFolderAsync(
+            await StorageFolder.GetFolderFromPathAsync(AppPaths.WeatherDirectory));
+    }
+
     private void LoadStatusPacks()
     {
         _assetsRefreshVersion++;
@@ -2252,8 +2608,10 @@ public sealed partial class MainWindow : Window
         "text" => L("WidgetCategoryText"),
         "images" => L("WidgetCategoryImages"),
         "distance" => L("WidgetCategoryDistance"),
+        "goals" => L("WidgetCategoryGoals"),
         "health" => L("WidgetCategoryHealth"),
         "system" => L("WidgetCategorySystem"),
+        "weather" => L("WidgetCategoryWeather"),
         _ => category,
     };
 
@@ -2272,6 +2630,10 @@ public sealed partial class MainWindow : Window
         "images" => L("ImagesWidgetCardTitle"),
         "steps" => L("StepWidgetCardTitle"),
         "distance" => L("DistanceWidgetCardTitle"),
+        "steps-target" => L("StepTargetWidgetCardTitle"),
+        "calories-target" => L("CaloriesTargetWidgetCardTitle"),
+        "stand-target" => L("StandTargetWidgetCardTitle"),
+        "fat-burning-target" => L("FatBurningTargetWidgetCardTitle"),
         "heart" => L("HeartWidgetCardTitle"),
         "stress" => L("StressWidgetCardTitle"),
         "pai" => L("PaiWidgetCardTitle"),
@@ -2279,6 +2641,17 @@ public sealed partial class MainWindow : Window
         "sleep" => L("SleepWidgetCardTitle"),
         "calories" => L("CaloriesWidgetCardTitle"),
         "spo2" => L("Spo2WidgetCardTitle"),
+        "stand" => L("StandWidgetCardTitle"),
+        "fat-burning" => L("FatBurningWidgetCardTitle"),
+        "pai-weekly" => L("PaiWeeklyWidgetCardTitle"),
+        "sleep-target" => L("SleepTargetWidgetCardTitle"),
+        "weather-condition" => L("WeatherConditionWidgetCardTitle"),
+        "weather-city" => L("WeatherCityWidgetCardTitle"),
+        "weather-high" => L("WeatherHighWidgetCardTitle"),
+        "weather-low" => L("WeatherLowWidgetCardTitle"),
+        "sunrise" => L("SunriseWidgetCardTitle"),
+        "sunset" => L("SunsetWidgetCardTitle"),
+        "weather-icon" => L("WeatherIconWidgetCardTitle"),
         "battery" => L("BatteryWidgetCardTitle"),
         "status-alarm" => L("StatusAlarmWidgetCardTitle"),
         "status-dnd" => L("StatusDndWidgetCardTitle"),
@@ -2302,6 +2675,10 @@ public sealed partial class MainWindow : Window
         "images" => L("ImagesWidgetCardDesc"),
         "steps" => L("StepWidgetCardDesc"),
         "distance" => L("DistanceWidgetCardDesc"),
+        "steps-target" => L("StepTargetWidgetCardDesc"),
+        "calories-target" => L("CaloriesTargetWidgetCardDesc"),
+        "stand-target" => L("StandTargetWidgetCardDesc"),
+        "fat-burning-target" => L("FatBurningTargetWidgetCardDesc"),
         "heart" => L("HeartWidgetCardDesc"),
         "stress" => L("StressWidgetCardDesc"),
         "pai" => L("PaiWidgetCardDesc"),
@@ -2309,6 +2686,17 @@ public sealed partial class MainWindow : Window
         "sleep" => L("SleepWidgetCardDesc"),
         "calories" => L("CaloriesWidgetCardDesc"),
         "spo2" => L("Spo2WidgetCardDesc"),
+        "stand" => L("StandWidgetCardDesc"),
+        "fat-burning" => L("FatBurningWidgetCardDesc"),
+        "pai-weekly" => L("PaiWeeklyWidgetCardDesc"),
+        "sleep-target" => L("SleepTargetWidgetCardDesc"),
+        "weather-condition" => L("WeatherConditionWidgetCardDesc"),
+        "weather-city" => L("WeatherCityWidgetCardDesc"),
+        "weather-high" => L("WeatherHighWidgetCardDesc"),
+        "weather-low" => L("WeatherLowWidgetCardDesc"),
+        "sunrise" => L("SunriseWidgetCardDesc"),
+        "sunset" => L("SunsetWidgetCardDesc"),
+        "weather-icon" => L("WeatherIconWidgetCardDesc"),
         "battery" => L("BatteryWidgetCardDesc"),
         "status-alarm" => L("StatusAlarmWidgetCardDesc"),
         "status-dnd" => L("StatusDndWidgetCardDesc"),
@@ -2321,11 +2709,23 @@ public sealed partial class MainWindow : Window
         "weekday-number" or "week-number" or "day-of-year" or "lunar-date" or "festival" or "world-clock";
 
     private static bool IsHealthKind(string? kind) => kind is
-        "heart" or "stress" or "pai" or "skin-temp" or "sleep" or "calories" or "spo2";
+        "heart" or "stress" or "pai" or "skin-temp" or "sleep" or "calories" or "spo2"
+        or "stand" or "fat-burning" or "pai-weekly";
+
+    private static bool IsGoalKind(string? kind) => kind is
+        "steps-target" or "calories-target" or "stand-target" or "fat-burning-target" or "sleep-target";
+
+    private static bool IsWeatherKind(string? kind) => kind is
+        "weather-condition" or "weather-city" or "weather-high" or "weather-low"
+        or "sunrise" or "sunset" or "weather-icon";
+
+    private static bool IsWeatherIcon(LayerView? layer) => layer?.Kind == "weather-icon";
 
     /// <summary>Tylko widgety z jednostką mają w inspektorze przełącznik jej pokazywania.</summary>
     private static bool HasUnitKind(string? kind) => kind is
-        "heart" or "skin-temp" or "calories" or "spo2";
+        "heart" or "skin-temp" or "calories" or "spo2"
+        or "calories-target" or "stand-target" or "fat-burning-target"
+        or "stand" or "fat-burning";
 
     private static ListView CreateCatalogList(DataTemplate template, bool selectable,
         SelectionChangedEventHandler? selectionChanged)
@@ -2429,10 +2829,14 @@ public sealed partial class MainWindow : Window
         AddWidgetFlyout.Hide();
     }
 
-    private void AddWidget(string kind)
+    private async void AddWidget(string kind)
     {
         if (_projectFile is null) return;
-        var raw = RustNative.AddWidget(_projectFile, kind, out var error);
+        var project = _projectFile;
+        // Dodanie ikony pogody/wskazówek kopiuje i skaluje wiele plików — w tle.
+        string? raw = null;
+        string? error = null;
+        await Task.Run(() => raw = RustNative.AddWidget(project, kind, out error)).ConfigureAwait(true);
         if (raw is null)
         {
             ShowStatus(error is null ? L("ErrorAddWidget") : LocalizationService.Error(error), InfoBarSeverity.Error);
@@ -2450,7 +2854,11 @@ public sealed partial class MainWindow : Window
         ShowStatus(L("WidgetAdded"));
     }
 
-    private void PersistSettings()
+    /// <summary>
+    /// Zapisuje ustawienia widgetu. Domyślnie tylko geometrię — przeskalowanie
+    /// zasobów jest kolejkowane w tle (patrz <see cref="ScheduleAssetRescale"/>).
+    /// </summary>
+    private void PersistSettings(bool deferAssets = true)
     {
         if (_projectFile is null || _settings is null || _loadingSettings || _selectedLayerId is null) return;
         var kind = _layers.FirstOrDefault(l => l.Id == _selectedLayerId)?.Kind;
@@ -2475,16 +2883,18 @@ public sealed partial class MainWindow : Window
             // Dla widgetu daty to pole niesie wzorzec daty (parser w Rust wybiera
             // go na podstawie kind widgetu), dla czasu — wzorzec czasu. Tekst
             // użytkownika i licznik kroków nie mają wzorca.
-            timeFormat = isUserText || isStep || isDistance || IsHealthKind(kind) || IsDateFieldKind(kind)
+            timeFormat = isUserText || isStep || isDistance || IsHealthKind(kind) || IsGoalKind(kind) || IsDateFieldKind(kind)
                 ? null
                 : _settings.Pattern,
             text = isUserText ? _settings.UserText : null,
             // Pusty string = użyj systemu z ustawień aplikacji (bez nadpisania).
             measurementSystem = distanceUnits,
             showUnit = _settings.ShowUnit,
+            alpha = _settings.Alpha,
             autoScale = _settings.AutoScale,
             textStyle = _settings.TextStyle,
             imageFit = _settings.ImageFit,
+            deferAssets,
         });
         var raw = RustNative.SetWidget(_projectFile, payload, out var error);
         if (raw is null)
@@ -2496,6 +2906,57 @@ public sealed partial class MainWindow : Window
         using var document = JsonDocument.Parse(raw);
         ApplyLayersPayload(document.RootElement.GetProperty("layers").GetRawText());
         EditorStatusText.Text = L("SavedStatus");
+        if (deferAssets) ScheduleAssetRescale(_selectedLayerId);
+    }
+
+    /// <summary>
+    /// Kolejkuje przeskalowanie wszystkich zasobów widgetu w wątku tła.
+    /// Szybkie zmiany (przeciąganie, suwaki) anulują poprzednie zadanie —
+    /// wykonuje się tylko ostatnie, po 180 ms bez zmian.
+    /// </summary>
+    private void ScheduleAssetRescale(string widgetId)
+    {
+        var cts = new CancellationTokenSource();
+        _assetJobCts?.Cancel();
+        _assetJobCts = cts;
+        var token = cts.Token;
+        var project = _projectFile;
+        if (project is null) return;
+        _assetJob = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(180, token).ConfigureAwait(false);
+                if (token.IsCancellationRequested) return;
+                await _assetGate.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    if (token.IsCancellationRequested) return;
+                    RustNative.RescaleWidgetAssets(project, widgetId, out var error);
+                    if (error is not null && !token.IsCancellationRequested)
+                    {
+                        DispatcherQueue.TryEnqueue(() =>
+                            EditorStatusText.Text = LocalizationService.Error(error));
+                    }
+                }
+                finally
+                {
+                    _assetGate.Release();
+                }
+            }
+            catch (OperationCanceledException) { }
+        }, token);
+    }
+
+    /// <summary>Export czeka na zakończenie ostatniego zadania skalowania.</summary>
+    private async Task WaitForAssetJobsAsync()
+    {
+        // Eksport musi widzieć ostateczny stan projektu także po przełączeniu
+        // paczki ikon — w przeciwnym razie ZIP miałby poprzedni zestaw.
+        foreach (var job in new[] { _assetJob, _weatherPackJob })
+        {
+            if (!job.IsCompleted) await job.ConfigureAwait(true);
+        }
     }
 
     private void ApplyLayersPayload(string json)
@@ -2526,7 +2987,10 @@ public sealed partial class MainWindow : Window
             if (current[i].Id != next[i].Id
                 || current[i].Kind != next[i].Kind
                 || current[i].Visible != next[i].Visible
-                || current[i].Src != next[i].Src
+                // Ikona pogody w edytorze zawsze pochodzi z magazynu (przez
+                // rw_format_weather_field); zmiana Src w projekcie nie wymaga
+                // przebudowy podglądu — wystarczy aktualizacja w miejscu.
+                || (current[i].Src != next[i].Src && current[i].Kind != "weather-icon")
                 || current[i].HandSet != next[i].HandSet
                 || current[i].HourSrc != next[i].HourSrc
                 || current[i].MinuteSrc != next[i].MinuteSrc
@@ -2548,9 +3012,10 @@ public sealed partial class MainWindow : Window
 
             if (!_frames.TryGetValue(layer.Id, out var view)) continue;
             CopyLayerState(view.Layer, layer);
+            view.Host.Opacity = layer.Alpha / 255.0;
             ApplyFrameGeometry(view, layer.X, layer.Y, layer.W, layer.H, layer.TextSize ?? 64);
             view.Text.Foreground = new SolidColorBrush(ParseArgb(layer.Color ?? "0xFFFFFFFF"));
-            view.Text.Text = layer.Text ?? view.Text.Text;
+            if (!IsWeatherIcon(layer)) view.Text.Text = layer.Text ?? view.Text.Text;
             ApplyTextFit(view, layer.TextStyle);
             ApplyFont(view);
         }
@@ -2575,6 +3040,8 @@ public sealed partial class MainWindow : Window
         target.Align = source.Align;
         target.VAlign = source.VAlign;
         target.ShowUnit = source.ShowUnit;
+        target.Alpha = source.Alpha;
+        target.WeatherIconSet = source.WeatherIconSet;
         target.AutoScale = source.AutoScale;
         target.TextStyle = source.TextStyle;
         target.Visible = source.Visible;
@@ -2608,7 +3075,12 @@ public sealed partial class MainWindow : Window
         StatusScaleModeButtonText.Text = label;
     }
 
-    private void ClockTimer_Tick(object? sender, object e) => UpdateClockText();
+    private void ClockTimer_Tick(object? sender, object e)
+    {
+        // Domyślnie podgląd jest statyczny — nie formatujemy nic co sekundę.
+        if (!AppSettingsStore.LiveTimeDateEnabled) return;
+        UpdateLiveTimeDateOnly();
+    }
 
     private void FormatBox_TextChanged(object sender, TextChangedEventArgs e)
     {
@@ -2648,6 +3120,15 @@ public sealed partial class MainWindow : Window
         if (_loadingSettings || _settings is null) return;
         _settings.TextSize = (uint)e.NewValue;
         FontSizeValue.Text = _settings.TextSize.ToString();
+        ApplyPreview();
+        PersistSettings();
+    }
+
+    private void OpacitySlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_loadingSettings || _settings is null) return;
+        _settings.Alpha = (byte)e.NewValue;
+        OpacityValue.Text = _settings.Alpha.ToString();
         ApplyPreview();
         PersistSettings();
     }
@@ -3025,7 +3506,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         _selectedHandSetId = added.Id;
-        LoadHandSets(); LoadStatusPacks();
+        LoadHandSets(); LoadStatusPacks(); LoadWeatherPacks();
         HandsStatusText.Text = LF("AssetsHandsAdded", added.Name);
     }
 
@@ -3040,7 +3521,7 @@ public sealed partial class MainWindow : Window
         }
         // Projekty mają własne kopie — usunięcie z magazynu nic im nie robi.
         _selectedHandSetId = null;
-        LoadHandSets(); LoadStatusPacks();
+        LoadHandSets(); LoadStatusPacks(); LoadWeatherPacks();
         HandsStatusText.Text = L("AssetsHandsRemoved");
     }
 
@@ -3078,6 +3559,7 @@ public sealed partial class MainWindow : Window
         }
         _selectedStatusPackId = added.Id;
         LoadStatusPacks();
+        LoadWeatherPacks();
         StatusStatusText.Text = LF("AssetsStatusAdded", added.Id);
     }
 
@@ -3092,6 +3574,7 @@ public sealed partial class MainWindow : Window
         }
         _selectedStatusPackId = null;
         LoadStatusPacks();
+        LoadWeatherPacks();
         StatusStatusText.Text = L("AssetsStatusRemoved");
     }
 
@@ -3101,14 +3584,20 @@ public sealed partial class MainWindow : Window
             await StorageFolder.GetFolderFromPathAsync(AppPaths.StatusDirectory));
     }
 
-    private void StatusPackComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void StatusPackComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingStatusPacks || !_initialized || _projectFile is null) return;
         if ((sender as ComboBox)?.SelectedItem is not StatusPackDto pack) return;
         var layer = _layers.FirstOrDefault(l => IsStatusKind(l.Kind) && l.Id == _selectedLayerId);
         if (layer is null) return;
 
-        var raw = RustNative.SetStatusPack(_projectFile, layer.Id, pack.Id, out var error);
+        var project = _projectFile;
+        var widgetId = layer.Id;
+        string? raw = null;
+        string? error = null;
+        StatusStatusText.Text = L("StatusPreparingAssets");
+        await Task.Run(() => raw = RustNative.SetStatusPack(project, widgetId, pack.Id, out error))
+            .ConfigureAwait(true);
         if (raw is null)
         {
             StatusStatusText.Text = error is null ? L("StatusApplyFailed") : LocalizationService.Error(error);
@@ -3120,22 +3609,87 @@ public sealed partial class MainWindow : Window
         StatusStatusText.Text = LF("StatusApplied", pack.Id);
     }
 
-    private void HandsComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void WeatherPackComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingWeatherPacks || !_initialized || _projectFile is null) return;
+        if ((sender as ComboBox)?.SelectedItem is not WeatherPackDto pack) return;
+        var layer = _layers.FirstOrDefault(IsWeatherIcon);
+        if (layer is null) return;
+
+        // 1) Natychmiast: tylko widoczna ikona z magazynu. Żadnego odczytu 29
+        // plików ani zapisu projektu na wątku UI — ramka zmienia się w tej klatce.
+        layer.WeatherIconSet = pack.Id;
+        foreach (var view in _frames.Values.Where(v => IsWeatherIcon(v.Layer)))
+            view.Layer.WeatherIconSet = pack.Id;
+        RefreshWeatherIconPreview(pack.Id);
+        ImagesStatusText.Text = LF("StatusApplied", pack.Id);
+
+        // 2) Reszta paczki do projektu w tle. Szybkie przełączania anulują
+        // oczekujące zadanie; wynik starszy niż ostatni wybór jest odrzucany.
+        var cts = new CancellationTokenSource();
+        _weatherPackCts?.Cancel();
+        _weatherPackCts = cts;
+        var token = cts.Token;
+        var version = ++_weatherPackVersion;
+        var project = _projectFile;
+        var widgetId = layer.Id;
+        _weatherPackJob = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(120, token).ConfigureAwait(false);
+                await _assetGate.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (version != _weatherPackVersion) return;
+                    var raw = RustNative.SetWeatherPack(project, widgetId, pack.Id, out var error);
+                    if (token.IsCancellationRequested || version != _weatherPackVersion) return;
+                    // Wyniki z wątka tła trafiają do UI tylko przez dispatcher
+                    // i tylko gdy nadal są aktualne.
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        if (token.IsCancellationRequested || version != _weatherPackVersion
+                            || !ReferenceEquals(project, _projectFile)) return;
+                        if (raw is null)
+                        {
+                            ImagesStatusText.Text = error is null
+                                ? L("StatusApplyFailed") : LocalizationService.Error(error);
+                            return;
+                        }
+                        using var document = JsonDocument.Parse(raw);
+                        ApplyLayersPayload(document.RootElement.GetProperty("layers").GetRawText());
+                    });
+                }
+                finally
+                {
+                    _assetGate.Release();
+                }
+            }
+            catch (OperationCanceledException) { }
+        }, token);
+    }
+
+    private async void HandsComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingHands || !_initialized || _projectFile is null) return;
         if ((sender as ComboBox)?.SelectedItem is not ChoiceItem item) return;
         var layer = _layers.FirstOrDefault(l => l.Kind == "analog-time" && l.Id == _selectedLayerId);
         if (layer is null) return;
 
-        // Wybór nowego zestawu domyślnie włącza wszystkie jego pliki — odtwarzamy
-        // decyzję użytkownika, ale tylko dla wskazówek dostępnych w nowym zestawie.
         var newSet = _handSets.FirstOrDefault(set => set.Id == item.Value);
         var showHour = HourHandCheckBox.IsChecked == true;
         var showMinute = MinuteHandCheckBox.IsChecked == true;
         var showSecond = newSet is { HasSecond: true } && SecondHandCheckBox.IsChecked == true;
         var showCap = newSet is { HasCap: true } && CapHandCheckBox.IsChecked == true;
-
-        var raw = RustNative.SetHands(_projectFile, layer.Id, item.Value, out var error);
+        var project = _projectFile;
+        var widgetId = layer.Id;
+        var name = item.Name;
+        string? raw = null;
+        string? error = null;
+        HandsStatusText.Text = L("StatusPreparingAssets");
+        await Task.Run(() => raw = RustNative.SetHands(project, widgetId, item.Value, out error))
+            .ConfigureAwait(true);
         if (raw is null)
         {
             HandsStatusText.Text = error is null ? L("HandsApplyFailed") : LocalizationService.Error(error);
@@ -3144,8 +3698,22 @@ public sealed partial class MainWindow : Window
         }
         using var document = JsonDocument.Parse(raw);
         ApplyLayersPayload(document.RootElement.GetProperty("layers").GetRawText());
-        if (ApplyHandVisibility(layer.Id, showHour, showMinute, showSecond, showCap))
-            HandsStatusText.Text = LF("HandsApplied", item.Name);
+        string? visibilityError = null;
+        await Task.Run(() => raw = RustNative.SetHandVisibility(
+            project, widgetId, showHour, showMinute, showSecond, showCap, out visibilityError))
+            .ConfigureAwait(true);
+        if (raw is not null)
+        {
+            using var visibilityDocument = JsonDocument.Parse(raw);
+            ApplyLayersPayload(visibilityDocument.RootElement.GetProperty("layers").GetRawText());
+            LoadWidgetSettings();
+            HandsStatusText.Text = LF("HandsApplied", name);
+        }
+        else
+        {
+            HandsStatusText.Text = visibilityError is null
+                ? L("HandVisibilityFailed") : LocalizationService.Error(visibilityError);
+        }
     }
 
     private void OptionalHand_Click(object sender, RoutedEventArgs e)
@@ -3285,7 +3853,7 @@ public sealed partial class MainWindow : Window
     {
         PreviewGridToggle.Text = L("PreviewGrid");
         UnselectedOutlineToggle.Text = L("UnselectedWidgetsOutline");
-        CustomDataToggle.Text = L("CustomDataPreview");
+        LivePreviewToggle.Text = L("LivePreview");
         CustomDataEditItem.Text = L("CustomDataEdit");
     }
 
@@ -3308,12 +3876,15 @@ public sealed partial class MainWindow : Window
         UpdateFrameVisuals();
     }
 
-    /// <summary>Włącza/wyłącza nadpisywanie danych podglądu; wartości nie są kasowane.</summary>
-    private void CustomDataToggle_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Live Preview włącza wyłącznie realny czas i datę. Pozostałe pola dalej
+    /// czytają dane predefiniowane — przełącznik nie kasuje tych wartości.
+    /// </summary>
+    private void LivePreviewToggle_Click(object sender, RoutedEventArgs e)
     {
         if (!_initialized) return;
-        RefreshToggleVisuals(CustomDataToggle);
-        AppSettingsStore.SetCustomPreviewDataEnabled(CustomDataToggle.IsChecked);
+        RefreshToggleVisuals(LivePreviewToggle);
+        AppSettingsStore.SetLiveTimeDateEnabled(LivePreviewToggle.IsChecked);
         UpdateClockText();
     }
 
@@ -3398,9 +3969,10 @@ public sealed partial class MainWindow : Window
             .ToList();
         var hasTime = kinds.Contains("time") || kinds.Contains("analog-time");
         var hasDate = kinds.Contains("date") || kinds.Any(IsDateFieldKind);
+        var hasWeather = kinds.Any(IsWeatherKind);
         var sensorKinds = kinds.Where(kind => CustomValueKeyForKind(kind) is not null).ToList();
 
-        if (!hasTime && !hasDate && sensorKinds.Count == 0)
+        if (!hasTime && !hasDate && !hasWeather && sensorKinds.Count == 0)
         {
             CustomDataFieldsPanel.Children.Add(new TextBlock
             {
@@ -3412,22 +3984,25 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // Placeholdery muszą pokazywać ten sam moment co podgląd, gdy Live
+        // Preview jest wyłączone — nie bieżący czas systemowy.
+        var def = DefaultPreviewMoment();
         if (hasTime)
         {
             AddCustomGroup("CustomDataGroupTime", body =>
             {
-                AddCustomNumber(body, "CustomDataHour", "hour", DateTime.Now.Hour, 0, 23);
-                AddCustomNumber(body, "CustomDataMinute", "minute", DateTime.Now.Minute, 0, 59);
-                AddCustomNumber(body, "CustomDataSecond", "second", DateTime.Now.Second, 0, 59);
+                AddCustomNumber(body, "CustomDataHour", "hour", def.Hour, 0, 23);
+                AddCustomNumber(body, "CustomDataMinute", "minute", def.Minute, 0, 59);
+                AddCustomNumber(body, "CustomDataSecond", "second", def.Second, 0, 59);
             });
         }
         if (hasDate)
         {
             AddCustomGroup("CustomDataGroupDate", body =>
             {
-                AddCustomNumber(body, "CustomDataDay", "day", DateTime.Now.Day, 1, 31);
-                AddCustomNumber(body, "CustomDataMonth", "month", DateTime.Now.Month, 1, 12);
-                AddCustomNumber(body, "CustomDataYear", "year", DateTime.Now.Year, 1, 9999);
+                AddCustomNumber(body, "CustomDataDay", "day", def.Day, 1, 31);
+                AddCustomNumber(body, "CustomDataMonth", "month", def.Month, 1, 12);
+                AddCustomNumber(body, "CustomDataYear", "year", def.Year, 1, 9999);
                 if (kinds.Contains("weekday-number"))
                     AddCustomFirstDay(body);
             });
@@ -3442,6 +4017,29 @@ public sealed partial class MainWindow : Window
                     var fallback = _layers.FirstOrDefault(layer => layer.Kind == kind)?.Text ?? "";
                     AddCustomText(body, CustomLayerLabel(kind), key, fallback);
                 }
+            });
+        }
+        if (hasWeather)
+        {
+            // Puste pole = domyślna, pochmurna Warszawa (wartości z Rusta).
+            var cityFallback = EffectiveWatchfaceLanguage() == "pl" ? "Warszawa" : "Warsaw";
+            AddCustomGroup("CustomDataGroupWeather", body =>
+            {
+                AddCustomText(body, L("LayerWeatherCity"), "city", cityFallback);
+                // Warunek wybieramy po nazwie — kody 0…28 pochodzą z tabeli Rusta.
+                var conditions = new List<ChoiceItem>
+                {
+                    new() { Value = "", Name = L("CustomDataDefault") },
+                };
+                conditions.AddRange(RustNative.WeatherConditions(EffectiveWatchfaceLanguage(), out _));
+                AddCustomChoice(body, L("LayerWeatherCondition"), "index", conditions);
+                AddCustomText(body, L("LayerWeatherHigh"), "high", "22");
+                AddCustomText(body, L("LayerWeatherLow"), "low", "16");
+                // Jedno pole HH:MM zamiast osobnych godzin i minut.
+                AddCustomTime(body, L("LayerSunrise"), "sunrise", "05:13",
+                    "sunriseHour", "sunriseMinute");
+                AddCustomTime(body, L("LayerSunset"), "sunset", "20:40",
+                    "sunsetHour", "sunsetMinute");
             });
         }
     }
@@ -3517,6 +4115,95 @@ public sealed partial class MainWindow : Window
         parent.Children.Add(row);
     }
 
+    /// <summary>Lista warunków pogody: etykieta czytelna dla człowieka, kod 0…28 w tle.</summary>
+    private void AddCustomChoice(StackPanel parent, string label, string key,
+        IReadOnlyList<ChoiceItem> items)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        row.Children.Add(new TextBlock
+        {
+            Text = label,
+            Width = 110,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var stored = AppSettingsStore.GetCustomPreviewValue(key);
+        var combo = new ComboBox
+        {
+            Width = 200,
+            FontSize = 12,
+            // Bez DisplayMemberPath WinUI pokazuje `RustyWatch.ChoiceItem` zamiast nazwy.
+            DisplayMemberPath = nameof(ChoiceItem.Name),
+            ItemsSource = items,
+            SelectedItem = items.FirstOrDefault(item => item.Value == (stored ?? "0")),
+        };
+        combo.SelectionChanged += (_, _) =>
+        {
+            // Pusty wybór usuwa nadpisanie i wraca do domyślnej pogody.
+            AppSettingsStore.SetCustomPreviewValue(key, (combo.SelectedItem as ChoiceItem)?.Value);
+            UpdateClockText();
+        };
+        row.Children.Add(combo);
+        parent.Children.Add(row);
+    }
+
+    /// <summary>Jedno pole czasu HH:MM. Starsze pary godzina/minuta są wczytywane i czyszczone.</summary>
+    private void AddCustomTime(StackPanel parent, string label, string key, string fallback,
+        string legacyHourKey, string legacyMinuteKey)
+    {
+        var stored = AppSettingsStore.GetCustomPreviewValue(key);
+        if (stored is null && (AppSettingsStore.GetCustomPreviewValue(legacyHourKey) is not null
+            || AppSettingsStore.GetCustomPreviewValue(legacyMinuteKey) is not null))
+        {
+            var hour = ClampCustomInt(legacyHourKey, 0, 0, 23);
+            var minute = ClampCustomInt(legacyMinuteKey, 0, 0, 59);
+            stored = $"{hour:00}:{minute:00}";
+        }
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        row.Children.Add(new TextBlock
+        {
+            Text = label,
+            Width = 110,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var box = new TextBox
+        {
+            Width = 200,
+            FontSize = 12,
+            Text = stored ?? "",
+            PlaceholderText = fallback,
+        };
+        box.TextChanged += (_, _) =>
+        {
+            var text = box.Text.Trim();
+            if (TryParseCustomTime(text, out var hour, out var minute))
+            {
+                AppSettingsStore.SetCustomPreviewValue(key, $"{hour:00}:{minute:00}");
+                AppSettingsStore.SetCustomPreviewValue(legacyHourKey, null);
+                AppSettingsStore.SetCustomPreviewValue(legacyMinuteKey, null);
+            }
+            else
+            {
+                // Nieprawidłowy wpis Rust zignoruje — podgląd wraca do wartości domyślnej.
+                AppSettingsStore.SetCustomPreviewValue(key, text);
+            }
+            UpdateClockText();
+        };
+        row.Children.Add(box);
+        parent.Children.Add(row);
+    }
+
+    private static bool TryParseCustomTime(string text, out int hour, out int minute)
+    {
+        hour = minute = 0;
+        var parts = text.Split(':');
+        return parts.Length == 2
+            && int.TryParse(parts[0].Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out hour)
+            && int.TryParse(parts[1].Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out minute)
+            && hour is >= 0 and <= 23 && minute is >= 0 and <= 59;
+    }
+
     private void AddCustomFirstDay(StackPanel parent)
     {
         var items = new List<ChoiceItem>
@@ -3536,6 +4223,7 @@ public sealed partial class MainWindow : Window
         {
             Width = 200,
             FontSize = 12,
+            DisplayMemberPath = nameof(ChoiceItem.Name),
             ItemsSource = items,
             SelectedItem = items.FirstOrDefault(item =>
                 item.Value == (AppSettingsStore.GetCustomPreviewValue("firstDay") ?? AppSettingsStore.FirstDayOfWeek)),
@@ -3582,7 +4270,7 @@ public sealed partial class MainWindow : Window
         LoadDistanceUnitOptions();
         LoadFonts();
         LoadImages();
-        LoadHandSets(); LoadStatusPacks();
+        LoadHandSets(); LoadStatusPacks(); LoadWeatherPacks();
         LoadWidgetCatalog();
         var selected = _layers.FirstOrDefault(l => l.Id == _selectedLayerId);
         InspectorTitle.Text = selected is null
@@ -3944,6 +4632,9 @@ public sealed partial class MainWindow : Window
         ToolTipService.SetToolTip(ExportButton, LF("ExportProgress", 0));
         try
         {
+            // Eksport musi widzieć ostateczny rozmiar zasobów — poczekaj na
+            // ostatnie zadanie skalowania z wątka tła.
+            await WaitForAssetJobsAsync().ConfigureAwait(true);
             // Jedna losowa seria dla wszystkich klatek — dane nie zmieniają się w trakcie.
             var series = await Task.Run(() =>
             {

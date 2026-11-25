@@ -47,28 +47,36 @@ no code or assets from that project were copied.
 | --- | --- |
 | 🖥️ **1:1 preview** | Round 466 × 466 watchface with the fixed fully black background and every widget in export order. |
 | 🧱 **Layers** | Panel to hide, reorder and remove widgets. The background is always the same full-black fill and has no layer. |
-| 🖱️ **Frames & snapping** | Drag and resize widgets, 16 px grid, alignment guides to edges and centres. |
+| 🖱️ **Frames & snapping** | Drag and resize widgets, 16 px grid, alignment guides to edges and centres, per-widget opacity (0–255). |
 | 🕐 **Clocks** | Digital (custom format pattern) and analog (rotating PNG hand sets). |
 | 📅 **Date & time data** | Date with an editable pattern, weekday number, week of year, day of year, lunar date, festivals, world clock. |
 | ❤️ **Health & activity** | Steps, distance, heart rate, stress, PAI, skin temperature, sleep, calories and SpO₂. |
-| 🖼️ **Assets** | TTF fonts, Image-widget graphics, hand sets and status icons — shared stores across projects. |
+| 🎯 **Goals** | Step, calorie, stand and fat-burning targets from the sensor's `.target` field, with a unit checkbox. |
+| 🖼️ **Assets** | TTF fonts, Image-widget graphics, hand sets, status icons and weather icons — shared stores across projects. |
 | 🌐 **Watch language** | The exported ZIP detects the watch language itself (`pl-PL` → Polish month names and AM/PM). |
 | 📦 **`.zip` export** | Self-contained package: generated JS plus every asset actually used. |
 | 🧪 **Simulator test** | Installs the export in the official Zepp OS Simulator at the click of a button. |
-| 🎛️ **Custom preview data** | Override time, date and sensor values in the editor; controls are filtered to the widgets on your watchface and never affect the exported `.zip`. |
+| 🎛️ **Preview options** | Predefined mock data by default; **Live preview** switches only time/date to the real system clock. Custom values are editor-only and never affect the exported `.zip`. |
 
 ### 🧩 Available widgets
 
 - **Time** — Digital time, Analog time
 - **Date** — Date, Day of week (number), Week of year, Day of year, Lunar date, Festival, World clock
 - **Text** — Text (user defined)
-- **Image** — Image (`cover` / `contain` / `stretch` fit)
+- **Image** — Image (blue frame fits the picture's natural size and only moves it; double-click turns it red and stretches the PNG while resizing)
 - **Distance** — Step counter, Distance
-- **Health** — Heart rate, Stress, PAI, Skin temperature, Sleep, Calories, SpO₂
+- **Goals** — Step target, Calorie target, Stand target, Fat burning target, Sleep target, Sleep target, Sleep target
+- **Health** — Heart rate, Stress, PAI, Skin temperature, Sleep, Calories, SpO₂, Stand hours, Fat burning, PAI (week)
+- **Weather** — condition name, city, high/low, sunrise/sunset and 29 weather icons (Classic)
 
 Add a widget with **+ Add widget** on the preview bar; the left-hand Widgets tab is a
 read-only catalog of supported types. Weekday numbering defaults to **Monday = 1**
 (Tuesday = 2); the Sunday-first variant is an App Settings option.
+
+Goals read the watch sensor's `.target` field. **Stand target** and **Fat burning target**
+may not be exposed on Amazfit Active 2 — if a sensor is missing, the watchface keeps the
+project's default value; the editor shows a warning in the widget card and inspector.
+The calorie, stand and fat-burning goals have a **Show unit** checkbox (`kcal`, `h`, `min`).
 
 ### 🎨 Asset management
 
@@ -77,11 +85,12 @@ read-only catalog of supported types. Weekday numbering defaults to **Monday = 1
 | `Fonts` | TTF fonts; bundled **Inter** (SIL OFL 1.1) by default. The preview uses the exact TTF exported to the watch. |
 | `Images` | Graphics for the **Image** widget. |
 | `Hands` | Analog hand sets (bundled **Classic** and **Light**). |
+| `Weather` | Weather icon packs — bundled **Classic** (29 icons from OFL SVG masters, rendered at 512×512 PNG); you can add your own. |
 | `Localization` | UI language catalogs — add your own without rebuilding the app. |
 
 Selected assets are copied into the project folder, so **Save as…** and ZIP export
-never depend on the application store. Hand textures are cropped to their visible pixels
-(`Cover`, no white edges) because ZeppOS cannot scale an `IMG` resource at runtime.
+never depend on the application store. Hand textures are cropped to a tight alpha bounding box with an 8 px margin and
+resampled in premultiplied-alpha space (no white edges), because ZeppOS cannot scale an `IMG` resource at runtime.
 
 ### 📤 Export and simulator
 
@@ -95,7 +104,7 @@ files are saved next to `project.json` and are **not** included in the `.zip`.
 The previews are rendered entirely in Rust (`crates/rusty-core/src/preview.rs`) — never
 with offscreen WinUI controls, which previously left a watchface-image artifact under
 the editor. The 7 frames use hardcoded presets (7 real dates 2022-01-03 … 2022-07-31, weekdays Monday…Sunday, months January…July; strictly increasing time
-seconds, forced HR extremes `56`/`120`), while each frame gets its **own random date**,
+seconds, forced HR extremes `56`/`120`); the seven dates are hardcoded (one per frame),
 so month/day widgets visibly change. All date widgets in a frame share that single
 date; steps are derived from distance (`1300`–`1400` steps/km), so `12.3 km` shows about
 `16 000` steps. Battery decreases deterministically `100% → 10%`. Everything outside
@@ -152,15 +161,15 @@ is open source, so you can extend it yourself with new widgets, formats and lang
 
 **[`docs/TECHNICAL.md`](docs/TECHNICAL.md)** is a file-by-file deep-dive into how the
 application actually works: the `Project`/`Widget` data model, layer ordering, frame
-geometry and snapping math, all 57 `rw_*` FFI exports, the four asset stores and their
+geometry and snapping math, all 65 `rw_*` FFI exports, the five asset stores and their
 scaling algorithms, the shared time/date/locale engine, generated `watchface/index.js`
 (with sensors, timers and per-widget updates), ZIP packaging, and the WinUI preview,
 inspector, navigation and simulator integration. It documents the exact path from an
 editor click to a watchface running on the watch.
 
-The **Custom data** preview option (with its gear button) stores manual overrides in app
-settings only — never in `project.json` — so the exported watchface keeps reading real
-watch sensors. See `docs/TECHNICAL.md` §11.7.
+The **Live preview** option switches time/date to the real system clock; the gear button
+opens editor-only predefined/mock values. Neither is written to `project.json`, so the
+exported watchface keeps reading real watch sensors. See `docs/TECHNICAL.md` §11.7.
 
 ### 🏗️ Architecture
 
@@ -171,7 +180,7 @@ watch sensors. See `docs/TECHNICAL.md` §11.7.
 └───────────────────────────┬──────────────────────────────────┘
                             ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  crates/rusty-ffi  — the only C ABI bridge (57 exports)     │
+│  crates/rusty-ffi  — the only C ABI bridge (65 exports)     │
 └───────────────────────────┬──────────────────────────────────┘
                             ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -215,7 +224,7 @@ rusty-watch/
 │   ├── rusty-core/src/      # model, project, codegen, widgets, layers, formats,
 │   │                        #  asset stores (fonts/images/hands/status), zip, validation
 │   ├── rusty-cli/src/       # CLI: new | validate | export | inspect
-│   └── rusty-ffi/src/       # rw_* C exports (57 functions)
+│   └── rusty-ffi/src/       # rw_* C exports (65 functions)
 ├── native/RustyWatch/       # the only frontend: WinUI 3
 │   ├── MainWindow.xaml(.cs) # shell, HOME, editor, assets, settings, dialogs
 │   ├── RustNative.cs        # P/Invoke bridge to rusty_ffi.dll
@@ -277,7 +286,7 @@ Name, author and App ID land in `app.json` as `appName`, `appId` (`vender` is al
 
 ### 🧪 Tests and verification
 
-1. `cargo test --workspace` — 89 core + 26 FFI tests.
+1. `cargo test --workspace` — 129 core + 33 FFI tests.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. Launch the app and check affected screens in **EN and PL**.
 4. Round-trip `new → export → open → export` must preserve data.
@@ -287,7 +296,7 @@ Name, author and App ID land in `app.json` as `appName`, `appId` (`vender` is al
 
 1. **Create a project** on HOME — the folder is created under the projects root from App Settings.
 2. **Add widgets** from the flyout above the preview and set them in the inspector (edits autosave).
-3. **Add assets** in the Assets tab (font, image, hand set, status icons).
+3. **Add assets** in the Assets tab (font, image, hand set, status icons, weather icons).
 4. **Export the ZIP** with Export — it lands next to `project.json`.
 5. **Test** in the simulator (optional) and install on the watch.
 
@@ -297,9 +306,10 @@ Name, author and App ID land in `app.json` as `appName`, `appId` (`vender` is al
 app.json                    # flat v2 manifest (no `targets`) with defaultLanguage, packageInfo and all Active 2 deviceSources
 app.js                      # entry point
 watchface/index.js          # generated watchface code (hmUI/hmSensor/timer)
-assets/Preview.png          # temporary 314x314 placeholder (scaled app logo) used as the watchface icon (round-masked, transparent corners)
-assets/fonts/…              # used TTFs
-assets/images/…, hands/…, status/… # used assets
+assets/Preview.png          # branded preview.png rescaled to 314x314 (round-masked, transparent corners)
+assets/fonts/font_<hash>.ttf  # used TTFs
+assets/hand_<hash>.png, status_<hash>.png, img_<hash>.png, weather_<hash>.png
+                            # flat, uniquely named copies of the used assets
 ```
 
 ### 🤖 Documentation

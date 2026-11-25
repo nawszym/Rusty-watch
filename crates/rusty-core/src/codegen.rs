@@ -94,11 +94,138 @@ static HEALTH_SENSORS: &[HealthSensor] = &[
         value: "_hSpo2.current ? String(_hSpo2.current) : '--'",
         unit: Some("%"),
     },
+    HealthSensor {
+        source: DataSource::Stand,
+        var: "healthStandSensor",
+        id: "STAND",
+        getter: "_getHealthStand",
+        event: "CHANGE",
+        read_var: "_hStand",
+        value: "_hStand.current ? String(_hStand.current) : '--'",
+        unit: Some("h"),
+    },
+    HealthSensor {
+        source: DataSource::FatBurning,
+        var: "healthFatBurnSensor",
+        id: "FAT_BURRING",
+        getter: "_getHealthFatBurning",
+        event: "CHANGE",
+        read_var: "_hFatBurn",
+        value: "_hFatBurn.current ? String(_hFatBurn.current) : '--'",
+        unit: Some("min"),
+    },
+    // `totalpai` to skumulowane PAI (tydzień). Własny getter, więc nie koliduje
+    // z dziennym `dailypai` — oba czytają ten sam czujnik `hmSensor.id.PAI`.
+    HealthSensor {
+        source: DataSource::PaiWeekly,
+        var: "healthPaiWeeklySensor",
+        id: "PAI",
+        getter: "_getHealthPaiWeekly",
+        event: "CHANGE",
+        read_var: "_hPaiWeekly",
+        value: "String(_hPaiWeekly.totalpai || 0)",
+        unit: None,
+    },
 ];
 
 fn health_sensor(source: Option<DataSource>) -> Option<&'static HealthSensor> {
     let source = source?;
     HEALTH_SENSORS.iter().find(|sensor| sensor.source == source)
+}
+
+/// Pole celu czytane z czujnika. W przeciwieństwie do zdrowotnych `.current`,
+/// cele używają `.target`. Czujniki STAND i FAT_BURRING mogą być nieobecne na
+/// Active 2 — getter zawsze sprawdza `hmSensor.id` i łapie wyjątek.
+#[derive(Clone, Copy)]
+struct TargetSensor {
+    source: DataSource,
+    var: &'static str,
+    id: &'static str,
+    getter: &'static str,
+    read_var: &'static str,
+    unit: Option<&'static str>,
+}
+
+static TARGET_SENSORS: &[TargetSensor] = &[
+    // Kroki współdzielą już istniejący `stepSensor` z `_getStep()`.
+    TargetSensor {
+        source: DataSource::StepTarget,
+        var: "stepSensor",
+        id: "STEP",
+        getter: "_getStep",
+        read_var: "_tStep",
+        unit: None,
+    },
+    TargetSensor {
+        source: DataSource::CalorieTarget,
+        var: "calorieTargetSensor",
+        id: "CALORIE",
+        getter: "_getTargetCalorie",
+        read_var: "_tCalorie",
+        unit: Some("kcal"),
+    },
+    TargetSensor {
+        source: DataSource::StandTarget,
+        var: "standSensor",
+        id: "STAND",
+        getter: "_getTargetStand",
+        read_var: "_tStand",
+        unit: Some("h"),
+    },
+    TargetSensor {
+        source: DataSource::FatBurningTarget,
+        var: "fatBurnSensor",
+        id: "FAT_BURRING",
+        getter: "_getTargetFatBurning",
+        read_var: "_tFat",
+        unit: Some("min"),
+    },
+];
+
+fn target_sensor(source: Option<DataSource>) -> Option<&'static TargetSensor> {
+    let source = source?;
+    TARGET_SENSORS.iter().find(|sensor| sensor.source == source)
+}
+
+/// Pole pogody czytane z `hmSensor.id.WEATHER.getForecastWeather()`.
+/// Wszystkie korzystają z jednego czujnika i jednego odczytu w `weatherTick`.
+#[derive(Clone, Copy)]
+struct WeatherField {
+    source: DataSource,
+    /// Wyrażenie JS zwracające tekst (zmienne `_wData`, `_wForecast`, `_wTide`).
+    value: &'static str,
+}
+
+static WEATHER_FIELDS: &[WeatherField] = &[
+    WeatherField {
+        source: DataSource::WeatherCondition,
+        value: "L.weather[Math.max(0, Math.min(28, (_wForecast.data[0] ? _wForecast.data[0].index : 25) | 0))] || L.weather[25]",
+    },
+    WeatherField {
+        source: DataSource::WeatherCity,
+        value: "_cityName(_wData && _wData.cityName)",
+    },
+    WeatherField {
+        source: DataSource::WeatherHigh,
+        value: "(_wForecast.data[0] && _wForecast.data[0].high !== undefined) ? String(_wForecast.data[0].high) + '°' : '--°'",
+    },
+    WeatherField {
+        source: DataSource::WeatherLow,
+        value: "(_wForecast.data[0] && _wForecast.data[0].low !== undefined) ? String(_wForecast.data[0].low) + '°' : '--°'",
+    },
+    WeatherField {
+        source: DataSource::Sunrise,
+        value: "(_wTide.data[0] && _wTide.data[0].sunrise) ? p2(_wTide.data[0].sunrise.hour) + ':' + p2(_wTide.data[0].sunrise.minute) : '--:--'",
+    },
+    WeatherField {
+        source: DataSource::Sunset,
+        value: "(_wTide.data[0] && _wTide.data[0].sunset) ? p2(_wTide.data[0].sunset.hour) + ':' + p2(_wTide.data[0].sunset.minute) : '--:--'",
+    },
+];
+
+fn weather_field(source: Option<DataSource>) -> Option<&'static WeatherField> {
+    let source = source?;
+    WEATHER_FIELDS.iter().find(|field| field.source == source)
 }
 
 /// Wszystkie warianty Active 2, które ZeppOS rozpoznaje na tarczy.
@@ -300,6 +427,29 @@ pub fn generate_index_js_with_hands(
     let needs_world_clock = widgets
         .iter()
         .any(|w| w.data_source == Some(DataSource::WorldClock));
+    let weather_widgets: Vec<(usize, &'static WeatherField)> = widgets
+        .iter()
+        .enumerate()
+        .filter_map(|(index, w)| weather_field(w.data_source).map(|field| (index, field)))
+        .collect();
+    let weather_icons: Vec<(usize, String)> = widgets
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| w.kind == WidgetKind::WeatherIcon)
+        .filter_map(|(index, w)| {
+            let set = w.weather_icon_set.as_deref().unwrap_or(crate::weather::DEFAULT_WEATHER_PACK);
+            let names: Vec<String> = (0..crate::weather::ICON_COUNT)
+                .map(|i| format!("'{}'", js_string(&crate::export_paths::exported_asset_name(&crate::weather::js_icon_path(set, i)))))
+                .collect();
+            Some((index, names.join(", ")))
+        })
+        .collect();
+    let sleep_target_indexes: Vec<usize> = widgets
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| w.data_source == Some(DataSource::SleepTarget))
+        .map(|(index, _)| index)
+        .collect();
     let health_widgets: Vec<(usize, &'static HealthSensor, bool)> = widgets
         .iter()
         .enumerate()
@@ -309,8 +459,23 @@ pub fn generate_index_js_with_hands(
         .collect();
     let mut used_health: Vec<&'static HealthSensor> = Vec::new();
     for (_, sensor, _) in &health_widgets {
-        if !used_health.iter().any(|s| s.id == sensor.id) {
+        // Dwa pola mogą czytać ten sam czujnik (np. PAI dzień i tydzień) —
+        // rozróżniamy je getterem, żeby wygenerować oba i oba nasłuchy.
+        if !used_health.iter().any(|s| s.getter == sensor.getter) {
             used_health.push(sensor);
+        }
+    }
+    let target_widgets: Vec<(usize, &'static TargetSensor, bool)> = widgets
+        .iter()
+        .enumerate()
+        .filter_map(|(index, w)| {
+            target_sensor(w.data_source).map(|sensor| (index, sensor, w.show_unit))
+        })
+        .collect();
+    let mut used_targets: Vec<&'static TargetSensor> = Vec::new();
+    for (_, sensor, _) in &target_widgets {
+        if !used_targets.iter().any(|s| s.id == sensor.id) {
+            used_targets.push(sensor);
         }
     }
 
@@ -350,10 +515,33 @@ pub fn generate_index_js_with_hands(
         prelude.push_str("}\n");
     }
     prelude.push_str("let timeSensor = null\nlet tick = null\nlet tickTimer = null\n");
+    if !weather_widgets.is_empty() || !weather_icons.is_empty() {
+        prelude.push_str("let weatherSensor = null\nlet weatherTick = null\nlet _wData = null\nlet _wForecast = { data: [] }\nlet _wTide = { data: [] }\n");
+        prelude.push_str("function _getWeather() {\n");
+        prelude.push_str("  if (!weatherSensor && hmSensor && hmSensor.createSensor && hmSensor.id && hmSensor.id.WEATHER) {\n");
+        prelude.push_str("    try { weatherSensor = hmSensor.createSensor(hmSensor.id.WEATHER) } catch (e) { weatherSensor = null }\n");
+        prelude.push_str("  }\n  return weatherSensor\n}\n");
+        for (index, names) in &weather_icons {
+            prelude.push_str(&format!(
+                "const weatherIcons_{index} = [{names}]\n"
+            ));
+        }
+    }
+    if !sleep_target_indexes.is_empty() {
+        prelude.push_str("function _sleepTargetText() {\n");
+        prelude.push_str("  let minutes = 0\n");
+        prelude.push_str("  try { if (typeof hmSetting !== 'undefined' && hmSetting.getSleepTarget) minutes = hmSetting.getSleepTarget() || 0 } catch (e) { minutes = 0 }\n");
+        prelude.push_str("  if (!minutes || minutes < 0) return '-- h'\n");
+        prelude.push_str("  const hours = Math.floor(minutes / 60)\n  const rest = minutes % 60\n");
+        prelude.push_str("  return rest ? (hours + ' h ' + rest + ' min') : (hours + ' h')\n}\n");
+    }
     prelude.push_str("let stepSensor = null\nlet stepTick = null\n");
     prelude.push_str("let distanceSensor = null\nlet distanceTick = null\n");
     if !battery_indexes.is_empty() {
         prelude.push_str("let batterySensor = null\nlet batteryTick = null\n");
+    }
+    if !target_widgets.is_empty() {
+        prelude.push_str("let targetTick = null\nlet targetSensors = null\n");
     }
     prelude.push_str("const refs = []\n\n");
     prelude.push_str("function _getTime() {\n");
@@ -419,6 +607,28 @@ pub fn generate_index_js_with_hands(
             prelude.push_str("  return Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0')\n");
             prelude.push_str("}\n");
         }
+    }
+
+    // Getery pól celu. `_getStep()` jest już wygenerowany powyżej i współdzielony
+    // z licznikiem kroków; pozostałe czujniki tworzymy leniwie i w try/catch,
+    // żeby brak STAND/FAT_BURRING na Active 2 nie położył całej tarczy.
+    for sensor in &used_targets {
+        if sensor.getter == "_getStep" {
+            continue;
+        }
+        prelude.push_str(&format!("let {} = null\n", sensor.var));
+        prelude.push_str(&format!("function {}() {{\n", sensor.getter));
+        prelude.push_str(&format!(
+            "  if (!{var} && hmSensor && hmSensor.createSensor && hmSensor.id && hmSensor.id.{id}) {{\n",
+            var = sensor.var,
+            id = sensor.id
+        ));
+        prelude.push_str(&format!(
+            "    try {{ {var} = hmSensor.createSensor(hmSensor.id.{id}) }} catch (e) {{ {var} = null }}\n",
+            var = sensor.var,
+            id = sensor.id
+        ));
+        prelude.push_str(&format!("  }}\n  return {}\n}}\n", sensor.var));
     }
 
     if let Some(custom) = &project.custom_code {
@@ -548,6 +758,72 @@ pub fn generate_index_js_with_hands(
         out.push_str("      healthTick()\n");
     }
 
+    if !target_widgets.is_empty() {
+        // Wspólny tick dla wszystkich pól celu — czyta `.target`, nie `.current`.
+        out.push_str("      targetTick = () => {\n");
+        for (index, sensor, show_unit) in &target_widgets {
+            let read = match (*show_unit, sensor.unit) {
+                (true, Some(unit)) => {
+                    format!("String({var}.target) + ' {unit}'", var = sensor.read_var)
+                }
+                _ => format!("String({}.target)", sensor.read_var),
+            };
+            out.push_str(&format!(
+                "        const {var} = {}()\n",
+                sensor.getter,
+                var = sensor.read_var
+            ));
+            out.push_str(&format!(
+                "        if ({var}) refs[{index}].setProperty(hmUI.prop.TEXT, {read})\n",
+                var = sensor.read_var
+            ));
+        }
+        out.push_str("      }\n");
+        out.push_str("      targetSensors = [\n");
+        for sensor in &used_targets {
+            out.push_str(&format!(
+                "        {{ get: {}, event: 'CHANGE' }},\n",
+                sensor.getter
+            ));
+        }
+        out.push_str("      ]\n");
+        out.push_str("      targetSensors.forEach((entry) => {\n");
+        out.push_str("        const sensor = entry.get()\n");
+        out.push_str("        if (sensor && sensor.addEventListener && sensor.event && sensor.event[entry.event]) sensor.addEventListener(sensor.event[entry.event], targetTick)\n");
+        out.push_str("      })\n");
+        out.push_str("      targetTick()\n");
+    }
+
+    if !weather_widgets.is_empty() || !weather_icons.is_empty() {
+        out.push_str("      weatherTick = () => {\n");
+        out.push_str("        const _weather = _getWeather()\n");
+        out.push_str("        if (!_weather || !_weather.getForecastWeather) return\n");
+        out.push_str("        try { _wData = _weather.getForecastWeather() || null } catch (e) { _wData = null }\n");
+        out.push_str("        if (!_wData) return\n");
+        out.push_str("        _wForecast = (_wData.forecastData && _wData.forecastData.data && _wData.forecastData.data.length) ? _wData.forecastData : { data: [] }\n");
+        out.push_str("        _wTide = (_wData.tideData && _wData.tideData.data && _wData.tideData.data.length) ? _wData.tideData : { data: [] }\n");
+        for (index, field) in &weather_widgets {
+            out.push_str(&format!(
+                "        refs[{index}].setProperty(hmUI.prop.TEXT, {})\n",
+                field.value
+            ));
+        }
+        for (index, _) in &weather_icons {
+            out.push_str(&format!(
+                "        const _wi = Math.max(0, Math.min(28, (_wForecast.data[0] ? _wForecast.data[0].index : 25) | 0))\n        if (weatherIcons_{index}[_wi]) refs[{index}].setProperty(hmUI.prop.SRC, weatherIcons_{index}[_wi])\n"
+            ));
+        }
+        out.push_str("      }\n");
+        out.push_str("      weatherTick()\n");
+    }
+    if !sleep_target_indexes.is_empty() {
+        for index in &sleep_target_indexes {
+            out.push_str(&format!(
+                "      refs[{index}].setProperty(hmUI.prop.TEXT, _sleepTargetText())\n"
+            ));
+        }
+    }
+
     out.push_str("      tick = () => {\n");
     out.push_str("        const t = _getTime()\n");
     if !step_indexes.is_empty() {
@@ -575,6 +851,19 @@ pub fn generate_index_js_with_hands(
     if !health_widgets.is_empty() {
         out.push_str("        if (healthTick) healthTick()\n");
     }
+    if !target_widgets.is_empty() {
+        out.push_str("        if (targetTick) targetTick()\n");
+    }
+    if !weather_widgets.is_empty() || !weather_icons.is_empty() {
+        out.push_str("        if (weatherTick) weatherTick()\n");
+    }
+    if !sleep_target_indexes.is_empty() {
+        for index in &sleep_target_indexes {
+            out.push_str(&format!(
+                "        refs[{index}].setProperty(hmUI.prop.TEXT, _sleepTargetText())\n"
+            ));
+        }
+    }
     out.push_str("      }\n");
     // WIDGET_DELEGATE przejmuje cykl pracy tarczy — tak jak w referencyjnej
     // paczce. W AOD zegarek sam budzi tarczę MINUTEEND, w trybie normalnym
@@ -594,6 +883,13 @@ pub fn generate_index_js_with_hands(
         out.push_str("          if (_t && _t.addEventListener && _t.event && _t.event.MINUTEEND) _t.addEventListener(_t.event.MINUTEEND, tick)\n");
     }
     out.push_str("          tick()\n");
+    if !sleep_target_indexes.is_empty() {
+        for index in &sleep_target_indexes {
+            out.push_str(&format!(
+                "          refs[{index}].setProperty(hmUI.prop.TEXT, _sleepTargetText())\n"
+            ));
+        }
+    }
     out.push_str("        },\n");
     out.push_str("        pause_call: function() {\n");
     out.push_str("          if (tickTimer) { timer.stopTimer(tickTimer); tickTimer = null }\n");
@@ -626,6 +922,16 @@ pub fn generate_index_js_with_hands(
         out.push_str("        if (sensor && sensor.removeEventListener && sensor.event && sensor.event[entry.event]) sensor.removeEventListener(sensor.event[entry.event], healthTick)\n");
         out.push_str("      })\n");
         out.push_str("      healthSensors = null\n      healthTick = null\n");
+    }
+    if !target_widgets.is_empty() {
+        out.push_str("      if (targetSensors && targetTick) targetSensors.forEach((entry) => {\n");
+        out.push_str("        const sensor = entry.get()\n");
+        out.push_str("        if (sensor && sensor.removeEventListener && sensor.event && sensor.event[entry.event]) sensor.removeEventListener(sensor.event[entry.event], targetTick)\n");
+        out.push_str("      })\n");
+        out.push_str("      targetSensors = null\n      targetTick = null\n");
+    }
+    if !weather_widgets.is_empty() || !weather_icons.is_empty() {
+        out.push_str("      weatherSensor = null\n      weatherTick = null\n      _wData = null\n");
     }
     out.push_str("      timeSensor = null\n      tick = null\n    },\n");
     out.push_str("    onInit() {},\n");
@@ -684,6 +990,10 @@ fn initial_text(w: &Widget) -> Option<String> {
         _ if w.kind.is_health() => w
             .kind
             .health_initial_text(w.show_unit)
+            .or_else(|| w.text.clone()),
+        _ if w.kind.is_goal() => w
+            .kind
+            .goal_initial_text(w.show_unit)
             .or_else(|| w.text.clone()),
         _ => w.text.clone(),
     }
@@ -757,6 +1067,9 @@ fn hand_widget_call(
     let flat = crate::export_paths::exported_asset_name(src);
     props.push_str(&format!("{pad}src: {},\n", js_string(&flat)));
     props.push_str(&format!("{pad}auto_scale: false,\n"));
+    if w.alpha < 255 {
+        props.push_str(&format!("{pad}alpha: {},\n", w.alpha));
+    }
     if rotating {
         props.push_str(&format!("{pad}angle: {angle_init},\n"));
     }
@@ -817,6 +1130,7 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
              {pad}h: {},\n\
              {pad}src: {},\n\
              {pad}type: {},\n\
+             {pad}alpha: {},\n\
              {pad}show_level: {}\n\
              {pad}}})",
             w.x,
@@ -825,6 +1139,7 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
             w.h,
             js_string(&flat),
             status.js_constant(),
+            w.alpha,
             JS_SHOW_LEVEL
         );
     }
@@ -836,7 +1151,7 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
     props.push_str(&format!("{pad}h: {},\n", w.h));
 
     match w.kind {
-        WidgetKind::Image | WidgetKind::Images => {
+        WidgetKind::Image | WidgetKind::Images | WidgetKind::WeatherIcon => {
             // Plik PNG jest fizycznie przygotowany do w × h (image_fit), więc
             // ZeppOS nie musi nic skalować w runtime. Nazwa jest spłaszczana
             // tak samo jak wpis w ZIP-ie (patrz `export_paths`).
@@ -864,7 +1179,21 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
         | WidgetKind::SleepText
         | WidgetKind::CalorieText
         | WidgetKind::Spo2Text
-        | WidgetKind::BatteryText => {
+        | WidgetKind::BatteryText
+        | WidgetKind::StepTargetText
+        | WidgetKind::CalorieTargetText
+        | WidgetKind::StandTargetText
+        | WidgetKind::FatBurningTargetText
+        | WidgetKind::StandText
+        | WidgetKind::FatBurningText
+        | WidgetKind::PaiWeeklyText
+        | WidgetKind::SleepTargetText
+        | WidgetKind::WeatherConditionText
+        | WidgetKind::WeatherCityText
+        | WidgetKind::WeatherHighText
+        | WidgetKind::WeatherLowText
+        | WidgetKind::SunriseText
+        | WidgetKind::SunsetText => {
             optional_field(&mut props, pad, "text", &initial_text(w), false);
             if let Some(size) = w.text_size {
                 props.push_str(&format!("{pad}text_size: {size},\n"));
@@ -887,6 +1216,9 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
         }
     }
 
+    if w.alpha < 255 {
+        props.push_str(&format!("{pad}alpha: {},\n", w.alpha));
+    }
     props.push_str(&format!(
         "{pad}show_level: {}\n",
         JS_SHOW_LEVEL
@@ -895,7 +1227,7 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
     format!(
         "hmUI.createWidget(hmUI.widget.{}, {{\n{}    }})",
         match w.kind {
-            WidgetKind::Image | WidgetKind::Images => "IMG",
+            WidgetKind::Image | WidgetKind::Images | WidgetKind::WeatherIcon => "IMG",
             WidgetKind::Text
             | WidgetKind::TimeText
             | WidgetKind::DateText
@@ -914,7 +1246,21 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
             | WidgetKind::SleepText
             | WidgetKind::CalorieText
             | WidgetKind::Spo2Text
-            | WidgetKind::BatteryText => "TEXT",
+            | WidgetKind::BatteryText
+            | WidgetKind::StepTargetText
+            | WidgetKind::CalorieTargetText
+            | WidgetKind::StandTargetText
+            | WidgetKind::FatBurningTargetText
+            | WidgetKind::StandText
+            | WidgetKind::FatBurningText
+            | WidgetKind::PaiWeeklyText
+            | WidgetKind::SleepTargetText
+            | WidgetKind::WeatherConditionText
+            | WidgetKind::WeatherCityText
+            | WidgetKind::WeatherHighText
+            | WidgetKind::WeatherLowText
+            | WidgetKind::SunriseText
+            | WidgetKind::SunsetText => "TEXT",
             WidgetKind::StatusIcon | WidgetKind::AnalogTime => {
                 unreachable!("image widgets are handled above")
             }

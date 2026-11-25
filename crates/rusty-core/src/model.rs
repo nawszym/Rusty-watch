@@ -178,6 +178,11 @@ fn default_show_unit() -> bool {
     true
 }
 
+/// Pełna nieprzezroczystość — starsze projekty nie mają pola `alpha`.
+fn default_alpha() -> u8 {
+    255
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Asset {
@@ -197,6 +202,8 @@ pub enum AssetRole {
     Hand,
     /// Ikona statusu systemu skopiowana z `%APPDATA%\RustyWatch\Status` do projektu.
     StatusIcon,
+    /// Ikona pogody skopiowana z `%APPDATA%\RustyWatch\Weather` do projektu.
+    WeatherIcon,
     Other,
 }
 
@@ -272,12 +279,18 @@ pub struct Widget {
     /// Domyślnie `true`, więc starsze projekty zachowują dotychczasowy wygląd.
     #[serde(default = "default_show_unit")]
     pub show_unit: bool,
+    /// Krycie widgetu (0–255) przekazywane do `alpha` w ZeppOS. Domyślnie 255.
+    #[serde(default = "default_alpha")]
+    pub alpha: u8,
     /// Nazwa paczki ikon statusu z `%APPDATA%\RustyWatch\Status` (tylko StatusIcon).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_icon_set: Option<String>,
     /// Który stan systemu reprezentuje ikona (tylko StatusIcon).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_type: Option<StatusType>,
+    /// Nazwa paczki ikon pogody z `%APPDATA%\RustyWatch\Weather` (tylko WeatherIcon).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weather_icon_set: Option<String>,
 }
 
 /// Stan systemu wyświetlany przez `hmUI.widget.IMG_STATUS`.
@@ -384,6 +397,36 @@ pub enum WidgetKind {
     Spo2Text,
     /// Poziom baterii z `hmSensor.id.BATTERY` (widget tekstowy).
     BatteryText,
+    /// Cel kroków z `hmSensor.id.STEP.target`.
+    StepTargetText,
+    /// Cel kalorii z `hmSensor.id.CALORIE.target`.
+    CalorieTargetText,
+    /// Cel godzin stania z `hmSensor.id.STAND.target`.
+    StandTargetText,
+    /// Cel minut spalania tłuszczu z `hmSensor.id.FAT_BURRING.target`.
+    FatBurningTargetText,
+    /// Bieżące godziny stania z `hmSensor.id.STAND.current`.
+    StandText,
+    /// Bieżące minuty spalania tłuszczu z `hmSensor.id.FAT_BURRING.current`.
+    FatBurningText,
+    /// Skumulowane PAI z `hmSensor.id.PAI.totalpai`.
+    PaiWeeklyText,
+    /// Cel snu z `hmSetting.getSleepTarget()` (minuty).
+    SleepTargetText,
+    /// Nazwa aktualnej pogody z indeksu `forecastData.data[0].index`.
+    WeatherConditionText,
+    /// Miasto z `weather.getForecastWeather().cityName`.
+    WeatherCityText,
+    /// Dziś najwyższa temperatura z `forecastData.data[0].high`.
+    WeatherHighText,
+    /// Dziś najniższa temperatura z `forecastData.data[0].low`.
+    WeatherLowText,
+    /// Wschód słońca z `tideData.data[0].sunrise`.
+    SunriseText,
+    /// Zachód słońca z `tideData.data[0].sunset`.
+    SunsetText,
+    /// Ikona pogody — jeden z 29 plików wybierany w runtime przez indeks pogody.
+    WeatherIcon,
     /// Ikona stanu systemu rysowana przez `hmUI.widget.IMG_STATUS`.
     StatusIcon,
     /// Zegar analogowy: kilka widgetów `IMG` obracanych wokół środka tarczy.
@@ -402,6 +445,9 @@ impl WidgetKind {
             Self::SleepText => ("--:--", None),
             Self::CalorieText => ("--", Some(" kcal")),
             Self::Spo2Text => ("--", Some("%")),
+            Self::StandText => ("--", Some(" h")),
+            Self::FatBurningText => ("--", Some(" min")),
+            Self::PaiWeeklyText => ("--", None),
             _ => return None,
         };
         Some(match (show_unit, unit) {
@@ -434,7 +480,53 @@ impl WidgetKind {
                 | Self::SleepText
                 | Self::CalorieText
                 | Self::Spo2Text
+                | Self::StandText
+                | Self::FatBurningText
+                | Self::PaiWeeklyText
         )
+    }
+
+    /// Widgety kategorii CELE — czytają pole `.target` czujnika zamiast `.current`.
+    pub fn is_goal(self) -> bool {
+        matches!(
+            self,
+            Self::StepTargetText
+                | Self::CalorieTargetText
+                | Self::StandTargetText
+                | Self::FatBurningTargetText
+                | Self::SleepTargetText
+        )
+    }
+
+    /// Widgety kategorii Pogoda — czytają `hmSensor.id.WEATHER`.
+    pub fn is_weather(self) -> bool {
+        matches!(
+            self,
+            Self::WeatherConditionText
+                | Self::WeatherCityText
+                | Self::WeatherHighText
+                | Self::WeatherLowText
+                | Self::SunriseText
+                | Self::SunsetText
+                | Self::WeatherIcon
+        )
+    }
+
+    /// Tekst początkowy pola celu — na PC i przed pierwszym odczytem czujnika.
+    /// `show_unit` decyduje o sufiksie (kcal / h / min), tak samo jak w JS.
+    pub fn goal_initial_text(self, show_unit: bool) -> Option<String> {
+        let (base, unit) = match self {
+            Self::StepTargetText => ("10000", None),
+            Self::CalorieTargetText => ("2000", Some(" kcal")),
+            Self::StandTargetText => ("12", Some(" h")),
+            Self::FatBurningTargetText => ("45", Some(" min")),
+            Self::SleepTargetText => ("--", Some(" h")),
+            _ => return None,
+        };
+        Some(match (show_unit, unit) {
+            (true, Some(unit)) => format!("{base}{unit}"),
+            _ => base.to_string(),
+        })
     }
 }
 
@@ -459,6 +551,21 @@ pub enum DataSource {
     Sleep,
     Calorie,
     Spo2,
+    StepTarget,
+    CalorieTarget,
+    StandTarget,
+    FatBurningTarget,
+    Stand,
+    FatBurning,
+    PaiWeekly,
+    SleepTarget,
+    WeatherCondition,
+    WeatherCity,
+    WeatherHigh,
+    WeatherLow,
+    Sunrise,
+    Sunset,
+    WeatherIcon,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -638,8 +745,10 @@ impl Project {
                     visible: true,
                     measurement_system: None,
                     show_unit: true,
+                    alpha: 255,
                     status_icon_set: None,
                     status_type: None,
+                    weather_icon_set: None,
                 },
             ],
             custom_code: None,

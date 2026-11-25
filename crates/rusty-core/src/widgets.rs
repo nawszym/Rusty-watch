@@ -18,10 +18,14 @@ pub const CATEGORY_IMAGES: &str = "images";
 pub const CATEGORY_DATE: &str = "date";
 /// Licznik kroków i dystans — dane z czujników aktywności.
 pub const CATEGORY_DISTANCE: &str = "distance";
+/// Dzienne cele (kroki, kalorie, stanie, spalanie tłuszczu) z pola `.target` czujników.
+pub const CATEGORY_GOALS: &str = "goals";
 /// Puls, stres, PAI, temperatura, sen, kalorie i SpO₂.
 pub const CATEGORY_HEALTH: &str = "health";
 /// Stan urządzenia: bateria oraz ikony statusu systemu.
 pub const CATEGORY_SYSTEM: &str = "system";
+/// Pogoda: nazwa, miasto, temperatury, wschód/zachód i ikona.
+pub const CATEGORY_WEATHER: &str = "weather";
 
 
 /// Pozycja katalogu widgetów czytana przez FFI. `category` pozwala UI grupować
@@ -89,6 +93,22 @@ pub fn supported_widgets() -> Vec<SupportedWidget> {
             category: CATEGORY_DISTANCE,
         },
         SupportedWidget {
+            kind: "steps-target",
+            category: CATEGORY_GOALS,
+        },
+        SupportedWidget {
+            kind: "calories-target",
+            category: CATEGORY_GOALS,
+        },
+        SupportedWidget {
+            kind: "stand-target",
+            category: CATEGORY_GOALS,
+        },
+        SupportedWidget {
+            kind: "fat-burning-target",
+            category: CATEGORY_GOALS,
+        },
+        SupportedWidget {
             kind: "heart",
             category: CATEGORY_HEALTH,
         },
@@ -117,6 +137,18 @@ pub fn supported_widgets() -> Vec<SupportedWidget> {
             category: CATEGORY_HEALTH,
         },
         SupportedWidget {
+            kind: "stand",
+            category: CATEGORY_HEALTH,
+        },
+        SupportedWidget {
+            kind: "fat-burning",
+            category: CATEGORY_HEALTH,
+        },
+        SupportedWidget {
+            kind: "pai-weekly",
+            category: CATEGORY_HEALTH,
+        },
+        SupportedWidget {
             kind: "battery",
             category: CATEGORY_SYSTEM,
         },
@@ -135,6 +167,38 @@ pub fn supported_widgets() -> Vec<SupportedWidget> {
         SupportedWidget {
             kind: "status-lock",
             category: CATEGORY_SYSTEM,
+        },
+        SupportedWidget {
+            kind: "sleep-target",
+            category: CATEGORY_GOALS,
+        },
+        SupportedWidget {
+            kind: "weather-condition",
+            category: CATEGORY_WEATHER,
+        },
+        SupportedWidget {
+            kind: "weather-city",
+            category: CATEGORY_WEATHER,
+        },
+        SupportedWidget {
+            kind: "weather-high",
+            category: CATEGORY_WEATHER,
+        },
+        SupportedWidget {
+            kind: "weather-low",
+            category: CATEGORY_WEATHER,
+        },
+        SupportedWidget {
+            kind: "sunrise",
+            category: CATEGORY_WEATHER,
+        },
+        SupportedWidget {
+            kind: "sunset",
+            category: CATEGORY_WEATHER,
+        },
+        SupportedWidget {
+            kind: "weather-icon",
+            category: CATEGORY_WEATHER,
         },
     ]
 }
@@ -199,6 +263,148 @@ fn health_spec(
             "SpO2",
             "--%",
             40,
+        ),
+        "stand" => (
+            WidgetKind::StandText,
+            DataSource::Stand,
+            "stand",
+            "Stand hours",
+            "-- h",
+            40,
+        ),
+        "fat-burning" => (
+            WidgetKind::FatBurningText,
+            DataSource::FatBurning,
+            "fat-burning",
+            "Fat burning",
+            "-- min",
+            40,
+        ),
+        "pai-weekly" => (
+            WidgetKind::PaiWeeklyText,
+            DataSource::PaiWeekly,
+            "pai-weekly",
+            "PAI weekly",
+            "--",
+            40,
+        ),
+        _ => return None,
+    })
+}
+
+/// Specyfikacja pola celu: (typ, źródło, prefiks id, nazwa, tekst początkowy, rozmiar).
+/// Wartość na zegarku pochodzi z pola `.target` czujnika — PC pokazuje tylko
+/// sensowny placeholder. `STAND` i `FAT_BURRING` mogą być nieobecne na Active 2,
+/// więc generator JS zabezpiecza ich odczyt w `try/catch`.
+fn target_spec(
+    kind: &str,
+) -> Option<(WidgetKind, DataSource, &'static str, &'static str, &'static str, u32)> {
+    Some(match kind {
+        "steps-target" => (
+            WidgetKind::StepTargetText,
+            DataSource::StepTarget,
+            "steps-target",
+            "Step target",
+            "10000",
+            40,
+        ),
+        "calories-target" => (
+            WidgetKind::CalorieTargetText,
+            DataSource::CalorieTarget,
+            "calories-target",
+            "Calorie target",
+            "2000 kcal",
+            40,
+        ),
+        "stand-target" => (
+            WidgetKind::StandTargetText,
+            DataSource::StandTarget,
+            "stand-target",
+            "Stand target",
+            "12 h",
+            40,
+        ),
+        "fat-burning-target" => (
+            WidgetKind::FatBurningTargetText,
+            DataSource::FatBurningTarget,
+            "fat-burning-target",
+            "Fat burning target",
+            "45 min",
+            40,
+        ),
+        // `hmSetting.getSleepTarget()` zwraca minuty, nie pole `.target` czujnika.
+        "sleep-target" => (
+            WidgetKind::SleepTargetText,
+            DataSource::SleepTarget,
+            "sleep-target",
+            "Sleep target",
+            "-- h",
+            40,
+        ),
+        _ => return None,
+    })
+}
+
+/// Specyfikacja pola pogody: (typ, źródło, prefiks id, nazwa, tekst początkowy, rozmiar).
+fn weather_spec(
+    kind: &str,
+) -> Option<(WidgetKind, DataSource, &'static str, &'static str, &'static str, u32)> {
+    Some(match kind {
+        "weather-condition" => (
+            WidgetKind::WeatherConditionText,
+            DataSource::WeatherCondition,
+            "weather-condition",
+            "Weather condition",
+            "--",
+            40,
+        ),
+        "weather-city" => (
+            WidgetKind::WeatherCityText,
+            DataSource::WeatherCity,
+            "weather-city",
+            "City",
+            "--",
+            40,
+        ),
+        "weather-high" => (
+            WidgetKind::WeatherHighText,
+            DataSource::WeatherHigh,
+            "weather-high",
+            "High temperature",
+            "--°",
+            40,
+        ),
+        "weather-low" => (
+            WidgetKind::WeatherLowText,
+            DataSource::WeatherLow,
+            "weather-low",
+            "Low temperature",
+            "--°",
+            40,
+        ),
+        "sunrise" => (
+            WidgetKind::SunriseText,
+            DataSource::Sunrise,
+            "sunrise",
+            "Sunrise",
+            "--:--",
+            40,
+        ),
+        "sunset" => (
+            WidgetKind::SunsetText,
+            DataSource::Sunset,
+            "sunset",
+            "Sunset",
+            "--:--",
+            40,
+        ),
+        "weather-icon" => (
+            WidgetKind::WeatherIcon,
+            DataSource::WeatherIcon,
+            "weather-icon",
+            "Weather icon",
+            "",
+            crate::weather::DEFAULT_ICON_SIZE as u32,
         ),
         _ => return None,
     })
@@ -549,6 +755,8 @@ fn status_icon_spec(kind: &str) -> Option<StatusType> {
 /// z kategorii `health`, bateria oraz ikony statusu z kategorii `system`.
 pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
     let health = health_spec(kind);
+    let target = target_spec(kind);
+    let weather = weather_spec(kind);
     let date_field = date_field_spec(kind);
     let status_icon = status_icon_spec(kind);
     let battery = kind == "battery";
@@ -560,7 +768,12 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         "images" => (false, false, false, false, false, true),
         "steps" => (false, false, false, true, false, false),
         "distance" => (false, false, false, false, true, false),
-        _ if health.is_some() || date_field.is_some() || status_icon.is_some() => {
+        _ if health.is_some()
+            || target.is_some()
+            || weather.is_some()
+            || date_field.is_some()
+            || status_icon.is_some() =>
+        {
             (false, false, false, false, false, false)
         }
         _ => bail!("Nieobsługiwany typ widgetu: {kind}"),
@@ -588,6 +801,10 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         }
     } else if let Some((_, _, health_prefix, _, _, _)) = health {
         health_prefix
+    } else if let Some((_, _, target_prefix, _, _, _)) = target {
+        target_prefix
+    } else if let Some((_, _, weather_prefix, _, _, _)) = weather {
+        weather_prefix
     } else if let Some((_, _, date_prefix, _, _, _)) = date_field {
         date_prefix
     } else {
@@ -645,8 +862,10 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             visible: true,
             measurement_system: None,
             show_unit: true,
+            alpha: 255,
             status_icon_set: None,
             status_type: None,
+            weather_icon_set: None,
         }
     } else if images {
         // Statyczny obrazek — plik PNG jest przygotowywany do rozmiaru ramki
@@ -681,8 +900,10 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             visible: true,
             measurement_system: None,
             show_unit: true,
+            alpha: 255,
             status_icon_set: None,
             status_type: None,
+            weather_icon_set: None,
         }
     } else if date {
         // Data to widget tekstowy z danymi `Date`. `time_format` przechowuje tu
@@ -718,8 +939,10 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             visible: true,
             measurement_system: None,
             show_unit: true,
+            alpha: 255,
             status_icon_set: None,
             status_type: None,
+            weather_icon_set: None,
         }
     } else if user_text {
         // Zwykły tekst wpisany w inspektorze. Bez `dataSource` i bez wzorca —
@@ -754,8 +977,10 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             visible: true,
             measurement_system: None,
             show_unit: true,
+            alpha: 255,
             status_icon_set: None,
             status_type: None,
+            weather_icon_set: None,
         }
     } else if steps {
         // Licznik kroków czyta wartość z czujnika Zegarka — w podglądzie edytora
@@ -790,8 +1015,10 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             visible: true,
             measurement_system: None,
             show_unit: true,
+            alpha: 255,
             status_icon_set: None,
             status_type: None,
+            weather_icon_set: None,
         }
     } else if distance {
         // Dystans czyta czujnik ZeppOS w metrach. Jednostka domyślna pochodzi
@@ -826,8 +1053,10 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             visible: true,
             measurement_system: None,
             show_unit: true,
+            alpha: 255,
             status_icon_set: None,
             status_type: None,
+            weather_icon_set: None,
         }
     } else if let Some((kind, source, _, name, initial, size)) = date_field {
         // Pole daty — wartość jest generowana przez czujnik TIME / WORLD_CLOCK
@@ -862,8 +1091,48 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             visible: true,
             measurement_system: None,
             show_unit: true,
+            alpha: 255,
             status_icon_set: None,
             status_type: None,
+            weather_icon_set: None,
+        }
+    } else if let Some((target_kind, target_source, _, target_name, initial, size)) = target {
+        // Pole celu — wartość czyta czujnik na zegarku (pole `.target`). Na PC
+        // i przed pierwszym odczytem zostaje sensowny placeholder z katalogu.
+        Widget {
+            id: id.clone(),
+            name: format!("{target_name}{suffix}"),
+            kind: target_kind,
+            x: 23,
+            y: 150,
+            w: 420,
+            h: 60,
+            z: 0,
+            text: Some(initial.to_string()),
+            text_size: Some(size),
+            font: None,
+            time_format: None,
+            color: Some("0xFFFFFFFF".to_string()),
+            src: None,
+            image_fit: FitMode::default(),
+            hand_set: None,
+            hour_src: None,
+            minute_src: None,
+            second_src: None,
+            cap_src: None,
+            data_source: Some(target_source),
+            align: Some(Align::Center),
+            v_align: VAlign::Center,
+            show_level: ShowLevel::Normal,
+            auto_scale: false,
+            text_style: TextStyle::Ellipsis,
+            visible: true,
+            measurement_system: None,
+            show_unit: true,
+            alpha: 255,
+            status_icon_set: None,
+            status_type: None,
+            weather_icon_set: None,
         }
     } else if let Some((health_kind, health_source, _, health_name, _, health_size)) = health {
         // Widget zdrowotny — wartość czyta czujnik na zegarku. Na PC podgląd
@@ -898,8 +1167,10 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             visible: true,
             measurement_system: None,
             show_unit: true,
+            alpha: 255,
             status_icon_set: None,
             status_type: None,
+            weather_icon_set: None,
         }
     } else if battery {
         // Poziom baterii — tekst zasilany `hmSensor.id.BATTERY`. Na PC pokazujemy
@@ -935,8 +1206,10 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             visible: true,
             measurement_system: None,
             show_unit: true,
+            alpha: 255,
             status_icon_set: None,
             status_type: None,
+            weather_icon_set: None,
         }
     } else if let Some(status) = status_icon {
         // Ikona statusu systemu. Pakiety są przypisywane w FFI zaraz po dodaniu
@@ -980,8 +1253,58 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             visible: true,
             measurement_system: None,
             show_unit: true,
+            alpha: 255,
             status_icon_set: None,
             status_type: Some(status),
+            weather_icon_set: None,
+        }
+    } else if let Some((weather_kind, weather_source, _, weather_name, initial, size)) = weather {
+        // Widget pogody — wartości czyta `hmSensor.id.WEATHER` na zegarku.
+        // Ikona dostaje wyśrodkowaną kwadratową ramkę i domyślny zestaw
+        // przypisywany przez FFI zaraz po dodaniu (tak jak ikony STATUS).
+        let (ix, iy, iw, ih) = if weather_kind == WidgetKind::WeatherIcon {
+            crate::weather::default_frame()
+        } else {
+            (23, 150, 420, 60)
+        };
+        Widget {
+            id: id.clone(),
+            name: format!("{weather_name}{suffix}"),
+            kind: weather_kind,
+            x: ix,
+            y: iy,
+            w: iw,
+            h: ih,
+            z: 0,
+            text: if initial.is_empty() {
+                None
+            } else {
+                Some(initial.to_string())
+            },
+            text_size: Some(size),
+            font: None,
+            time_format: None,
+            color: Some("0xFFFFFFFF".to_string()),
+            src: None,
+            image_fit: FitMode::default(),
+            hand_set: None,
+            hour_src: None,
+            minute_src: None,
+            second_src: None,
+            cap_src: None,
+            data_source: Some(weather_source),
+            align: Some(Align::Center),
+            v_align: VAlign::Center,
+            show_level: ShowLevel::Normal,
+            auto_scale: false,
+            text_style: TextStyle::Ellipsis,
+            visible: true,
+            measurement_system: None,
+            show_unit: true,
+            alpha: 255,
+            status_icon_set: None,
+            status_type: None,
+            weather_icon_set: None,
         }
     } else {
         Widget {
@@ -1014,8 +1337,10 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             visible: true,
             measurement_system: None,
             show_unit: true,
+            alpha: 255,
             status_icon_set: None,
             status_type: None,
+            weather_icon_set: None,
         }
     };
     project.widgets.push(widget.clone());
@@ -1033,6 +1358,40 @@ pub fn update_widget(project: &mut Project, settings: &Value) -> Result<Widget> 
         .iter()
         .find(|widget| widget.id == id)
         .is_some_and(|widget| widget.kind == WidgetKind::StatusIcon);
+    let is_weather_icon = project
+        .widgets
+        .iter()
+        .find(|widget| widget.id == id)
+        .is_some_and(|widget| widget.kind == WidgetKind::WeatherIcon);
+    if is_weather_icon {
+        let x = i64_field(settings, "x")?;
+        let y = i64_field(settings, "y")?;
+        let w = i64_field(settings, "w")?;
+        let h = i64_field(settings, "h")?;
+        if w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > SCREEN_SIZE as i64 || y + h > SCREEN_SIZE as i64 {
+            bail!("Widget musi mieścić się w ekranie 466×466");
+        }
+        let auto_scale = settings
+            .get("autoScale")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let widget = project
+            .widgets
+            .iter_mut()
+            .find(|widget| widget.id == id)
+            .unwrap();
+        widget.x = x as i32;
+        widget.y = y as i32;
+        widget.w = w as i32;
+        widget.h = h as i32;
+        widget.auto_scale = auto_scale;
+        widget.alpha = settings
+            .get("alpha")
+            .and_then(Value::as_u64)
+            .map(|value| value.clamp(0, 255) as u8)
+            .unwrap_or(widget.alpha);
+        return Ok(widget.clone());
+    }
     if is_status_icon {
         let x = i64_field(settings, "x")?;
         let y = i64_field(settings, "y")?;
@@ -1076,9 +1435,11 @@ pub fn update_widget(project: &mut Project, settings: &Value) -> Result<Widget> 
         is_step,
         is_distance,
         is_health,
+        is_goal,
         is_date_field,
         existing_measurement_system,
         existing_show_unit,
+        existing_alpha,
     ) = project
         .widgets
         .iter()
@@ -1097,15 +1458,18 @@ pub fn update_widget(project: &mut Project, settings: &Value) -> Result<Widget> 
                 widget.kind == WidgetKind::StepText,
                 widget.kind == WidgetKind::DistanceText,
                 widget.kind.is_health(),
+                widget.kind.is_goal(),
                 widget.kind.is_date_field(),
                 widget.measurement_system,
                 widget.show_unit,
+                widget.alpha,
             )
         })
         .with_context(|| format!("warstwa nie istnieje: {id}"))?;
     // Widgety z czujnikiem i tekst użytkownika nie mają wzorca — stare pole
     // `timeFormat` musi być ignorowane, żeby nie nadpisać ich treści.
-    let no_pattern = is_user_text || is_step || is_distance || is_health || is_date_field;
+    let no_pattern =
+        is_user_text || is_step || is_distance || is_health || is_goal || is_date_field;
     let project_default = project.measurement_system;
     let x = i64_field(settings, "x")?;
     let y = i64_field(settings, "y")?;
@@ -1154,8 +1518,19 @@ pub fn update_widget(project: &mut Project, settings: &Value) -> Result<Widget> 
         widget.y = y as i32;
         widget.w = w as i32;
         widget.h = h as i32;
-        widget.image_fit = image_fit;
+        // Czerwona ramka (auto_scale) zawsze rozciąga obraz do nowej ramki —
+        // niezależnie od wybranego trybu dopasowania z inspektora.
+        widget.image_fit = if auto_scale {
+            FitMode::Stretch
+        } else {
+            image_fit
+        };
         widget.auto_scale = auto_scale;
+        widget.alpha = settings
+            .get("alpha")
+            .and_then(Value::as_u64)
+            .map(|value| value.clamp(0, 255) as u8)
+            .unwrap_or(existing_alpha);
         return Ok(widget.clone());
     }
 
@@ -1230,6 +1605,12 @@ pub fn update_widget(project: &mut Project, settings: &Value) -> Result<Widget> 
         .get("showUnit")
         .and_then(Value::as_bool)
         .unwrap_or(existing_show_unit);
+    // Brak klucza zachowuje poprzednie krycie; wartość z UI jest w zakresie 0–255.
+    let alpha = settings
+        .get("alpha")
+        .and_then(Value::as_u64)
+        .map(|value| value.clamp(0, 255) as u8)
+        .unwrap_or(existing_alpha);
 
     let widget = project
         .widgets
@@ -1248,8 +1629,12 @@ pub fn update_widget(project: &mut Project, settings: &Value) -> Result<Widget> 
     widget.v_align = v_align;
     widget.font = font;
     widget.show_unit = show_unit;
+    widget.alpha = alpha;
     if is_health {
         widget.text = widget.kind.health_initial_text(show_unit);
+    }
+    if is_goal {
+        widget.text = widget.kind.goal_initial_text(show_unit);
     }
     if is_distance {
         widget.measurement_system = measurement_system;

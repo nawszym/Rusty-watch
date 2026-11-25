@@ -34,6 +34,8 @@ pub fn exported_asset_name(project_path: &str) -> String {
         "status"
     } else if project_path.starts_with("images/") {
         "img"
+    } else if project_path.starts_with("weather/") {
+        "weather"
     } else {
         "asset"
     };
@@ -63,6 +65,9 @@ mod tests {
         assert!(!a.contains('/'));
         assert!(a.starts_with("hand_"));
         assert!(a.ends_with(".png"));
+        let weather = exported_asset_name("weather/Classic/w03.png");
+        assert!(weather.starts_with("weather_"));
+        assert!(!weather.contains('/'));
         let font = exported_asset_name("fonts/Inter-Regular.ttf");
         assert!(font.starts_with("fonts/font_"), "{font}");
         assert!(!font.contains('/') || font.starts_with("fonts/"));

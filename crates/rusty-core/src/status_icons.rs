@@ -572,8 +572,10 @@ mod tests {
             visible: true,
             measurement_system: None,
             show_unit: true,
+            alpha: 255,
             status_icon_set: None,
             status_type: Some(StatusType::Dnd),
+            weather_icon_set: None,
         });
         project
     }

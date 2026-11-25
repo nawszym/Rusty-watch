@@ -115,6 +115,52 @@ impl WatchfaceLocale {
         }
     }
 
+    /// Nazwy 29 kodów pogody ZeppOS v1.0 (indeks 0..=28).
+    pub fn weather_names(self) -> &'static [&'static str; 29] {
+        match self {
+            Self::English => &[
+                "Cloudy", "Showers", "Snow showers", "Sunny", "Overcast", "Light rain",
+                "Light snow", "Moderate rain", "Moderate snow", "Heavy snow", "Heavy rain",
+                "Sandstorm", "Rain and snow", "Fog", "Hazy", "Thunderstorm", "Snowstorm",
+                "Floating dust", "Heavy downpour", "Rain and hail", "Thunderstorm and hail",
+                "Heavy downpour", "Dust", "Heavy sandstorm", "Rainstorm", "Unknown",
+                "Cloudy (night)", "Showers (night)", "Clear (night)",
+            ],
+            Self::Polish => &[
+                "Pochmurno", "Przelotne opady", "Przelotny śnieg", "Słonecznie", "Zachmurzenie",
+                "Lekki deszcz", "Lekki śnieg", "Umiarkowany deszcz", "Umiarkowany śnieg",
+                "Intensywny śnieg", "Intensywny deszcz", "Burza piaskowa", "Deszcz ze śniegiem",
+                "Mgła", "Zamglenie", "Burza", "Zamić", "Pył unoszący się", "Silna ulewa",
+                "Deszcz z gradem", "Burza z gradem", "Ulewa", "Kurz", "Silna burza piaskowa",
+                "Deszcz", "Nieznane", "Pochmurno (noc)", "Przelotne opady (noc)",
+                "Bezchmurnie (noc)",
+            ],
+        }
+    }
+
+    /// Tłumaczy nazwę miasta na język tarczy. ZeppOS zwraca `cityName` w języku
+    /// systemu, ale dla pewności (i dla spójnego podglądu) mapujemy wybrane stolice.
+    pub fn city_name(self, name: &str) -> String {
+        let key = name.trim().to_lowercase();
+        let translated = match (self, key.as_str()) {
+            (Self::Polish, "warsaw") => "Warszawa",
+            (Self::Polish, "berlin") => "Berlin",
+            (Self::Polish, "paris") => "Paryż",
+            (Self::Polish, "london") => "Londyn",
+            (Self::Polish, "rome") => "Rzym",
+            (Self::Polish, "madrid") => "Madryt",
+            (Self::Polish, "prague") => "Praga",
+            (Self::English, "warszawa") => "Warsaw",
+            (Self::English, "paryż") => "Paris",
+            (Self::English, "londyn") => "London",
+            (Self::English, "rzym") => "Rome",
+            (Self::English, "madryt") => "Madrid",
+            (Self::English, "praga") => "Prague",
+            _ => return name.to_string(),
+        };
+        translated.to_string()
+    }
+
     /// Blok JS wstawiany na początek wygenerowanego `watchface/index.js`.
     /// Zmienne `L` i `MONTHS` są potem używane przez wyrażenia czasu i daty.
     /// `typeof` i `try` chronią przed brakiem `hmSetting` w starszych runtime'ach.
@@ -134,8 +180,12 @@ impl WatchfaceLocale {
          // pl-PL = 9 w mapie języków ZeppOS; każdy inny język => angielski.\n\
          const IS_POLISH = _watchLanguage() === 9\n\
          const L = IS_POLISH\n\
-         \x20 ? { months: ['Sty','Lut','Mar','Kwi','Maj','Cze','Lip','Sie','Wrz','Paź','Lis','Gru'], monthsFull: ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'], days: ['Nie','Pon','Wt','Śr','Czw','Pt','Sob'], daysFull: ['Niedziela','Poniedziałek','Wtorek','Środa','Czwartek','Piątek','Sobota'], am: 'przedp.', amUp: 'PRZEDP.', pm: 'pop.', pmUp: 'POP.' }\n\
-         \x20 : { months: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'], monthsFull: ['January','February','March','April','May','June','July','August','September','October','November','December'], days: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], daysFull: ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'], am: 'am', amUp: 'AM', pm: 'pm', pmUp: 'PM' }\n\
+         \x20 ? { months: ['Sty','Lut','Mar','Kwi','Maj','Cze','Lip','Sie','Wrz','Paź','Lis','Gru'], monthsFull: ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec','Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'], days: ['Nie','Pon','Wt','Śr','Czw','Pt','Sob'], daysFull: ['Niedziela','Poniedziałek','Wtorek','Środa','Czwartek','Piątek','Sobota'], am: 'przedp.', amUp: 'PRZEDP.', pm: 'pop.', pmUp: 'POP.', weather: ['Pochmurno','Przelotne opady','Przelotny ?nieg','S?onecznie','Zachmurzenie','Lekki deszcz','Lekki ?nieg','Umiarkowany deszcz','Umiarkowany ?nieg','Intensywny ?nieg','Intensywny deszcz','Burza piaskowa','Deszcz ze ?niegiem','Mg?a','Zamglenie','Burza','Zami?','Py? unosz?cy si?','Silna ulewa','Deszcz z gradem','Burza z gradem','Ulewa','Kurz','Silna burza piaskowa','Deszcz','Nieznane','Pochmurno (noc)','Przelotne opady (noc)','Bezchmurnie (noc)'], cities: { 'warsaw': 'Warszawa', 'pary?': 'Paris', 'londyn': 'London', 'rzym': 'Rome', 'madryt': 'Madrid', 'praga': 'Prague' } }\n\
+         \x20 : { months: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'], monthsFull: ['January','February','March','April','May','June','July','August','September','October','November','December'], days: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], daysFull: ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'], am: 'am', amUp: 'AM', pm: 'pm', pmUp: 'PM', weather: ['Cloudy','Showers','Snow showers','Sunny','Overcast','Light rain','Light snow','Moderate rain','Moderate snow','Heavy snow','Heavy rain','Sandstorm','Rain and snow','Fog','Hazy','Thunderstorm','Snowstorm','Floating dust','Heavy downpour','Rain and hail','Thunderstorm and hail','Heavy downpour','Dust','Heavy sandstorm','Rainstorm','Unknown','Cloudy (night)','Showers (night)','Clear (night)'], cities: { 'warszawa': 'Warsaw', 'paris': 'Paris', 'london': 'London', 'rome': 'Rome', 'madrid': 'Madrid', 'prague': 'Prague' } }\n\
+         function _cityName(value) {\n\
+           const key = String(value || '').trim().toLowerCase()\n\
+           return (L.cities && L.cities[key]) || String(value || '--')\n\
+         }\n\
          const MONTHS = L.months\n"
     }
 }

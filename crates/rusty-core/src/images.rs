@@ -13,7 +13,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::image_fit::{fit_image, FitMode};
-use crate::model::{Asset, AssetRole, Project, WidgetKind};
+use crate::model::{Asset, AssetRole, Project, WidgetKind, SCREEN_SIZE};
+use crate::widgets::MIN_FRAME_SIZE;
 
 pub const IMAGE_DIR: &str = "Images";
 /// Katalog zasobów projektu z przygotowanymi grafikami widgetów IMAGES.
@@ -150,16 +151,26 @@ pub fn set_widget_image(
     fit: FitMode,
 ) -> Result<String, String> {
     valid_asset_name(file)?;
-    let (x, y, w, h) = {
+    let (x, y) = {
         let widget = find_images_widget(project, widget_id)?;
-        (widget.x, widget.y, widget.w, widget.h)
+        (widget.x, widget.y)
     };
     let source = images_dir(app_data_root).join(file);
     if !source.is_file() {
         return Err(format!("Obrazek nie jest zainstalowany: {file}"));
     }
     let image = image::open(&source).map_err(|e| format!("Nie można odczytać obrazka: {e}"))?;
-    let prepared = fit_image(&image, w.max(1) as u32, h.max(1) as u32, fit);
+    // Niebieska ramka jest dopasowana do naturalnego rozmiaru obrazka — jeden
+    // wspólny współczynnik zachowuje proporcje, gdy grafika jest większa niż ekran.
+    let (natural_w, natural_h) = image.dimensions();
+    let scale = 1.0f64
+        .min(SCREEN_SIZE as f64 / natural_w.max(1) as f64)
+        .min(SCREEN_SIZE as f64 / natural_h.max(1) as f64);
+    let w = ((natural_w as f64 * scale).round() as i32).clamp(MIN_FRAME_SIZE, SCREEN_SIZE as i32);
+    let h = ((natural_h as f64 * scale).round() as i32).clamp(MIN_FRAME_SIZE, SCREEN_SIZE as i32);
+    let x = x.clamp(0, SCREEN_SIZE as i32 - w);
+    let y = y.clamp(0, SCREEN_SIZE as i32 - h);
+    let prepared = fit_image(&image, w as u32, h as u32, fit);
     let path = widget_image_path(widget_id, file);
     write_prepared(project_dir, &path, &prepared)?;
 
@@ -183,8 +194,12 @@ pub fn set_widget_image(
         .unwrap();
     widget.src = Some(path.clone());
     widget.image_fit = fit;
-    // Pozycja jest zachowywana —— plik ma fizycznie rozmiar ramki.
-    let _ = (x, y);
+    widget.x = x;
+    widget.y = y;
+    widget.w = w;
+    widget.h = h;
+    // Nowy obrazek zawsze zaczyna w niebieskim trybie (tylko przesuwanie).
+    widget.auto_scale = false;
     Ok(path)
 }
 
@@ -384,14 +399,54 @@ mod tests {
         let widget = crate::widgets::add_widget(&mut project, "images").unwrap();
         let path = set_widget_image(&mut project, &dir, &root, &widget.id, "wide.png", FitMode::Contain).unwrap();
         assert_eq!(path, format!("images/{}/wide.png", widget.id));
+        // Niebieska ramka dopasowuje się do naturalnego rozmiaru (800×300),
+        // zachowując proporcje i mieszcząc się na ekranie 466×466.
+        let image_widget = project.widgets.iter().find(|w| w.id == widget.id).unwrap();
+        assert_eq!((image_widget.w, image_widget.h), (466, 175));
+        assert_eq!((image_widget.x, image_widget.y), (0, 133));
+        assert!(!image_widget.auto_scale);
         let prepared = image::open(dir.join("assets").join(&path)).unwrap();
-        assert_eq!(prepared.dimensions(), (200, 200));
+        assert_eq!(prepared.dimensions(), (466, 175));
         assert!(project.assets.iter().any(|a| a.path == path && a.role == AssetRole::Image));
         assert!(!crate::validate::validate(&project).iter().any(|e| e.contains(&path)));
 
         let bytes = export_asset_bytes(&project, &dir, &path).unwrap();
         let exported = image::load_from_memory(&bytes).unwrap();
-        assert_eq!(exported.dimensions(), (200, 200));
+        assert_eq!(exported.dimensions(), (466, 175));
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn red_frame_stretches_image_to_new_frame() {
+        let root = std::env::temp_dir().join(format!("rw-images-red-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let source = source_image(&root);
+        add(&root, &source).unwrap();
+        let (dir, mut project) = create_project_in(
+            &root,
+            &NewProject { name: "Stretch".into(), author: "Dev".into(), app_id: 6 },
+        )
+        .unwrap();
+        let widget = crate::widgets::add_widget(&mut project, "images").unwrap();
+        let path = set_widget_image(&mut project, &dir, &root, &widget.id, "wide.png", FitMode::Contain).unwrap();
+
+        let settings = serde_json::json!({
+            "id": widget.id,
+            "x": 23,
+            "y": 150,
+            "w": 200,
+            "h": 100,
+            "autoScale": true,
+            "imageFit": "contain",
+        });
+        let updated = crate::widgets::update_widget(&mut project, &settings).unwrap();
+        assert!(updated.auto_scale);
+        assert_eq!(updated.image_fit, FitMode::Stretch);
+        scale_widget_image(&project, &dir, &root, &widget.id).unwrap();
+        let prepared = image::open(dir.join("assets").join(&path)).unwrap();
+        assert_eq!(prepared.dimensions(), (200, 100));
 
         fs::remove_dir_all(&root).ok();
     }

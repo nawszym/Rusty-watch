@@ -4,6 +4,8 @@
 > watchface running on an Amazfit Active 2 (Round). Every claim is tied to a file and
 > function/line in this repository. This is a companion to [`FORMAT.md`](FORMAT.md)
 > (data format) and [`../AGENTS.md`](../AGENTS.md) (rules for AI agents).
+>
+> **Line numbers are indicative** and drift as code changes; function and symbol names are authoritative.
 
 ## Table of contents
 
@@ -30,11 +32,11 @@
  ├─ HOME / navigation / dialogs
  ├─ Editor: WatchCanvas + OverlayCanvas + OutlineCanvas
  ├─ Layers list + inspector + catalog flyout
- ├─ Assets page (Fonts / Images / Hands / Status)
+ ├─ Assets page (Fonts / Images / Hands / Status / Weather)
  └─ RustNative.cs  ── P/Invoke (cdecl, UTF-8, LPUTF8Str) ──┐
                                                           │
                                               crates/rusty-ffi/src/lib.rs
-                                              54 × rw_* exports, JSON envelope
+                                              65 × rw_* exports, JSON envelope
                                                           │
                                               crates/rusty-core/src/*
                                               model · project · layers · widgets
@@ -49,12 +51,12 @@
                           zeus install → Zepp OS Simulator → real watch
 ```
 
-**The FFI envelope.** 53 of the 54 exports return `*mut c_char` built by
-`respond()` (`rusty-ffi/src/lib.rs:24-32`): `{"ok":true,"data":…}` or
-`{"ok":false,"error":"…"}`. The 54th, `rw_free_string` (`:34-39`), frees that exact
-`CString::into_raw()` allocation. `read_input` (`:12-18`) is null-safe and lossy-UTF-8;
-`string_result` (`:20-22`) adapts `rusty-core`'s `Result<_, String>` to `anyhow`.
-C# has one choke point: `RustNative.Call` (`RustNative.cs:295-318`) reads the string,
+**The FFI envelope.** 64 of the 65 exports return `*mut c_char` built by
+`respond()` (`rusty-ffi/src/lib.rs:25-33`): `{"ok":true,"data":…}` or
+`{"ok":false,"error":"…"}`. The 65th, `rw_free_string` (`:35-40`), frees that exact
+`CString::into_raw()` allocation. `read_input` (`:13-19`) is null-safe and lossy-UTF-8;
+`string_result` (`:21-23`) adapts `rusty-core`'s `Result<_, String>` to `anyhow`.
+C# has one choke point: `RustNative.Call` (`RustNative.cs:373-396`) reads the string,
 **always** frees the pointer in `finally`, parses the envelope, and returns `data` or
 throws/propagates `error`.
 
@@ -92,8 +94,11 @@ throws/propagates `error`.
 
 ## 2. Data model
 
-`rusty-core/src/lib.rs:1-16` declares 16 public modules. `lib.rs` itself only
-re-exports types (`:18-25`) and contains the 84 core tests from `:27` onward.
+`rusty-core/src/lib.rs:1-20` declares 20 public modules (`asset_cache`, `codegen`,
+`date_format`, `export_paths`, `fonts`, `hands`, `image_fit`, `images`, `layers`,
+`locale`, `model`, `package`, `preview`, `project`, `recent`, `status_icons`,
+`time_format`, `validate`, `weather`, `widgets`). `lib.rs` itself only re-exports
+types and contains the 129 core tests.
 
 ### 2.1 Constants and `Project` (`model.rs:5-37`)
 
@@ -127,13 +132,16 @@ Every field has a serde default if optional, so older `project.json` files load:
 | Media | `src`, `image_fit` (`FitMode::Contain` default), `hand_set`, `hour_src`, `minute_src`, `second_src`, `cap_src` |
 | Data | `data_source: Option<DataSource>`, `visible` (default **true**), `measurement_system: Option<MeasurementSystem>` (override), `show_unit` (default **true**) |
 
-`WidgetKind` has 21 addable/logical variants (`model.rs:288-331`): `Text`, `Image`
-(legacy, not in catalog), `Images`, `TimeText`, `DateText`, `WeekdayNumberText`,
-`WeekNumberText`, `DayOfYearText`, `LunarDateText`, `FestivalText`, `WorldClockText`,
-`StepText`, `DistanceText`, `HeartRateText`, `StressText`, `PaiText`, `SkinTempText`,
-`SleepText`, `CalorieText`, `Spo2Text`, `AnalogTime`. Helpers:
-`health_initial_text(show_unit)` (`:336-351`), `is_date_field()` (`:354-364`),
-`is_health()` (`:367-378`).
+`WidgetKind` has 38 variants (`model.rs:359-433`): `Text`, `Image` (legacy, not
+in catalog), `Images`, `TimeText`, `DateText`, `WeekdayNumberText`, `WeekNumberText`,
+`DayOfYearText`, `LunarDateText`, `FestivalText`, `WorldClockText`, `StepText`,
+`DistanceText`, `HeartRateText`, `StressText`, `PaiText`, `SkinTempText`, `SleepText`,
+`CalorieText`, `Spo2Text`, `BatteryText`, `StepTargetText`, `CalorieTargetText`,
+`StandTargetText`, `FatBurningTargetText`, `StandText`, `FatBurningText`,
+`PaiWeeklyText`, `SleepTargetText`, `WeatherConditionText`, `WeatherCityText`,
+`WeatherHighText`, `WeatherLowText`, `SunriseText`, `SunsetText`, `WeatherIcon`,
+`StatusIcon`, `AnalogTime`. `supported_widgets()` exposes 40 of these (all except
+legacy `Image` and the statuses represented as four separate catalog entries).
 
 Enum → generated JS (`model.rs`):
 - `Align::as_js()` (`:415-421`) → `hmUI.align.LEFT|CENTER_H|RIGHT`.
@@ -149,7 +157,7 @@ Enum → generated JS (`model.rs`):
 - `FirstDayOfWeek::parse()` (`model.rs:50-56`) accepts EN and PL spellings
   (`monday|mon|poniedzialek|pon`, `sunday|sun|niedziela|ndz`).
 
-`Asset { path, role }` with `AssetRole` = `Icon|Font|Image|Hand|StatusIcon|Other`
+`Asset { path, role }` with `AssetRole` = `Icon|Font|Image|Hand|StatusIcon|WeatherIcon|Other`
 (snake_case). There is no background field or background asset role.
 
 ### 2.3 Starter template (`model.rs:523-599`)
@@ -259,7 +267,7 @@ deliberately falls back to an empty list when the recent store is corrupt — a 
 
 ### 5.1 Catalog (`widgets.rs:12-117`)
 
-`supported_widgets()` returns 21 `{kind,category}` entries in this order:
+`supported_widgets()` returns 40 `{kind,category}` entries in this order:
 
 | Category | Kinds |
 |---|---|
@@ -268,7 +276,16 @@ deliberately falls back to an empty list when the recent store is corrupt — a 
 | `text` | `text` |
 | `images` | `images` |
 | `distance` | `steps`, `distance` |
-| `health` | `heart`, `stress`, `pai`, `skin-temp`, `sleep`, `calories`, `spo2` |
+| `goals` | `steps-target`, `calories-target`, `stand-target`, `fat-burning-target`, `sleep-target` |
+| `health` | `heart`, `stress`, `pai`, `skin-temp`, `sleep`, `calories`, `spo2`, `stand`, `fat-burning`, `pai-weekly` |
+| `system` | `battery`, `status-alarm`, `status-dnd`, `status-bluetooth`, `status-lock` |
+| `weather` | `weather-condition`, `weather-city`, `weather-high`, `weather-low`, `sunrise`, `sunset`, `weather-icon` |
+
+Goals read `hmSensor.id.<X>.target` through a shared `targetTick`, lazy `try/catch`
+getters and CHANGE listeners removed in `onDestroy`; `STAND`/`FAT_BURRING` may be
+absent on Active 2, in which case the placeholder from `project.json` stays on the
+watchface. The inspector has a **Show unit** checkbox for calorie/stand/fat-burning
+goals; it toggles `Widget::show_unit` and both the placeholder text and the JS suffix.
 
 The C# "Widgets" tab renders this catalog as always-expanded plain headers; the
 **+ Add widget** flyout renders the same list as collapsed `Expander` groups
@@ -278,7 +295,8 @@ The C# "Widgets" tab renders this catalog as always-expanded plain headers; the
 out defaults: analog `(33,33,400,400)`, images `(133,133,200,200)`, date
 `(23,250,420,80)` with pattern `"MMM D"`, text `(23,350,420,60)`, steps
 `(23,320,420,60)`, distance `(23,260,420,60)`, date fields `(23,200,420,60)`,
-health `(23,150,420,60)`, time `(23,183,420,100)` with `"HH:MM:SS"`.
+health `(23,150,420,60)`, goals `(23,150,420,60)` with placeholders
+`10000` / `2000 kcal` / `12 h` / `45 min`, time `(23,183,420,100)` with `"HH:MM:SS"`.
 
 ### 5.2 Editing (`widgets.rs:880-1092`)
 
@@ -328,34 +346,35 @@ looks like broken alignment.
 
 ### 6.1 Contract details
 
-- 62 `#[no_mangle] pub extern "C" fn rw_*` exports; 27 `#[test]` tests in the same file.
-- `rw_inspect_zip` (`:917`) has **no P/Invoke declaration** in `RustNative.cs` — it is
+- 65 `#[no_mangle] pub extern "C" fn rw_*` exports; 33 `#[test]` tests in the same file.
+- `rw_inspect_zip` (`:1356`) has **no P/Invoke declaration** in `RustNative.cs` — it is
   CLI/test-only. Every other export is declared with
   `[DllImport("rusty_ffi", CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_…")]`.
 - Input strings use `UnmanagedType.LPUTF8Str`. Numeric types map `u32↔uint`, `i32↔int`.
 - Booleans are deliberately non-uniform: `visible` uses `[MarshalAs(UnmanagedType.I1)]`
   (Rust `bool` is 1 byte); `autoScale` crosses as `i32` 0/1; hand visibility crosses
   as a JSON object `{"hour":bool?,"minute":bool?,"second":bool?,"cap":bool?}`.
-- `RustNative.Call` (`:295-318`) is the single decode/free point. `AppPaths` injects
+- `RustNative.Call` (`RustNative.cs:373-396`) is the single decode/free point. `AppPaths` injects
   the implicit `app_data_root` / bundled-directory arguments that C# callers never pass.
 
 ### 6.2 Export catalog (grouped)
 
 | Domain | Functions (line in `rusty-ffi/src/lib.rs`) |
 |---|---|
-| Memory/version | `rw_free_string` 35, `rw_version` 42 |
-| Project | `rw_create_project` 51, `rw_create_project_in` 81, `rw_save_project_as` 112, `rw_random_app_id` 146, `rw_load_project` 151, `rw_save_project` 161, `rw_set_project_metadata` 854, `rw_validate_project` 876, `rw_open_project` 974 |
-| Layers/widgets | `rw_editor_layers` 181, `rw_move_layer` 192, `rw_supported_widgets` 213, `rw_frame_geometry` 221, `rw_add_widget` 233, `rw_set_widget` 273, `rw_set_measurement_system` 328, `rw_set_first_day_of_week` 348, `rw_set_widget_visibility` 368, `rw_remove_widget` 827 |
-| Defaults | `rw_ensure_defaults` 393 |
-| Fonts | `rw_fonts_list` 421, `rw_fonts_add` 438, `rw_fonts_remove` 455, `rw_apply_default_font` 470, `rw_apply_default_font_to_missing` 494 |
-| Images | `rw_images_list` 560, `rw_images_add` 570, `rw_images_remove` 584, `rw_set_widget_image` 599 |
-| Hands | `rw_hands_list` 691, `rw_hands_add` 710, `rw_hands_remove` 727, `rw_set_hands` 742, `rw_set_hand_visibility` 781 |
-| Status icons | `rw_status_packs_list`, `rw_status_packs_add`, `rw_status_packs_remove`, `rw_set_status_pack`, `rw_attach_status_pack_to_missing` |
-| Export/emulator | `rw_export_zip`, `rw_prepare_emulator_workspace`, `rw_inspect_zip` |
-| Generated previews | `rw_preview_random_series`, `rw_render_preview_frame`, `rw_encode_preview_gif` |
-| Recents | `rw_recent_list` 929, `rw_recent_add` 938, `rw_recent_remove` 951, `rw_recent_clear` 964 |
-| Preview formatting | `rw_month_name` 995, `rw_format_time` 1026, `rw_format_date` 1052, `rw_format_date_field` 1079 |
-| Legacy time widget | `rw_time_widget` 1112, `rw_set_time_widget` 1143 (exported but unused by current UI) |
+| Memory/version | `rw_free_string` 36, `rw_version` 43 |
+| Project | `rw_create_project` 52, `rw_create_project_in` 82, `rw_save_project_as` 113, `rw_random_app_id` 147, `rw_load_project` 152, `rw_save_project` 162, `rw_set_project_metadata` 1194, `rw_validate_project` 1216, `rw_open_project` 1413 |
+| Layers/widgets | `rw_editor_layers` 182, `rw_move_layer` 193, `rw_supported_widgets` 214, `rw_frame_geometry` 222, `rw_add_widget` 234, `rw_set_widget` 304, `rw_rescale_widget_assets` 389, `rw_set_measurement_system` 528, `rw_set_first_day_of_week` 548, `rw_set_widget_visibility` 568, `rw_remove_widget` 1167 |
+| Defaults | `rw_ensure_defaults` 593 |
+| Fonts | `rw_fonts_list` 631, `rw_fonts_add` 648, `rw_fonts_remove` 665, `rw_apply_default_font` 680, `rw_apply_default_font_to_missing` 704 |
+| Images | `rw_images_list` 731, `rw_images_add` 741, `rw_images_remove` 755, `rw_set_widget_image` 770 |
+| Hands | `rw_hands_list` 810, `rw_hands_add` 829, `rw_hands_remove` 846, `rw_set_hands` 861, `rw_set_hand_visibility` 900 |
+| Status icons | `rw_status_packs_list` 948, `rw_status_packs_add` 967, `rw_status_packs_remove` 984, `rw_set_status_pack` 999, `rw_attach_status_pack_to_missing` 1118 |
+| Weather icons | `rw_weather_conditions` 503, `rw_weather_packs_list` 1035, `rw_weather_packs_add` 1053, `rw_weather_packs_remove` 1070, `rw_set_weather_pack` 1088 |
+| Export/emulator | `rw_export_zip` 1325, `rw_prepare_emulator_workspace` 1337, `rw_inspect_zip` 1356 |
+| Generated previews | `rw_preview_random_series` 1229, `rw_render_preview_frame` 1245, `rw_encode_preview_gif` 1274 |
+| Recents | `rw_recent_list` 1368, `rw_recent_add` 1377, `rw_recent_remove` 1390, `rw_recent_clear` 1403 |
+| Preview formatting | `rw_format_weather_field` 451, `rw_weather_conditions` 503, `rw_preview_default_datetime` 522, `rw_month_name` 1434, `rw_format_time` 1465, `rw_format_date` 1491, `rw_format_date_field` 1518 |
+| Legacy time widget | `rw_time_widget` 1551, `rw_set_time_widget` 1582 |
 
 Most functions return `layers` in their `data` so the UI can repaint from one response.
 C# DTOs mirror the camelCase keys: `LayerView` (`MainWindow.xaml.cs:38-70`) with
@@ -388,9 +407,14 @@ All stores live in `%APPDATA%\RustyWatch`. Bundled seeds are copied next to the 
 - Separate store `Images/`; `sanitize_file_name` (`:314-339`) keeps ASCII
   alphanumeric/space/`-`/`_`/`.`, lowercases extensions (`jpeg→jpg`), truncates stems
   to 80 chars. `valid_asset_name` (`:302-312`) rejects `/`, `\`, `..`.
-- `set_widget_image` (`:144-189`) requires `WidgetKind::Images`, reads `w×h`, prepares
-  the PNG from the store with `fit_image`, writes `assets/images/<widget-id>/<file>`,
-  registers the asset, and sets `widget.src`/`widget.image_fit`.
+- `set_widget_image` requires `WidgetKind::Images`, reads the PNG's **natural** size,
+  uniformly scales it down to fit 466×466 (aspect preserved), clamps x/y into the
+  screen, writes that size into `widget.w/h`, resets `auto_scale = false`, prepares the
+  PNG with `fit_image`, writes `assets/images/<widget-id>/<file>`, registers the asset
+  and sets `widget.src`/`widget.image_fit`. Blue frame = move only (C# hides the corner
+  handles and forces `handle:"move"`); double-click switches to the red frame —
+  `update_widget` then forces `imageFit = stretch` while `autoScale` is true, so
+  resizing always stretches the image.
 - `scale_widget_image` (`:210-236`) re-prepares from the pristine store copy when the
   frame changes; `export_asset_bytes` (`:240-266`) re-applies the same fit in memory at
   export; `prune_unused` (`:268-289`) removes orphaned `images/…` files.
@@ -418,13 +442,12 @@ All stores live in `%APPDATA%\RustyWatch`. Bundled seeds are copied next to the 
   loss); `resized_png` (`:374-393`) short-circuits when dimensions already match.
 - `prepare_hand_assets` (`:415-520`) is the export-time trick: ZeppOS draws an `IMG`
   at its natural size and clips it to `w×h`, so each hand is decoded, optionally
-  resized to the frame, and — if it saves >15 % of the area — cropped to a **square
-  centred on the rotation pivot**. `radius = ceil(farthest opaque pixel distance)+1`,
-  `size = 2·radius+1` (odd), and the emitted `HandPlacement{x,y,w,h,center_x,center_y}`
-  keeps `x+w/2 == widget.x + w/2`; `codegen` maps `x/y` to `pos_x/pos_y` inside a full-screen
-  `x:0,y:0,w:466,h:466` IMG frame with `center_x/center_y = 233` and `auto_scale: false`.
-  A tight alpha bounding box would clip a
-  rotated hand to stubs near the pivot — that is why the crop is square.
+  resized to the frame, then cropped to a **tight alpha bounding box with an 8 px
+  transparent margin** (`alpha_bbox()` + `pad_bbox(…, HAND_CROP_MARGIN)`), never to a
+  pivot-centred square. The emitted `HandPlacement{x,y,w,h,center_x,center_y}` keeps the
+  crop centred on the watch pivot; `codegen` maps `x/y` to `pos_x/pos_y` inside a
+  full-screen `x:0,y:0,w:466,h:466` IMG frame with `center_x/center_y = 233` and
+  `auto_scale: false`.
 - `export_asset_bytes` (`:522-536`) is the safety net for older projects.
 
 ### 7.5 STATUS icon packs (`status_icons.rs`)
@@ -499,8 +522,8 @@ letters force UPPERCASE, lowercase tokens give lowercase names, uppercase give
 capitalised (`:63-69`, `:107-126`). Month index is 0-based in `format_with_locale`
 (`:185-229`); weekday names are indexed by Sakamoto's algorithm
 `weekday_index(year, month, day)` (`:50-61`, offsets
-`[0,3,2,5,0,3,5,1,4,6,2,4]`, 0=Sunday) so the Rust preview agrees with JS
-`Date.getDay()`.
+`[0,3,2,5,0,3,5,1,4,6,2,4]`, 0=Sunday) so the Rust preview agrees with the generated
+JS Sakamoto expression — the watchface JS never uses `Date`.
 
 Derived fields:
 - `weekday_number(day, month, year, first_day)` (`:303-310`) — **month is 1-based at
@@ -541,8 +564,13 @@ version:{code:1,name}, icon:"Preview.png", cover:["Preview.png"], appIdType:0, e
 and **no `runtime.type`** (`type:2` would mean `.bin` bytecode and block our `.js`),
 top-level `module.watchface:{path:"watchface/index",main:1,editable:0,lockscreen:0,hightCost:0}`,
 eight `platforms` entries (all Active 2 deviceSources), `designWidth=466`, `packageInfo:{mode,timeStamp,expiredTime,zpm:"2.8.2"}`, `i18n["en-US"].appName` (no `pl-PL`),
-and `defaultLanguage:"en-US"` (zeus rejects packages without it). The generated watchface script is an IIFE that registers `__$$module$$__.module = DeviceRuntimeCore.WatchFace({...})` and drives the clock through `hmUI.widget.WIDGET_DELEGATE` (`resume_call`/`pause_call`), using `MINUTEEND` in AOD and `timer.createTimer` otherwise. The thumbnail is `assets/Preview.png` (314 × 314 RGBA — the branded `preview.png` rescaled from the project folder, or rendered deterministically for CLI exports, then alpha-masked to `DeviceProfile::screen_shape`; `Round` gives transparent corners). `preview.gif` and the 466 × 466 editor `preview.png` are All assets are written flat to `assets/<path>` because generated JS references `hands/…` directly; there is no `bg.png`, and `font:` is emitted as `fonts/font_<hash>.ttf`, exactly like the reference package. `prepare_emulator_workspace` converts the extracted flat export to a v3/`targets` project for `zeus` (workspace only). `app.js` is a static
-a `zeus`-compatible bootstrap: try/catch + IIFE, `__$$app$$__.__globals__` (`lang`, `px`, `gettext` via `DeviceRuntimeCore.HmUtils`) and `__$$app$$__.app = DeviceRuntimeCore.App({...})`.
+and `defaultLanguage:"en-US"` (zeus rejects packages without it). The generated watchface script is an IIFE that registers `__$$module$$__.module = DeviceRuntimeCore.WatchFace({...})` and drives the clock through `hmUI.widget.WIDGET_DELEGATE` (`resume_call`/`pause_call`), using `MINUTEEND` in AOD and `timer.createTimer` otherwise. The thumbnail is `assets/Preview.png` (314 × 314 RGBA — the branded `preview.png` rescaled from the project folder, or rendered deterministically for CLI exports, then alpha-masked to `DeviceProfile::screen_shape`; `Round` gives transparent corners). `preview.gif` and the 466 × 466 editor `preview.png` are local only. Every asset is
+written as `assets/<exported_asset_name(path)>` (`hand_<hash>.png`, `font_<hash>.ttf`,
+`status_<hash>.png`, `img_<hash>.png`, `weather_<hash>.png`); `export_paths.rs` is the
+single source of truth and `codegen` emits exactly the same names in `src:`/`font:`.
+There is no `bg.png`. `prepare_emulator_workspace` converts the extracted flat export
+to a v3/`targets` project for `zeus` (workspace only). `app.js` is a static
+`zeus`-compatible bootstrap: try/catch + IIFE, `__$$app$$__.__globals__` (`lang`, `px`, `gettext` via `DeviceRuntimeCore.HmUtils`) and `__$$app$$__.app = DeviceRuntimeCore.App({...})`.
 
 ### 9.2 `watchface/index.js`
 
@@ -550,9 +578,10 @@ Starts with a generated header, the locale block (§8.3), `const p2 = …`, and 
 helper functions actually needed (weekday, ISO week, day-of-year, mileage unit,
 world clock, health getters, `_fmtDuration`, optional user `custom_code`).
 
-`font_cache_js` (`:470-506`) emits one offscreen `hmUI.widget.TEXT` per distinct
-`(font, text_size)` pair with ASCII 32–126 plus `ĄĆĘŁŃÓŚŹŻąćęłńóśźż°€` — without this
-a warm-up widget (removed), the glyphs that first appear after a `setProperty(TEXT)` update would render blank; the real firmware disliked offscreen widgets created before the background, so the initial text now contains the full character set instead.
+There are no offscreen font warm-up widgets. Initial widget text contains the full
+character set (ASCII 32–126 plus `ĄĆĘŁŃÓŚŹŻąćęłńóśźż°€`), so glyphs never need to be
+loaded lazily after a `setProperty(TEXT)` update — and the real firmware disliked
+offscreen widgets created before the background.
 
 the generated `init_view()` (called from `build()`) starts with a full-screen `FILL_RECT`, then `_initMileageUnit()` when needed, then
 creates one widget per `ordered_widgets()` entry in layer order via `widget_call`
@@ -563,7 +592,7 @@ creates one widget per `ordered_widgets()` entry in layer order via `widget_call
 
 `tick()` (`:407-428`) reads `TIME` and writes per-widget updates (`update_line`,
 `:730-814`):
-- Time → `time_format::js_expression_localized`; Date → `date_format::js_expression_localized` on a `Date` built from the TIME sensor (`_dateFromT(t)`);
+- Time → `time_format::js_expression_localized`; Date → `date_format::js_expression_localized` on `_dateFromT(t)`, a plain field object built from the TIME sensor (no `Date` API);
 - weekday → `_weekdayNumber(t)`, week → `_isoWeek()`, day-of-year → `_dayOfYear()`;
 - lunar → `t.lunar_month/lunar_day`; festival → `solar_festival || lunar_festival || lunar_solar_term`;
 - world clock → `_getWorldClock().getWorldClockInfo(0)` city + `HH:MM`;
@@ -592,13 +621,13 @@ Distance units (`distance_value_js`, `:550-565`): `Watch` reads
 
 ## 10. Packaging, export and emulator
 
-`export_zip` (`package.rs:17-80`): load → `validate` → `prepare_hand_assets` → write
+`export_zip` (`package.rs`): load → `validate` → `prepare_hand_assets` → write
 `app.json`, `app.js`, `watchface/index.js` → for each `project.assets` write
-`assets/<asset.path>` with byte preparation priority:
+`assets/<exported_asset_name(asset.path)>` with byte preparation priority:
 prepared hand bytes → `images::export_asset_bytes` for `images/…` →
-`hands::export_asset_bytes` (raw pass-through for other assets) →
-Deflate ZIP. `export_zip_bytes` (`:155-192`) does the same hand preparation but
-**omits** the `images/…` branch and the Icon-path check — a known asymmetry.
+`weather::export_asset_bytes` for `weather/…` → `hands::export_asset_bytes`/other
+pass-through → Deflate ZIP. `export_zip_bytes` does the same hand preparation and
+includes the `images/…` branch, but has no separate `weather/…` branch.
 
 `inspect_zip` (`:137-153`) returns an entry listing plus the raw `app.json`.
 
@@ -621,9 +650,10 @@ official download page — it never bundles or installs Zepp binaries.
 
 ### 11.1 Startup (`AppPaths.cs`, `MainWindow.xaml.cs:362-447`)
 
-`AppPaths.Initialize()` creates nine directories under `%APPDATA%\RustyWatch`
-(data root, Projects, Emulator, Fonts, Images, Hands, Localization,
-`<exe>/FontCache`), seeds missing localization files and merges missing keys into
+`AppPaths.Initialize()` creates the data root plus Projects, Emulator, Fonts, Images,
+Hands, Status and Localization under `%APPDATA%\RustyWatch`, and `<exe>/FontCache`
+next to the binary (nine `CreateDirectory` calls). The Weather store is created later
+by `rw_ensure_defaults` → `weather::ensure_default`. It seeds missing localization files and merges missing keys into
 existing ones (`SeedLocalization`/`MergeMissingKeys`, `:85-149`), and migrates only
 `settings.json`, `recent.json` and JSON catalogs from `%LOCALAPPDATA%` with roaming
 winning (`MigrateFromLocalAppData`, `:151-199`).
@@ -681,7 +711,7 @@ centering buttons use `(466−w)/2` / `(466−h)/2` (`:2427-2455`).
 
 ### 11.4 Assets, settings, navigation, export dialog
 
-- **Assets**: Fonts, Images, Hands and Status sections with add/remove/open-folder
+- **Assets**: Fonts, Images, Hands, Status and Weather sections with add/remove/open-folder
   buttons, Windows `FilePicker`/`FolderPicker` initialised via `InitializeWithWindow`,
   and live thumbnails ("Aa" for fonts). There is no Backgrounds section.
 - **App Settings** (`MainWindow.xaml:1133-1238`): language + reload, watchface preview
@@ -720,48 +750,46 @@ own `assets/fonts` copy so the preview uses exactly the exported TTF.
 `Microsoft.Windows.SDK.BuildTools 10.0.26100.4654`. The `BuildRustFfi` target runs
 `cargo build -p rusty-ffi` before build; `CopyRustFfi` copies `rusty_ffi.dll` after
 build with `SkipUnchangedFiles="false"` because `PreserveNewest` can leave a stale DLL.
-Expected result on both toolchains: 0 errors / 0 warnings (144 tests total: 117 core + 27 FFI).
+Expected result on both toolchains: 0 errors / 0 warnings (162 tests total: 129 core + 33 FFI).
 
 ### 11.7 Preview options and Custom Data
 
 The preview-options flyout (`PreviewOptionsFlyout` in `MainWindow.xaml`) has four items:
 **Preview grid** (16 px grid plus snapping), **Unselected widgets outline** (default
-on), **Custom data** toggle and a neighbouring gear item that opens `CustomDataDialog`
-(a direct child of `RootGrid`). Labels are set in code (`RefreshPreviewOptionLabels()`)
-because flyouts do not inherit `DataContext`.
+on), a checkable **Live preview** item and a gear item that opens `CustomDataDialog`
+(a direct child of `RootGrid`). The old Custom-data checkbox is gone. Labels are set in
+code (`RefreshPreviewOptionLabels()`) because flyouts do not inherit `DataContext`.
 
-**State lives in `AppSettingsStore`, never in the project:**
-`customPreviewDataEnabled` (bool) and `customPreviewData` (object of string values) are
-written to `%APPDATA%\RustyWatch\settings.json` by the same single-writer
-`Load()`/`Save()` pair as every other setting. `GetCustomPreviewValue` returns `null`
-for missing/blank keys, which is the fallback signal; `SetCustomPreviewValue` removes
-the key when the value is blank. `ClearCustomPreviewValues` empties the map without
-touching the enabled flag, so turning the option off preserves values for re-enable.
+**State lives in `AppSettingsStore`, never in the project:** `liveTimeDateEnabled`
+(bool, default false) and `customPreviewData` (object of string values) are written to
+`%APPDATA%\RustyWatch\settings.json`. The old `customPreviewDataEnabled` flag is no
+longer read or written. `GetCustomPreviewValue` returns `null` for missing/blank keys;
+`SetCustomPreviewValue` removes blank keys, and `ClearCustomPreviewValues` empties the
+map without changing `liveTimeDateEnabled`.
+
+**Meaning:** with Live preview off, TIME and DATE come from `DEFAULT_PREVIEW_DATETIME`
+(31.07.2022 21:37:40, exposed via `rw_preview_default_datetime`) with Custom Data
+overrides. With Live preview on, `DateTime.Now` drives TIME, DATE and all date-derived
+fields. Weather, battery, steps, heart rate, goals, health and notifications always
+read the predefined values regardless of the toggle. The 1 s `_clockTimer` does nothing
+while the toggle is off; while on it calls `UpdateLiveTimeDateOnly()` (no weather FFI,
+no sensor work, no canvas rebuild).
 
 **Dynamic editor:** `BuildCustomDataDialog()` rebuilds `CustomDataFieldsPanel` on every
 open from distinct `_layers` kinds:
-- `time` / `analog-time` → hour, minute and second fields;
-- `date` and any of the six date-field kinds → day, month, year, plus a first-day
-  combo when a `weekday-number` widget exists (reusing the localized
-  `FirstDayOfWeekLabel` / `FirstDayMonday` / `FirstDaySunday` keys);
-- sensor/placeholder kinds (`steps`, `distance`, seven health kinds, `lunar-date`,
-  `festival`, `world-clock`) → one free-text value each, labelled with the existing
-  `Layer*` localization keys. If no data widget is present, the panel shows
-  `CustomDataEmpty` instead of controls.
+- `time` / `analog-time` → hour, minute and second fields (placeholder = predefined
+  moment, not `DateTime.Now`);
+- `date` and any date-field kind → day, month, year, plus a first-day combo when a
+  `weekday-number` widget exists;
+- sensor/placeholder kinds (battery, steps, distance, health kinds, `lunar-date`,
+  `festival`, `world-clock`) → one free-text value each;
+- weather kinds → city, a **name dropdown** backed by `rw_weather_conditions` (codes
+  0…28 from `locale.rs`), high/low and one validated `HH:MM` field each for sunrise
+  and sunset (parsed in Rust by `rw_format_weather_field`).
 
-Numeric inputs are clamped in `ClampCustomInt` (hour 0–23, minute/second 0–59,
-month 1–12, day 1–31 limited by `DateTime.DaysInMonth`, year 1–9999); missing inputs
-fall back to the live value. Sensor values are displayed verbatim.
-
-**Preview path:** `UpdateClockText` builds a `DateTime` from the overrides and passes
-it to the existing `FormatTextForTime` (so all formatting still goes through Rust;
-`rw_format_date` gets 0-based month, `rw_format_date_field` 1-based), optionally
-overriding the first-day argument. It then applies sensor overrides via
-`ApplyCustomSensorOverride`, and rotates analog hands to the custom time with the same
-formulas as generated JS. Every `TextBox.TextChanged` / combo `SelectionChanged` stores
-the value and calls `UpdateClockText()` immediately, so the preview updates live.
-`RebuildPreview()` and `UpdateExistingLayerViews()` also call `UpdateClockText()`, so
-the override survives layer changes.
+Numeric inputs are clamped in `ClampCustomInt`; missing inputs fall back to the
+predefined preset. Every editor change stores the value and calls `UpdateClockText()`
+immediately; `RebuildPreview()` and `UpdateExistingLayerViews()` do the same.
 
 **Export isolation:** nothing in `project.json`, `codegen.rs` or `package.rs` reads
 these settings — the exported `.zip` always uses real watch sensors. Verified by
@@ -850,15 +878,15 @@ These are hard-won constraints; changing them breaks 1:1 preview/export parity.
 | `crates/rusty-core/src/widgets.rs` | catalog, add/update, frame geometry math |
 | `crates/rusty-core/src/codegen.rs` | `app.json`, `app.js`, `watchface/index.js` |
 | `crates/rusty-core/src/time_format.rs`, `date_format.rs`, `locale.rs` | shared formatting/parsing, Sakamoto, runtime language tables |
-| `crates/rusty-core/src/{fonts,images,image_fit,hands,status_icons}.rs` | asset stores and scaling |
+| `crates/rusty-core/src/{fonts,images,image_fit,hands,status_icons,weather,asset_cache,export_paths}.rs` | asset stores, scaling, hashed export paths |
 | `crates/rusty-core/src/package.rs` | ZIP export/inspect, emulator workspace |
 | `crates/rusty-core/src/validate.rs`, `recent.rs` | validation, recent projects |
 | `crates/rusty-cli/src/main.rs` | `new`, `validate`, `export`, `inspect` |
-| `crates/rusty-ffi/src/lib.rs` | 54 `rw_*` C exports + 25 FFI tests |
+| `crates/rusty-ffi/src/lib.rs` | 65 `rw_*` C exports + 33 FFI tests |
 | `native/RustyWatch/MainWindow.xaml(.cs)` | shell, preview, layers, inspector, assets, settings, dialogs |
 | `native/RustyWatch/RustNative.cs` | P/Invoke bridge and DTOs |
 | `native/RustyWatch/{AppPaths,AppSettingsStore,PreviewFonts,ZeppSimulator}.cs` | app data, settings, TTF preview, simulator integration |
 | `native/RustyWatch/Localization/*` | catalogs, service, bridge, format guide |
-| `native/RustyWatch/Assets/*` | icon, HOME logo, Inter TTF + OFL, hand sets |
+| `native/RustyWatch/Assets/*` | icon, HOME logo, Inter TTF + OFL, hand sets, Classic weather icons (SVG masters + 512 px PNG) |
 | `logo/` | vector and raster logo sources |
 | `docs/FORMAT.md`, `PLAN.md`, `AGENTS.md` | format spec, history/decisions, agent rules |

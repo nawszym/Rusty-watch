@@ -17,10 +17,12 @@ internal static class AppSettingsStore
     private static bool _snapToGrid;
     // Domyślnie włączone — tak samo jak przed wprowadzeniem opcji w flyoucie.
     private static bool _showUnselectedOutline = true;
-    // Niestandardowe dane podglądu to ustawienie EDYTORA — nie trafia do project.json
+    // Dane predefiniowane podglądu to ustawienie EDYTORA — nie trafia do project.json
     // ani do eksportowanego ZIP, więc nie może zmienić zachowania tarczy na zegarku.
-    private static bool _customPreviewDataEnabled;
     private static readonly Dictionary<string, string> _customPreviewData = new();
+    // Live Preview dotyczy WYŁĄCZNIE czasu i daty. Pozostałe pola zawsze czytają
+    // dane predefiniowane (zgodnie z decyzją: brak migracji starego przełącznika).
+    private static bool _liveTimeDateEnabled;
     private static bool _loaded;
 
     public static string? Language
@@ -155,21 +157,21 @@ internal static class AppSettingsStore
         Save();
     }
 
-    /// <summary>Czy podgląd używa ręcznie wprowadzonych wartości zamiast danych na żywo.</summary>
-    public static bool CustomPreviewDataEnabled
+    /// <summary>Czy czas i data podglądu mają podążać za zegarem systemowym.</summary>
+    public static bool LiveTimeDateEnabled
     {
-        get { Load(); return _customPreviewDataEnabled; }
+        get { Load(); return _liveTimeDateEnabled; }
     }
 
-    public static void SetCustomPreviewDataEnabled(bool value)
+    public static void SetLiveTimeDateEnabled(bool value)
     {
         Load();
-        if (_customPreviewDataEnabled == value) return;
-        _customPreviewDataEnabled = value;
+        if (_liveTimeDateEnabled == value) return;
+        _liveTimeDateEnabled = value;
         Save();
     }
 
-    /// <summary>Pusty brak wartości oznacza „użyj domyślnej wartości na żywo".</summary>
+    /// <summary>Pusty brak wartości oznacza „użyj wartości predefiniowanej".</summary>
     public static string? GetCustomPreviewValue(string key)
     {
         Load();
@@ -255,8 +257,8 @@ internal static class AppSettingsStore
                 _snapToGrid = snap.ValueKind == JsonValueKind.True;
             if (root.TryGetProperty("showUnselectedOutline", out var outline))
                 _showUnselectedOutline = outline.ValueKind == JsonValueKind.True;
-            if (root.TryGetProperty("customPreviewDataEnabled", out var customEnabled))
-                _customPreviewDataEnabled = customEnabled.ValueKind == JsonValueKind.True;
+            if (root.TryGetProperty("liveTimeDateEnabled", out var liveTime))
+                _liveTimeDateEnabled = liveTime.ValueKind == JsonValueKind.True;
             if (root.TryGetProperty("customPreviewData", out var customValues)
                 && customValues.ValueKind == JsonValueKind.Object)
             {
@@ -291,7 +293,7 @@ internal static class AppSettingsStore
                 firstDayOfWeek = _firstDayOfWeek,
                 snapToGrid = _snapToGrid,
                 showUnselectedOutline = _showUnselectedOutline,
-                customPreviewDataEnabled = _customPreviewDataEnabled,
+                liveTimeDateEnabled = _liveTimeDateEnabled,
                 customPreviewData = _customPreviewData,
             }));
         }

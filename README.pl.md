@@ -47,12 +47,13 @@ Projekt powstał jako własna implementacja inspirowana edytorem
 | --- | --- |
 | 🖥️ **Podgląd 1:1** | Okrągła tarcza 466 × 466 z prawdziwym tłem i wszystkimi widgetami w kolejności eksportu. |
 | 🧱 **Warstwy** | Panel z ukrywaniem, przesuwaniem i usuwaniem widgetów. Tło jest na stałe zablokowane na samym dole. |
-| 🖱️ **Ramki i przyciąganie** | Przeciąganie i skalowanie widgetów, kratka 16 px, prowadnice wyrównania do krawędzi i środków. |
+| 🖱️ **Ramki i przyciąganie** | Przeciąganie i skalowanie widgetów, kratka 16 px, prowadnice wyrównania do krawędzi i środków, przezroczystość widgetu (0–255). |
 | 🕐 **Zegary** | Cyfrowy (własny wzorzec formatu) oraz analogowy (obracane wskazówki z zestawów PNG). |
 | 📅 **Dane daty i czasu** | Data z edytowalnym wzorcem, dzień tygodnia, tydzień roku, dzień roku, data księżycowa, święta, zegar światowy. |
 | ❤️ **Zdrowie i aktywność** | Kroki, dystans, tętno, stres, PAI, temperatura skóry, sen, kalorie i SpO₂. |
-| 🖼️ **Zasoby** | Czcionki TTF, grafiki widgetu Image, zestawy wskazówek i ikony STATUS — magazyny współdzielone przez projekty. |
-| 🎛️ **Niestandardowe dane podglądu** | Ręczne nadpisanie czasu, daty i czujników w edytorze — nigdy w `.zip`. |
+| 🎯 **Cele** | Cel kroków, kalorii, stania i spalania tłuszczu z pola `.target` czujników; przełącznik jednostek. |
+| 🖼️ **Zasoby** | Czcionki TTF, grafiki widgetu Image, zestawy wskazówek, ikony STATUS i ikony pogody — magazyny współdzielone przez projekty. |
+| 🎛️ **Opcje podglądu** | Domyślnie dane predefiniowane; **Podgląd na żywo** przełącza tylko czas i datę na zegar systemowy. Wartości są ustawieniem edytora — nigdy w `.zip`. |
 | 🌐 **Język na zegarku** | Eksportowany ZIP sam wykrywa język (`pl-PL` → polskie nazwy miesięcy i AM/PM). |
 | 📦 **Eksport `.zip`** | Paczka samowystarczalna: zawiera wygenerowany JS i wszystkie użyte zasoby. |
 | 🧪 **Test w symulatorze** | Instalacja eksportu w oficjalnym Zepp OS Simulator jednym przyciskiem. |
@@ -62,13 +63,21 @@ Projekt powstał jako własna implementacja inspirowana edytorem
 - **Czas** — Digital time, Analog time
 - **Data** — Date, Day of week (number), Week of year, Day of year, Lunar date, Festival, World clock
 - **Tekst** — Text (user defined)
-- **Obraz** — Image (dopasowanie `cover` / `contain` / `stretch`)
+- **Obraz** — Image (niebieska ramka dopasowana do naturalnego rozmiaru i tylko przesuw; dwuklik daje czerwoną ramkę, która rozciąga obraz przy zmianie rozmiaru)
 - **Dystans** — Step counter, Distance
-- **Zdrowie** — Heart rate, Stress, PAI, Skin temperature, Sleep, Calories, SpO₂
+- **Cele** — Step target, Calorie target, Stand target, Fat burning target, Sleep target, Sleep target
+- **Zdrowie** — Heart rate, Stress, PAI, Skin temperature, Sleep, Calories, SpO₂, Stand hours, Fat burning, PAI (week)
+- **Pogoda** — nazwa pogody, miasto, temperatura max/min, wschód/zachód i 29 ikon (Classic)
 
 Nowy widget dodajesz przyciskiem **+ Add widget** na pasku podglądu; katalog po lewej
 to tylko podgląd obsługiwanych typów. Numeracja dnia tygodnia domyślnie przyjmuje
 **poniedziałek jako 1** (wtorek = 2); wariant „niedziela pierwsza" ustawiasz w App Settings.
+
+Cele czytają pole `.target` czujnika w zegarku. **Cel stania** i **Cel spalania tłuszczu**
+mogą nie być dostępne na Amazfit Active 2 — gdy czujnika brakuje, tarcza zachowuje wartość
+domyślną z projektu; edytor pokazuje ostrzeżenie w karcie widgetu i w inspektorze.
+Dla celów kalorii, stania i spalania tłuszczu jest przełącznik **Pokaż jednostkę**
+(`kcal`, `h`, `min`).
 
 ### 🎨 Zarządzanie zasobami
 
@@ -77,11 +86,13 @@ to tylko podgląd obsługiwanych typów. Numeracja dnia tygodnia domyślnie przy
 | `Fonts` | Czcionki TTF; domyślnie **Inter** (SIL OFL 1.1). Podgląd używa dokładnie tego samego pliku, który trafia do tarczy. |
 | `Images` | Grafiki dla widgetu **Image**. |
 | `Hands` | Zestawy wskazówek do zegara analogowego (wbudowane **Classic** i **Light**). |
+| `Weather` | Paczki ikon pogody — wbudowana **Classic** (29 ikon z masterów SVG OFL, renderowanych do 512×512 PNG); można dodawać własne. |
 | `Localization` | Katalogi języków interfejsu — można dodawać własne bez przebudowy aplikacji. |
 
 Wybrane zasoby są kopiowane do katalogu projektu, więc **Save as…** i eksport ZIP nie
-wymagają już magazynu aplikacji. Tło jest przygotowywane do dokładnie 466 × 466
-(tryb `Cover`, bez białych krawędzi), ponieważ ZeppOS nie skaluje zasobów `IMG` w runtime.
+wymagają już magazynu aplikacji. Obrazy wskazówek są przycinane do ciasnego prostokąta alfa
+z 8-pikselowym marginesem i skalowane w przestrzeni premultiplied alpha (bez białych
+krawędzi), ponieważ ZeppOS nie skaluje zasobów `IMG` w runtime.
 
 ### 📤 Eksport i symulator
 
@@ -137,14 +148,14 @@ więc rozszerzenia (nowe widgety, formaty, języki) możesz dodawać samodzielni
 
 **[`docs/TECHNICAL.md`](docs/TECHNICAL.md)** to opis działania aplikacji plik po pliku:
 model `Project`/`Widget`, kolejność warstw, matematyka ramek i przyciągania, wszystkie
-57 eksportów `rw_*`, cztery magazyny zasobów i algorytmy skalowania, współdzielony silnik
+65 eksportów `rw_*`, pięć magazynów zasobów i algorytmy skalowania, współdzielony silnik
 czasu/daty/lokalizacji, generowany `watchface/index.js` (sensory, timery, aktualizacje
 widgetów), pakowanie ZIP oraz podgląd, inspektor, nawigacja i integracja z symulatorem
 w WinUI. Dokument śledzi dokładną drogę od kliknięcia w edytorze do tarczy na zegarku.
 
-Opcja **Niestandardowe dane** (z przyciskiem zębatki) przechowuje ręczne wartości wyłącznie
-w ustawieniach aplikacji — nigdy w `project.json` — więc eksportowana tarcza nadal czyta
-prawdziwe czujniki zegarka. Zobacz `docs/TECHNICAL.md` §11.7.
+Opcja **Podgląd na żywo** przełącza tylko czas i datę na zegar systemowy, a zębatka otwiera
+edycyjne wartości predefiniowane. Żadna z nich nie trafia do `project.json` — eksportowana
+tarcza nadal czyta prawdziwe czujniki zegarka. Zobacz `docs/TECHNICAL.md` §11.7.
 
 ### 🏗️ Architektura
 
@@ -155,7 +166,7 @@ prawdziwe czujniki zegarka. Zobacz `docs/TECHNICAL.md` §11.7.
 └───────────────────────────┬──────────────────────────────────┘
                             ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  crates/rusty-ffi  — jedyny most C ABI (57 eksportów)        │
+│  crates/rusty-ffi  — jedyny most C ABI (65 eksportów)        │
 └───────────────────────────┬──────────────────────────────────┘
                             ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -199,7 +210,7 @@ rusty-watch/
 │   ├── rusty-core/src/      # model, project, codegen, widgets, layers, formaty,
 │   │                        #  zasoby (fonts/images/hands/status), zip, walidacja
 │   ├── rusty-cli/src/       # CLI: new | validate | export | inspect
-│   └── rusty-ffi/src/       # eksporty rw_* (57 funkcji)
+│   └── rusty-ffi/src/       # eksporty rw_* (65 funkcji)
 ├── native/RustyWatch/       # jedyny frontend WinUI 3
 │   ├── MainWindow.xaml(.cs) # shell, HOME, edytor, zasoby, ustawienia, dialogi
 │   ├── RustNative.cs        # P/Invoke do rusty_ffi.dll
@@ -261,7 +272,7 @@ Nazwa, autor i App ID trafiają do `app.json` jako `appName`, `vender`, `appId` 
 
 ### 🧪 Testy i weryfikacja
 
-1. `cargo test --workspace` — 89 testów core + 26 FFI.
+1. `cargo test --workspace` — 129 testów core + 33 FFI.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 błędów, 0 ostrzeżeń.
 3. Uruchom aplikację i sprawdź ekrany w **EN i PL**.
 4. Round-trip `new → export → open → export` musi zachować dane.
@@ -271,7 +282,7 @@ Nazwa, autor i App ID trafiają do `app.json` jako `appName`, `vender`, `appId` 
 
 1. **Utwórz projekt** na stronie HOME — folder powstaje w katalogu projektów z App Settings.
 2. **Dodaj widgety** z flyoutu nad podglądem i ustaw ich inspektora (zmiany zapisują się automatycznie).
-3. **Dodaj zasoby** w zakładce Assets (czcionka, obraz, wskazówki, ikony statusu).
+3. **Dodaj zasoby** w zakładce Assets (czcionka, obraz, wskazówki, ikony statusu, ikony pogody).
 4. **Eksportuj ZIP** przyciskiem Export — plik ląduje obok `project.json`.
 5. **Przetestuj** w symulatorze (opcjonalnie) i wgraj na zegarek.
 
@@ -281,9 +292,10 @@ Nazwa, autor i App ID trafiają do `app.json` jako `appName`, `vender`, `appId` 
 app.json                    # płaski manifest v2 (bez bloku `targets`; defaultLanguage, packageInfo, 8 deviceSource), metadane z projektu
 app.js                      # punkt wejścia
 watchface/index.js          # generowany kod tarcz (hmUI/hmSensor/timer)
-assets/Preview.png          # tymczasowy placeholder 314x314 (przeskalowane logo aplikacji) jako ikona tarczy (maskowany do okręgu, przezroczyste rogi)
-assets/fonts/…              # użyte TTF
-assets/images/…, hands/…, status/… # użyte zasoby
+assets/Preview.png          # oprawiony podgląd przeskalowany do 314x314 (maskowany do okręgu)
+assets/fonts/font_<hash>.ttf  # użyte TTF
+assets/hand_<hash>.png, status_<hash>.png, img_<hash>.png, weather_<hash>.png
+                            # płaskie, unikalnie nazwane kopie użytych zasobów
 ```
 
 ### 🤖 Dokumentacja

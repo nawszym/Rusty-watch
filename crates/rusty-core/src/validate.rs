@@ -67,7 +67,21 @@ pub fn validate(project: &Project) -> Vec<String> {
             | WidgetKind::SleepText
             | WidgetKind::CalorieText
             | WidgetKind::Spo2Text
-            | WidgetKind::BatteryText => {
+            | WidgetKind::BatteryText
+            | WidgetKind::StepTargetText
+            | WidgetKind::CalorieTargetText
+            | WidgetKind::StandTargetText
+            | WidgetKind::FatBurningTargetText
+            | WidgetKind::StandText
+            | WidgetKind::FatBurningText
+            | WidgetKind::PaiWeeklyText
+            | WidgetKind::SleepTargetText
+            | WidgetKind::WeatherConditionText
+            | WidgetKind::WeatherCityText
+            | WidgetKind::WeatherHighText
+            | WidgetKind::WeatherLowText
+            | WidgetKind::SunriseText
+            | WidgetKind::SunsetText => {
                 if widget.text_size.unwrap_or(0) == 0 {
                     errors.push(format!("Widget tekstowy '{}' nie ma rozmiaru czcionki", widget.id));
                 }
@@ -110,6 +124,22 @@ pub fn validate(project: &Project) -> Vec<String> {
                     None => errors.push(format!("Widget statusu '{}' nie ma src", widget.id)),
                     Some(src) if !asset_paths.contains(src.as_str()) => errors.push(format!(
                         "Widget '{}' odwołuje się do nieistniejącej ikony statusu: {src}",
+                        widget.id
+                    )),
+                    _ => {}
+                }
+            }
+            WidgetKind::WeatherIcon => {
+                if widget.weather_icon_set.is_none() {
+                    errors.push(format!(
+                        "Widget ikony pogody '{}' nie ma przypisanej paczki",
+                        widget.id
+                    ));
+                }
+                match &widget.src {
+                    None => errors.push(format!("Widget ikony pogody '{}' nie ma src", widget.id)),
+                    Some(src) if !asset_paths.contains(src.as_str()) => errors.push(format!(
+                        "Widget '{}' odwołuje się do nieistniejącej ikony pogody: {src}",
                         widget.id
                     )),
                     _ => {}

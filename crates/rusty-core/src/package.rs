@@ -212,6 +212,10 @@ pub fn export_zip(project_file: &Path, output: &Path) -> Result<PathBuf> {
                 crate::status_icons::export_asset_bytes(&project, project_dir, &asset.path)
                     .map_err(anyhow::Error::msg)?
             }
+            None if asset.path.starts_with("weather/") => {
+                crate::weather::export_asset_bytes(&project, project_dir, &asset.path)
+                    .map_err(anyhow::Error::msg)?
+            }
             None => export_asset_bytes(&project, project_dir, &asset.path)
                 .map_err(anyhow::Error::msg)?,
         };

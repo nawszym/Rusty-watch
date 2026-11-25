@@ -423,9 +423,9 @@
                                             <muxc:ToggleMenuFlyoutItem x:Name="UnselectedOutlineToggle"
                                                                        Style="{StaticResource PreviewOptionItemStyle}"
                                                                        Click="UnselectedOutlineToggle_Click" />
-                                            <muxc:ToggleMenuFlyoutItem x:Name="CustomDataToggle"
+                                            <muxc:ToggleMenuFlyoutItem x:Name="LivePreviewToggle"
                                                                        Style="{StaticResource PreviewOptionItemStyle}"
-                                                                       Click="CustomDataToggle_Click" />
+                                                                       Click="LivePreviewToggle_Click" />
                                             <muxc:ToggleMenuFlyoutItem x:Name="CustomDataEditItem"
                                                                        Style="{StaticResource PreviewOptionItemStyle}"
                                                                        Click="CustomDataEdit_Click">
@@ -594,6 +594,28 @@
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                  </StackPanel>
 
+                                 <!-- Ustawienia ikony pogody: paczka z %APPDATA%\RustyWatch\Weather. -->
+                                 <StackPanel x:Name="WeatherSettingsPanel" Visibility="Collapsed"
+                                             Spacing="4" Margin="0,4,0,0">
+                                    <TextBlock Text="{Binding Strings[WeatherIconPackLabel]}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <ComboBox x:Name="WeatherPackComboBox" HorizontalAlignment="Stretch"
+                                              DisplayMemberPath="Id"
+                                              SelectionChanged="WeatherPackComboBox_SelectionChanged" />
+                                    <TextBlock Text="{Binding Strings[WeatherIconPackDesc]}" FontSize="10"
+                                               TextWrapping="Wrap" Margin="0,4,0,0"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <Button x:Name="WeatherScaleModeButton" Click="ScaleModeButton_Click"
+                                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                            Margin="0,8,0,0"
+                                            AutomationProperties.Name="{Binding Strings[ScaleModeTitle]}">
+                                       <StackPanel Orientation="Horizontal" Spacing="8">
+                                          <FontIcon Glyph="&#xE8B4;" FontSize="12" />
+                                          <TextBlock x:Name="WeatherScaleModeButtonText" Text="" FontSize="11" />
+                                       </StackPanel>
+                                    </Button>
+                                 </StackPanel>
+
                                  <!-- Inspektor zaznaczonego widgetu (na razie wyświetlacz czasu). -->
                                 <StackPanel x:Name="WidgetInspector" Spacing="4">
                                     <StackPanel x:Name="DigitalSettingsPanel" Spacing="4">
@@ -635,6 +657,13 @@
                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                             </StackPanel>
 
+                                            <!-- Tylko dla pól kategorii CELE: wartość czyta czujnik zegarka. -->
+                                            <StackPanel x:Name="GoalInfoPanel" Spacing="4" Visibility="Collapsed">
+                                                <TextBlock x:Name="GoalInfoHint" Text="{Binding Strings[GoalSensorHint]}"
+                                                           FontSize="10" TextWrapping="Wrap" Margin="0,4,0,12"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+
                                             <!-- Tylko dla dystansu: własny system jednostek. -->
                                             <StackPanel x:Name="DistanceUnitPanel" Spacing="4" Visibility="Collapsed">
                                                 <CheckBox x:Name="OwnMeasurementSystemCheckBox"
@@ -653,6 +682,27 @@
                                                 <CheckBox x:Name="ShowUnitCheckBox"
                                                           Content="{Binding Strings[ShowUnitLabel]}"
                                                           Click="ShowUnitCheckBox_Click" />
+                                            </StackPanel>
+
+                                            <!-- Krycie każdego widgetu: 0 = niewidoczny, 255 = pełny. -->
+                                            <StackPanel x:Name="OpacityPanel" Spacing="4">
+                                                <TextBlock Text="{Binding Strings[OpacityLabel]}" FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <Grid ColumnSpacing="10">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="42" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.Column="0" Height="28" CornerRadius="4"
+                                                            Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                                            BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                                            BorderThickness="1">
+                                                        <TextBlock x:Name="OpacityValue" Text="255" FontSize="11"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                    </Border>
+                                                    <Slider x:Name="OpacitySlider" Grid.Column="1" Minimum="0" Maximum="255"
+                                                            Value="255" ValueChanged="OpacitySlider_ValueChanged" />
+                                                </Grid>
                                             </StackPanel>
 
                                             <TextBlock Text="{Binding Strings[FontSize]}" FontSize="11"
@@ -1167,6 +1217,72 @@
                             </StackPanel>
                             <TextBlock x:Name="StatusStatusText" FontSize="12" TextWrapping="Wrap"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                        <!-- Ikony pogody: wbudowany Classic i paczki dodane przez użytkownika. -->
+                        <StackPanel Spacing="10" Margin="0,16,0,0">
+                            <TextBlock Text="{Binding Strings[AssetsWeatherTitle]}" FontSize="18"
+                                       FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding Strings[AssetsWeatherDesc]}" FontSize="12"
+                                       TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <Border Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1" CornerRadius="6" Padding="12">
+                                <GridView x:Name="WeatherPacksGrid" SelectionMode="Single"
+                                          ItemsSource="{x:Bind WeatherPackItems, Mode=OneWay}"
+                                          SizeChanged="AssetGrid_SizeChanged"
+                                          Padding="0"
+                                          ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                          SelectionChanged="WeatherPacksGrid_SelectionChanged">
+                                    <GridView.ItemContainerStyle>
+                                        <Style TargetType="GridViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Padding" Value="0" />
+                                        </Style>
+                                    </GridView.ItemContainerStyle>
+                                    <GridView.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <ItemsWrapGrid Orientation="Horizontal" ItemWidth="200" ItemHeight="144" />
+                                        </ItemsPanelTemplate>
+                                    </GridView.ItemsPanel>
+                                    <GridView.ItemTemplate>
+                                        <DataTemplate x:DataType="local:WeatherPackItem">
+                                            <Grid Padding="8" RowSpacing="4" VerticalAlignment="Stretch">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="72" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
+                                                <Border CornerRadius="6" Background="#1C1C20">
+                                                    <Image Source="{Binding Preview}" Width="64" Height="64"
+                                                           Stretch="Uniform" />
+                                                </Border>
+                                                <TextBlock Grid.Row="1" Text="{Binding Id}" FontSize="12"
+                                                           FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Row="2" Text="{Binding Details}" FontSize="10"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Grid.Row="3" Text="{Binding Badge}" FontSize="10"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </GridView.ItemTemplate>
+                                </GridView>
+                            </Border>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="AddWeatherButton" Content="{Binding Strings[AssetsAddWeather]}"
+                                        Click="AddWeatherButton_Click" />
+                                <Button x:Name="RemoveWeatherButton" Content="{Binding Strings[AssetsRemoveWeather]}"
+                                        Click="RemoveWeatherButton_Click" IsEnabled="False" />
+                                <Button x:Name="OpenWeatherFolderButton"
+                                        Content="{Binding Strings[AssetsOpenWeatherFolder]}"
+                                        Click="OpenWeatherFolderButton_Click" />
+                            </StackPanel>
+                            <TextBlock x:Name="WeatherStatusText" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>

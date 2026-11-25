@@ -49,6 +49,30 @@ const HOURS: [u8; FRAME_COUNT] = [6, 9, 12, 15, 18, 20, 21, 21];
 const MINUTES: [u8; FRAME_COUNT] = [5, 11, 17, 23, 29, 33, 37, 37];
 const SECONDS: [u8; FRAME_COUNT] = [4, 10, 16, 22, 28, 34, 40, 40];
 
+/// Predefiniowany moment podglądu edytora, gdy Live Preview jest wyłączone.
+/// Wartości pochodzą z klatki źródłowej `preview.png`/GIF, więc edytor i
+/// eksportowany podgląd pokazują dokładnie ten sam moment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewDateTime {
+    pub day: u32,
+    pub month: u32,
+    pub year: i32,
+    pub hour: u32,
+    pub minute: u32,
+    pub second: u32,
+}
+
+/// 31 lipca 2022, 21:37:40 — kopia klatki 7 (`PREVIEW_FRAME_INDEX`).
+pub const DEFAULT_PREVIEW_DATETIME: PreviewDateTime = PreviewDateTime {
+    day: DATES[PREVIEW_FRAME_INDEX].0,
+    month: DATES[PREVIEW_FRAME_INDEX].1,
+    year: DATES[PREVIEW_FRAME_INDEX].2,
+    hour: HOURS[PREVIEW_FRAME_INDEX] as u32,
+    minute: MINUTES[PREVIEW_FRAME_INDEX] as u32,
+    second: SECONDS[PREVIEW_FRAME_INDEX] as u32,
+};
+
 /// Widoczność ikon STATUS w kolejnych klatkach. Bity: ALARM=1, DND=2,
 /// BLUETOOTH=4 (oznacza rozłączenie), LOCK=8.
 ///
@@ -198,6 +222,173 @@ pub struct PreviewFrameData {
     pub skin_temp_c: f32,
     pub sleep_minutes: u32,
     pub spo2: u8,
+    /// Dzienne cele są stałe w ciągu dnia — nie podlegają losowaniu.
+    pub steps_target: u32,
+    pub calories_target: u16,
+    pub stand_target: u8,
+    pub fat_burning_target: u8,
+    /// Bieżące wartości z czujników (na PC stabilne, zależne od klatki).
+    pub stand_hours: u8,
+    pub fat_burning_minutes: u16,
+    pub pai_weekly: u16,
+    /// Migawka pogody dla widgetów z kategorii Pogoda.
+    pub weather: WeatherSnapshot,
+}
+
+/// Jedna, deterministyczna migawka pogody w klatce podglądu.
+/// `index` to kod pogody ZeppOS v1.0 (0..=28) — ten sam wybiera ikonę i nazwę.
+#[derive(Debug, Clone, Copy)]
+pub struct WeatherSnapshot {
+    /// Nazwa miasta w języku angielskim — Rust tłumaczy ją przez `locale::city_name`.
+    pub city: &'static str,
+    pub index: u8,
+    pub high: i32,
+    pub low: i32,
+    pub sunrise_hour: u8,
+    pub sunrise_minute: u8,
+    pub sunset_hour: u8,
+    pub sunset_minute: u8,
+}
+
+/// Domyślny stan pogody w podglądzie edytora oraz fallback dla Custom Data:
+/// pochmurna Warszawa (~20 °C w ciągu dnia). Na zegarku wartości pochodzą z
+/// czujnika WEATHER — ten wzorzec dotyczy wyłącznie podglądu na PC.
+pub const DEFAULT_PREVIEW_WEATHER: WeatherSnapshot = WeatherSnapshot {
+    city: "Warszawa",
+    index: 0,
+    high: 22,
+    low: 16,
+    sunrise_hour: 5,
+    sunrise_minute: 13,
+    sunset_hour: 20,
+    sunset_minute: 40,
+};
+
+/// Stolice Europy w 7 oryginalnych klatkach. Klatka 7 (21:37:40, źródło
+/// `preview.png`) to Warszawa; klatka 8 jest jej dokładną kopią.
+pub const WEATHER_FRAMES: [WeatherSnapshot; FRAME_COUNT] = [
+    WeatherSnapshot { city: "Berlin",  index: 0,  high: 4,  low: -1, sunrise_hour: 7,  sunrise_minute: 26, sunset_hour: 16, sunset_minute: 42 },
+    WeatherSnapshot { city: "Paris",   index: 5,  high: 11, low: 5,  sunrise_hour: 7,  sunrise_minute: 33, sunset_hour: 17, sunset_minute: 53 },
+    WeatherSnapshot { city: "London",  index: 1,  high: 14, low: 8,  sunrise_hour: 6,  sunrise_minute: 42, sunset_hour: 19, sunset_minute: 5 },
+    WeatherSnapshot { city: "Rome",    index: 3,  high: 25, low: 14, sunrise_hour: 6,  sunrise_minute: 12, sunset_hour: 20, sunset_minute: 2 },
+    WeatherSnapshot { city: "Madrid",  index: 14, high: 32, low: 18, sunrise_hour: 6,  sunrise_minute: 32, sunset_hour: 21, sunset_minute: 21 },
+    WeatherSnapshot { city: "Prague",  index: 6,  high: 2,  low: -3, sunrise_hour: 7,  sunrise_minute: 54, sunset_hour: 16, sunset_minute: 12 },
+    WeatherSnapshot { city: "Warsaw",  index: 0,  high: 22, low: 16, sunrise_hour: 5,  sunrise_minute: 13, sunset_hour: 20, sunset_minute: 40 },
+    WeatherSnapshot { city: "Warsaw",  index: 0,  high: 22, low: 16, sunrise_hour: 5,  sunrise_minute: 13, sunset_hour: 20, sunset_minute: 40 },
+];
+
+/// Rozwiązany stan pogody dla podglądu na żywo. W przeciwieństwie do
+/// `WeatherSnapshot` ma własny `String` (pole miasta może pochodzić z Custom Data).
+#[derive(Debug, Clone)]
+pub struct WeatherPreviewState {
+    pub city: String,
+    pub index: u8,
+    pub high: i32,
+    pub low: i32,
+    pub sunrise_hour: u8,
+    pub sunrise_minute: u8,
+    pub sunset_hour: u8,
+    pub sunset_minute: u8,
+}
+
+impl From<WeatherSnapshot> for WeatherPreviewState {
+    fn from(value: WeatherSnapshot) -> Self {
+        Self {
+            city: value.city.to_string(),
+            index: value.index,
+            high: value.high,
+            low: value.low,
+            sunrise_hour: value.sunrise_hour,
+            sunrise_minute: value.sunrise_minute,
+            sunset_hour: value.sunset_hour,
+            sunset_minute: value.sunset_minute,
+        }
+    }
+}
+
+fn override_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(|item| {
+        item.as_i64().or_else(|| item.as_str().and_then(|text| text.trim().parse().ok()))
+    })
+}
+
+/// Parsuje jedno pole czasu `HH:MM` (z Custom Data). Błędne wpisy są ignorowane,
+/// więc podgląd wraca do wartości domyślnej zamiast pokazywać uszkodzony tekst.
+fn override_time(value: &serde_json::Value, key: &str) -> Option<(u8, u8)> {
+    let text = value.get(key)?.as_str()?.trim();
+    let mut parts = text.split(':');
+    let hour = parts.next()?.trim().parse::<i64>().ok()?;
+    let minute = parts.next()?.trim().parse::<i64>().ok()?;
+    if parts.next().is_some() || !(0..=23).contains(&hour) || !(0..=59).contains(&minute) {
+        return None;
+    }
+    Some((hour as u8, minute as u8))
+}
+
+/// Nakłada wartości z Custom Data na wzorzec (puste/brakujące pola zostają
+/// domyślne — dzięki temu podgląd zawsze ma komplet danych).
+impl WeatherPreviewState {
+    pub fn with_overrides(mut self, overrides: &serde_json::Value) -> Self {
+        if let Some(city) = overrides.get("city").and_then(|v| v.as_str()) {
+            if !city.trim().is_empty() {
+                self.city = city.trim().to_string();
+            }
+        }
+        if let Some(index) = override_i64(overrides, "index") {
+            self.index = index.clamp(0, 28) as u8;
+        }
+        if let Some(high) = override_i64(overrides, "high") {
+            self.high = high.clamp(-99, 99) as i32;
+        }
+        if let Some(low) = override_i64(overrides, "low") {
+            self.low = low.clamp(-99, 99) as i32;
+        }
+        if let Some(hour) = override_i64(overrides, "sunriseHour") {
+            self.sunrise_hour = hour.clamp(0, 23) as u8;
+        }
+        if let Some(minute) = override_i64(overrides, "sunriseMinute") {
+            self.sunrise_minute = minute.clamp(0, 59) as u8;
+        }
+        if let Some(hour) = override_i64(overrides, "sunsetHour") {
+            self.sunset_hour = hour.clamp(0, 23) as u8;
+        }
+        if let Some(minute) = override_i64(overrides, "sunsetMinute") {
+            self.sunset_minute = minute.clamp(0, 59) as u8;
+        }
+        // Jedno pole `HH:MM` zastępuje dawne pary godzina/minuta. Obsługujemy
+        // też stare wartości zapisane w settings.json (wyżej) dla kompatybilności.
+        if let Some((hour, minute)) = override_time(overrides, "sunrise") {
+            self.sunrise_hour = hour;
+            self.sunrise_minute = minute;
+        }
+        if let Some((hour, minute)) = override_time(overrides, "sunset") {
+            self.sunset_hour = hour;
+            self.sunset_minute = minute;
+        }
+        self
+    }
+}
+
+/// Tekst pola pogody — jedyna implementacja używana zarówno przez renderer
+/// klatek, jak i przez FFI podglądu na żywo (`rw_format_weather_field`).
+pub fn weather_text(kind: &str, state: &WeatherPreviewState, locale: WatchfaceLocale) -> String {
+    match kind {
+        "weather-condition" => locale
+            .weather_names()
+            .get(state.index as usize)
+            .copied()
+            .unwrap_or("Nieznane")
+            .to_string(),
+        "weather-city" => locale.city_name(&state.city),
+        "weather-high" => format!("{}°", state.high),
+        "weather-low" => format!("{}°", state.low),
+        "sunrise" => format!("{:02}:{:02}", state.sunrise_hour, state.sunrise_minute),
+        "sunset" => format!("{:02}:{:02}", state.sunset_hour, state.sunset_minute),
+        // Ikona nie ma żadnego tekstu — wcześniej fallback zwracał "--", który
+        // edytor rysował w ramce jako artifact przy każdym przeskalowaniu.
+        "weather-icon" => String::new(),
+        _ => "--".to_string(),
+    }
 }
 
 /// Losuje 7 oryginalnych klatek i dokleja dokładną kopię ostatniej (21:37:40).
@@ -361,6 +552,14 @@ pub fn frame_data(index: usize, series: &PreviewRandomSeries) -> Result<PreviewF
         skin_temp_c: series.skin_temp_c[index],
         sleep_minutes: series.sleep_minutes[index],
         spo2: series.spo2[index],
+        steps_target: 10_000,
+        calories_target: 2_000,
+        stand_target: 12,
+        fat_burning_target: 45,
+        stand_hours: 3 + source_index as u8,
+        fat_burning_minutes: 12 + source_index as u16 * 4,
+        pai_weekly: 120 + source_index as u16 * 24,
+        weather: WEATHER_FRAMES[index],
     })
 }
 
@@ -463,7 +662,51 @@ pub fn text_for_layer(
                 frame.spo2.to_string()
             }
         }
+        "stand" => {
+            if unit {
+                format!("{} h", frame.stand_hours)
+            } else {
+                frame.stand_hours.to_string()
+            }
+        }
+        "fat-burning" => {
+            if unit {
+                format!("{} min", frame.fat_burning_minutes)
+            } else {
+                frame.fat_burning_minutes.to_string()
+            }
+        }
+        "pai-weekly" => frame.pai_weekly.to_string(),
+        "sleep-target" => "-- h".to_string(),
+        "weather-condition" | "weather-city" | "weather-high" | "weather-low" | "sunrise"
+        | "sunset" => weather_text(
+            layer.kind.as_str(),
+            &WeatherPreviewState::from(frame.weather),
+            locale,
+        ),
         "battery" => format!("{}%", frame.battery_pct),
+        "steps-target" => frame.steps_target.to_string(),
+        "calories-target" => {
+            if unit {
+                format!("{} kcal", frame.calories_target)
+            } else {
+                frame.calories_target.to_string()
+            }
+        }
+        "stand-target" => {
+            if unit {
+                format!("{} h", frame.stand_target)
+            } else {
+                frame.stand_target.to_string()
+            }
+        }
+        "fat-burning-target" => {
+            if unit {
+                format!("{} min", frame.fat_burning_target)
+            } else {
+                frame.fat_burning_target.to_string()
+            }
+        }
         _ => layer.text.clone().unwrap_or_default(),
     }
 }
@@ -549,6 +792,17 @@ pub(crate) fn rotate_hand(src: &RgbaImage, degrees: f64) -> RgbaImage {
     out
 }
 
+/// Stosuje krycie widgetu do już wczytanego obrazu (0 = niewidoczny, 255 = bez zmian).
+pub(crate) fn apply_alpha(image: &mut RgbaImage, alpha: u8) {
+    if alpha == 255 {
+        return;
+    }
+    for pixel in image.pixels_mut() {
+        let scaled = (pixel.0[3] as u16 * alpha as u16 / 255) as u8;
+        pixel.0[3] = scaled;
+    }
+}
+
 fn overlay_asset(
     canvas: &mut RgbaImage,
     project_dir: &Path,
@@ -558,6 +812,7 @@ fn overlay_asset(
     w: u32,
     h: u32,
     resize: bool,
+    alpha: u8,
 ) {
     let src = match src {
         Some(value) if !value.is_empty() => value,
@@ -569,10 +824,13 @@ fn overlay_asset(
         Err(_) => return,
     };
     if resize && image.dimensions() != (w, h) && w > 0 && h > 0 {
-        let fitted = imageops::resize(&image, w, h, FilterType::Lanczos3);
+        let mut fitted = imageops::resize(&image, w, h, FilterType::Lanczos3);
+        apply_alpha(&mut fitted, alpha);
         imageops::overlay(canvas, &fitted, x as i64, y as i64);
     } else {
-        imageops::overlay(canvas, &image, x as i64, y as i64);
+        let mut source = image;
+        apply_alpha(&mut source, alpha);
+        imageops::overlay(canvas, &source, x as i64, y as i64);
     }
 }
 
@@ -656,7 +914,8 @@ fn draw_text(canvas: &mut RgbaImage, project_dir: &Path, layer: &LayerView, text
         _ => layer.y as f32 + (layer.h as f32 - total_height) / 2.0,
     };
 
-    let color = parse_argb(layer.color.as_deref());
+    let mut color = parse_argb(layer.color.as_deref());
+    color.0[3] = (color.0[3] as u16 * layer.alpha as u16 / 255) as u8;
     for (line_index, line) in lines.iter().enumerate() {
         let width = measure_width(&font, &scaled, line);
         let left = match layer.align.as_deref() {
@@ -737,6 +996,7 @@ pub fn render_frame(
                 layer.w as u32,
                 layer.h as u32,
                 true,
+                layer.alpha,
             ),
             "images" => overlay_asset(
                 &mut canvas,
@@ -747,6 +1007,7 @@ pub fn render_frame(
                 layer.w as u32,
                 layer.h as u32,
                 true,
+                layer.alpha,
             ),
             "analog-time" => {
                 let w = layer.w as u32;
@@ -771,6 +1032,7 @@ pub fn render_frame(
                     if hand.dimensions() != (w, h) && w > 0 && h > 0 {
                         hand = imageops::resize(&hand, w, h, FilterType::Lanczos3);
                     }
+                    apply_alpha(&mut hand, layer.alpha);
                     let rotated = rotate_hand(&hand, angle);
                     imageops::overlay(&mut canvas, &rotated, layer.x as i64, layer.y as i64);
                 }
@@ -796,6 +1058,28 @@ pub fn render_frame(
                     layer.w as u32,
                     layer.h as u32,
                     true,
+                    layer.alpha,
+                );
+            }
+            "weather-icon" => {
+                // Ikona jest wybierana z 29 plików przez kod pogody klatki —
+                // dokładnie tak, jak JS wybiera element tablicy weatherIcons.
+                let set = layer
+                    .weather_icon_set
+                    .as_deref()
+                    .unwrap_or(crate::weather::DEFAULT_WEATHER_PACK);
+                let index = frame.weather.index.min(28) as usize;
+                let src = crate::weather::js_icon_path(set, index);
+                overlay_asset(
+                    &mut canvas,
+                    project_dir,
+                    Some(&src),
+                    layer.x,
+                    layer.y,
+                    layer.w as u32,
+                    layer.h as u32,
+                    true,
+                    layer.alpha,
                 );
             }
             _ => {

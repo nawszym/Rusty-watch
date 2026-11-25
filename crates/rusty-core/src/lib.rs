@@ -16,6 +16,7 @@ pub mod recent;
 pub mod status_icons;
 pub mod time_format;
 pub mod validate;
+pub mod weather;
 pub mod widgets;
 
 pub use model::{DeviceId, Project, Widget, WidgetKind, SCREEN_SIZE, SCHEMA_VERSION};
@@ -88,6 +89,271 @@ mod tests {
         assert!(js.contains("const s = t.second"));
         assert!(js.contains("timer.createTimer(0, 1000, tick)"));
         assert!(js.contains("timer.stopTimer(tickTimer)"));
+    }
+
+    #[test]
+    fn goal_widgets_are_in_catalog_and_export_target_readers() {
+        let goals: Vec<_> = widgets::supported_widgets()
+            .into_iter()
+            .filter(|item| item.category == widgets::CATEGORY_GOALS)
+            .map(|item| item.kind)
+            .collect();
+        assert_eq!(
+            goals,
+            vec![
+                "steps-target",
+                "calories-target",
+                "stand-target",
+                "fat-burning-target",
+                "sleep-target"
+            ]
+        );
+
+        let mut project = Project::starter("Cele");
+        for kind in &goals {
+            widgets::add_widget(&mut project, kind).unwrap();
+        }
+        assert!(validate(&project).is_empty());
+
+        let js = codegen::generate_index_js(&project);
+        for token in [
+            "hmSensor.id.STAND",
+            "hmSensor.id.FAT_BURRING",
+            "function _getTargetStand()",
+            "function _getTargetFatBurning()",
+            "String(_tStep.target)",
+            "String(_tCalorie.target) + ' kcal'",
+            "String(_tStand.target) + ' h'",
+            "String(_tFat.target) + ' min'",
+            "targetSensors.forEach",
+            "sensor.removeEventListener(sensor.event[entry.event], targetTick)",
+        ] {
+            assert!(js.contains(token), "generated JS lacks {token}: {js}");
+        }
+        // Cele nie mogą wprowadzać API Mini Program ani obiektu Date.
+        assert!(!js.contains("@zos"));
+        assert!(!js.contains("new Date"));
+        assert!(js.contains("show_level: hmUI.show_level.ONLY_NORMAL"));
+    }
+
+    #[test]
+    fn goal_widgets_without_sensors_keep_placeholder_and_no_getters() {
+        let mut project = Project::starter("Cele");
+        let widget = widgets::add_widget(&mut project, "steps-target").unwrap();
+        assert_eq!(widget.text.as_deref(), Some("10000"));
+        let js = codegen::generate_index_js(&project);
+        assert!(!js.contains("hmSensor.id.STAND"));
+        assert!(!js.contains("hmSensor.id.FAT_BURRING"));
+        assert!(js.contains("text: \"10000\""));
+    }
+
+    #[test]
+    fn goal_show_unit_checkmark_changes_preview_and_export() {
+        let mut project = Project::starter("Cele");
+        let widget = widgets::add_widget(&mut project, "stand-target").unwrap();
+        assert_eq!(widget.text.as_deref(), Some("12 h"));
+
+        let settings = serde_json::json!({
+            "id": widget.id,
+            "x": widget.x,
+            "y": widget.y,
+            "w": widget.w,
+            "h": widget.h,
+            "textSize": widget.text_size.unwrap_or(40),
+            "color": "0xFFFFFFFF",
+            "align": "center",
+            "showUnit": false,
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert!(!updated.show_unit);
+        assert_eq!(updated.text.as_deref(), Some("12"));
+
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("String(_tStand.target)"));
+        assert!(!js.contains("String(_tStand.target) + ' h'"));
+
+        let series = preview::random_series(42, "en");
+        let frame = preview::frame_data(0, &series).unwrap();
+        let layer = layers::describe(&project)
+            .into_iter()
+            .find(|layer| layer.kind == "stand-target")
+            .expect("warstwa celu");
+        assert_eq!(preview::text_for_layer(&layer, &frame, &project, locale::WatchfaceLocale::English), "12");
+    }
+
+    #[test]
+    fn additional_health_widgets_read_expected_sensor_fields() {
+        let goals: Vec<_> = widgets::supported_widgets()
+            .into_iter()
+            .filter(|item| item.category == widgets::CATEGORY_HEALTH)
+            .map(|item| item.kind)
+            .collect();
+        for kind in ["stand", "fat-burning", "pai-weekly"] {
+            assert!(goals.contains(&kind), "missing health widget {kind}");
+        }
+
+        let mut project = Project::starter("Zdrowie+");
+        for kind in ["pai", "stand", "fat-burning", "pai-weekly"] {
+            widgets::add_widget(&mut project, kind).unwrap();
+        }
+        assert!(validate(&project).is_empty());
+
+        let js = codegen::generate_index_js(&project);
+        for token in [
+            "function _getHealthStand()",
+            "function _getHealthFatBurning()",
+            "function _getHealthPaiWeekly()",
+            "hmSensor.id.STAND",
+            "hmSensor.id.FAT_BURRING",
+            "_hStand.current",
+            "_hFatBurn.current",
+            "_hPaiWeekly.totalpai || 0",
+        ] {
+            assert!(js.contains(token), "generated JS lacks {token}: {js}");
+        }
+        // Oba pola PAI czytają ten sam czujnik, ale mają własne gettery i nasłuchy.
+        assert!(js.contains("_getHealthPai()"));
+        assert!(js.contains("_getHealthPaiWeekly()"));
+    }
+
+    #[test]
+    fn alpha_is_emitted_only_for_non_opaque_widgets() {
+        let mut project = Project::starter("Krycie");
+        let id = project.widgets[0].id.clone();
+        let js = codegen::generate_index_js(&project);
+        assert!(!js.contains("alpha: 255"));
+
+        let settings = serde_json::json!({
+            "id": id,
+            "x": 23,
+            "y": 183,
+            "w": 420,
+            "h": 100,
+            "textSize": 64,
+            "color": "0xFFFFFFFF",
+            "align": "center",
+            "alpha": 128,
+        });
+        let widget = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(widget.alpha, 128);
+        let layer = layers::describe(&project)
+            .into_iter()
+            .find(|layer| layer.id == id)
+            .unwrap();
+        assert_eq!(layer.alpha, 128);
+
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("alpha: 128"), "JS: {js}");
+    }
+
+    #[test]
+    fn sleep_target_and_weather_widgets_export_expected_js() {
+        let mut project = Project::starter("Pogoda");
+        for kind in [
+            "sleep-target",
+            "weather-condition",
+            "weather-city",
+            "weather-high",
+            "weather-low",
+            "sunrise",
+            "sunset",
+            "weather-icon",
+        ] {
+            widgets::add_widget(&mut project, kind).unwrap();
+        }
+        // FFI przypisuje paczkę zaraz po dodaniu — tutaj robimy to samo ręcznie.
+        let icon = project.widgets.iter_mut().find(|w| w.kind == WidgetKind::WeatherIcon).unwrap();
+        icon.weather_icon_set = Some(weather::DEFAULT_WEATHER_PACK.to_string());
+        icon.src = Some(weather::js_icon_path(weather::DEFAULT_WEATHER_PACK, 3));
+        project.assets.push(model::Asset {
+            path: weather::js_icon_path(weather::DEFAULT_WEATHER_PACK, 3),
+            role: model::AssetRole::WeatherIcon,
+        });
+        assert!(validate(&project).is_empty(), "{:?}", validate(&project));
+
+        let js = codegen::generate_index_js(&project);
+        for token in [
+            "hmSetting.getSleepTarget()",
+            "hmSensor.id.WEATHER",
+            "getForecastWeather()",
+            "_cityName(_wData && _wData.cityName)",
+            "_wForecast.data[0].index",
+            "_wTide.data[0].sunrise.hour",
+            "L.weather[",
+            "setProperty(hmUI.prop.SRC, weatherIcons_",
+        ] {
+            assert!(js.contains(token), "generated JS lacks {token}: {js}");
+        }
+        assert!(!js.contains("@zos/ui"));
+        assert!(!js.contains("new Date("));
+    }
+
+    #[test]
+    fn weather_preview_frames_use_european_capitals_and_warsaw_last() {
+        let caps: Vec<_> = preview::WEATHER_FRAMES
+            .iter()
+            .take(preview::SOURCE_FRAME_COUNT)
+            .map(|w| w.city)
+            .collect();
+        assert_eq!(
+            caps,
+            vec!["Berlin", "Paris", "London", "Rome", "Madrid", "Prague", "Warsaw"]
+        );
+        assert_eq!(preview::WEATHER_FRAMES[6].city, "Warsaw");
+        assert_eq!(preview::WEATHER_FRAMES[7].city, "Warsaw");
+        assert_eq!(preview::WEATHER_FRAMES[6].index, preview::WEATHER_FRAMES[7].index);
+    }
+
+    #[test]
+    fn city_names_follow_watchface_language() {
+        use locale::WatchfaceLocale;
+        assert_eq!(WatchfaceLocale::Polish.city_name("Warsaw"), "Warszawa");
+        assert_eq!(WatchfaceLocale::English.city_name("Warszawa"), "Warsaw");
+        assert_eq!(WatchfaceLocale::English.city_name("Paris"), "Paris");
+        assert_eq!(WatchfaceLocale::Polish.city_name("Paris"), "Paryż");
+        assert_eq!(WatchfaceLocale::Polish.weather_names()[3], "Słonecznie");
+        assert_eq!(WatchfaceLocale::English.weather_names()[3], "Sunny");
+        let js = WatchfaceLocale::js_detection();
+        assert!(js.contains("weather: ["));
+        assert!(js.contains("'warszawa': 'Warsaw'"));
+        assert!(js.contains("'warsaw': 'Warszawa'"));
+        assert!(js.contains("function _cityName"));
+    }
+
+    #[test]
+    fn default_weather_preview_is_cloudy_warsaw_with_full_data() {
+        use locale::WatchfaceLocale;
+        let state = preview::WeatherPreviewState::from(preview::DEFAULT_PREVIEW_WEATHER);
+        assert_eq!(state.city, "Warszawa");
+        assert_eq!(state.index, 0);
+        assert_eq!(state.high, 22);
+        assert_eq!(state.low, 16);
+        assert_eq!(preview::weather_text("weather-city", &state, WatchfaceLocale::Polish), "Warszawa");
+        assert_eq!(preview::weather_text("weather-city", &state, WatchfaceLocale::English), "Warsaw");
+        assert_eq!(preview::weather_text("weather-condition", &state, WatchfaceLocale::Polish), "Pochmurno");
+        assert_eq!(preview::weather_text("weather-high", &state, WatchfaceLocale::Polish), "22°");
+        assert_eq!(preview::weather_text("sunrise", &state, WatchfaceLocale::Polish), "05:13");
+
+        // Custom Data nadpisuje tylko wysłane pola; reszta wraca do Warszawy.
+        let overrides = serde_json::json!({ "index": 3, "high": -5 });
+        let changed = state.clone().with_overrides(&overrides);
+        assert_eq!(changed.index, 3);
+        assert_eq!(changed.high, -5);
+        assert_eq!(changed.low, 16);
+        assert_eq!(preview::weather_text("weather-condition", &changed, WatchfaceLocale::English), "Sunny");
+
+        // Ikona nie niesie tekstu — regression: fallback "--" rysowany w ramce.
+        assert_eq!(preview::weather_text("weather-icon", &state, WatchfaceLocale::Polish), "");
+
+        // Jedno pole HH:MM zastępuje dwie osobne wartości; błędny wpis jest ignorowany.
+        let times = serde_json::json!({ "sunrise": "06:42", "sunset": "21:05" });
+        let times = state.clone().with_overrides(&times);
+        assert_eq!(preview::weather_text("sunrise", &times, WatchfaceLocale::Polish), "06:42");
+        assert_eq!(preview::weather_text("sunset", &times, WatchfaceLocale::Polish), "21:05");
+        let invalid = serde_json::json!({ "sunrise": "nope", "sunset": "25:99" });
+        let invalid = state.with_overrides(&invalid);
+        assert_eq!(preview::weather_text("sunrise", &invalid, WatchfaceLocale::Polish), "05:13");
+        assert_eq!(preview::weather_text("sunset", &invalid, WatchfaceLocale::Polish), "20:40");
     }
 
     #[test]

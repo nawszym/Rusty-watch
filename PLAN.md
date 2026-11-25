@@ -53,7 +53,7 @@ Uwaga licencyjna: wzorujemy się na **zachowaniu i formacie**, nie kopiujemy kod
 | Urządzenia | **Wyłącznie Amazfit Active 2 (Round)**; pozostałe modele w przyszłości. |
 | Start | Fundamenty: model, format projektu, generator kodu, CLI i szkielet UI. Funkcje dalej będą dodawane iteracyjnie. |
 
-Ważne wyjaśnienie: wybór UI **nie wpływa na wydajność wyeksportowanej tarczy**. Tarcza to statyczne pliki (JS + PNG) uruchamiane przez ZeppOS; o jej szybkości decyduje generator (liczba widgetów, wstępnie narysowane tło, poprawny AOD), nie technologia edytora.
+Ważne wyjaśnienie: wybór UI **nie wpływa na wydajność wyeksportowanej tarczy**. Tarcza to statyczne pliki (JS + PNG) uruchamiane przez ZeppOS; o jej szybkości decyduje generator (liczba widgetów, jedno stałe czarne `FILL_RECT` zamiast zasobu tła, poprawny AOD), nie technologia edytora.
 
 ---
 

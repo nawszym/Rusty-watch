@@ -281,6 +281,15 @@ pub extern "C" fn rw_add_widget(
                 &widget.id,
             ))?;
         }
+        if widget.kind == rusty_core::model::WidgetKind::WeatherIcon {
+            string_result(rusty_core::weather::attach_to_project(
+                &mut project,
+                dir,
+                Path::new(&root),
+                &widget.id,
+                rusty_core::weather::DEFAULT_WEATHER_PACK,
+            ))?;
+        }
         rusty_core::save_project(Path::new(&project_file), &project)?;
         Ok(json!({
             "id": widget.id,
@@ -302,6 +311,14 @@ pub extern "C" fn rw_set_widget(
         let raw = unsafe { read_input(settings_json) };
         let app_data_root = unsafe { read_input(app_data_root) };
         let settings: Value = serde_json::from_str(&raw).context("invalid widget JSON")?;
+        // Interaktywne zmiany w edytorze (przeciąganie ramki, suwaki) zapisują
+        // tylko geometrię. Skalowanie wszech zasobów jest kolejkowane w tle przez
+        // UI i wykonywane `rw_rescale_widget_assets` — inaczej 29 ikon pogody
+        // blokowało wątek UI przy każdym ruchu myszy.
+        let defer_assets = settings
+            .get("deferAssets")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let mut project = rusty_core::load_project(Path::new(&project_file))?;
         let widget = rusty_core::widgets::update_widget(&mut project, &settings)?;
         let dir = Path::new(&project_file)
@@ -309,7 +326,7 @@ pub extern "C" fn rw_set_widget(
             .context("project file has no parent")?;
         // ZeppOS nie skaluje IMG w runtime — po zmianie rozmiaru ramki wskazówki
         // muszą mieć fizycznie ten sam rozmiar co pliki PNG w projekcie.
-        if widget.kind == rusty_core::model::WidgetKind::AnalogTime {
+        if !defer_assets && widget.kind == rusty_core::model::WidgetKind::AnalogTime {
             string_result(rusty_core::hands::scale_project_hands(
                 &project,
                 dir,
@@ -317,7 +334,7 @@ pub extern "C" fn rw_set_widget(
                 &widget.id,
             ))?;
         }
-        if widget.kind == rusty_core::model::WidgetKind::Images {
+        if !defer_assets && widget.kind == rusty_core::model::WidgetKind::Images {
             string_result(rusty_core::images::scale_widget_image(
                 &project,
                 dir,
@@ -325,7 +342,7 @@ pub extern "C" fn rw_set_widget(
                 &widget.id,
             ))?;
         }
-        if widget.kind == rusty_core::model::WidgetKind::StatusIcon {
+        if !defer_assets && widget.kind == rusty_core::model::WidgetKind::StatusIcon {
             string_result(rusty_core::status_icons::scale_project_icons(
                 &project,
                 dir,
@@ -333,8 +350,20 @@ pub extern "C" fn rw_set_widget(
                 &widget.id,
             ))?;
         }
-        rusty_core::images::prune_unused(&mut project, dir);
-        rusty_core::status_icons::prune_unused(&mut project, dir);
+        if !defer_assets && widget.kind == rusty_core::model::WidgetKind::WeatherIcon {
+            // Czerwona ramka skaluje WSZYSTKIE 29 ikon, nie tylko widoczną.
+            string_result(rusty_core::weather::scale_project_icons(
+                &project,
+                dir,
+                Path::new(&app_data_root),
+                &widget.id,
+            ))?;
+        }
+        if !defer_assets {
+            rusty_core::images::prune_unused(&mut project, dir);
+            rusty_core::status_icons::prune_unused(&mut project, dir);
+            rusty_core::weather::prune_unused(&mut project, dir);
+        }
         if let Some(font) = &widget.font {
             string_result(rusty_core::fonts::attach_to_project(
                 &mut project,
@@ -352,6 +381,146 @@ pub extern "C" fn rw_set_widget(
         }))
     })();
     respond(result)
+}
+
+/// Skaluje wszystkie zasoby graficzne jednego widgetu. Wywoływane z wątku tła —
+/// nie ładuje ani nie zapisuje projektu, więc nie blokuje wątku UI.
+#[no_mangle]
+pub extern "C" fn rw_rescale_widget_assets(
+    project_file: *const c_char,
+    widget_id: *const c_char,
+    app_data_root: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let project_file = unsafe { read_input(project_file) };
+        let widget_id = unsafe { read_input(widget_id) };
+        let app_data_root = unsafe { read_input(app_data_root) };
+        let path = Path::new(&project_file);
+        let dir = path.parent().context("project file has no parent")?;
+        let project = rusty_core::load_project(path)?;
+        let widget = project
+            .widgets
+            .iter()
+            .find(|w| w.id == widget_id)
+            .context("warstwa nie istnieje")?;
+        match widget.kind {
+            rusty_core::model::WidgetKind::AnalogTime => {
+                string_result(rusty_core::hands::scale_project_hands(
+                    &project,
+                    dir,
+                    Path::new(&app_data_root),
+                    &widget.id,
+                ))?;
+            }
+            rusty_core::model::WidgetKind::Images => {
+                string_result(rusty_core::images::scale_widget_image(
+                    &project,
+                    dir,
+                    Path::new(&app_data_root),
+                    &widget.id,
+                ))?;
+            }
+            rusty_core::model::WidgetKind::StatusIcon => {
+                string_result(rusty_core::status_icons::scale_project_icons(
+                    &project,
+                    dir,
+                    Path::new(&app_data_root),
+                    &widget.id,
+                ))?;
+            }
+            rusty_core::model::WidgetKind::WeatherIcon => {
+                string_result(rusty_core::weather::scale_project_icons(
+                    &project,
+                    dir,
+                    Path::new(&app_data_root),
+                    &widget.id,
+                ))?;
+            }
+            _ => {}
+        }
+        Ok(json!({ "scaled": true, "widgetId": widget_id }))
+    })();
+    respond(result)
+}
+
+/// Tekst i ścieżka ikony dla podglądu pogody na żywo. Rust jest jedynym
+/// źródłem logiki: domyślnie zwraca pochmurną Warszawę, brakujące pola
+/// Custom Data są uzupełniane tym wzorcem. Ikona wskazuje plik z magazynu
+/// (%APPDATA%), który UI skaluje lokalnie tylko dla aktualnie widocznej warstwy.
+#[no_mangle]
+pub extern "C" fn rw_format_weather_field(
+    kind: *const c_char,
+    overrides_json: *const c_char,
+    locale: *const c_char,
+    app_data_root: *const c_char,
+    icon_set: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let kind = unsafe { read_input(kind) };
+        let overrides_json = unsafe { read_input(overrides_json) };
+        let locale_code = unsafe { read_input(locale) };
+        let app_data_root = unsafe { read_input(app_data_root) };
+        let icon_set = unsafe { read_input(icon_set) };
+        let locale = rusty_core::locale::WatchfaceLocale::from_code(&locale_code);
+        let overrides: Value = if overrides_json.trim().is_empty() {
+            json!({})
+        } else {
+            serde_json::from_str(&overrides_json).context("invalid weather overrides JSON")?
+        };
+        let state = rusty_core::preview::WeatherPreviewState::from(
+            rusty_core::preview::DEFAULT_PREVIEW_WEATHER,
+        )
+        .with_overrides(&overrides);
+        let text = rusty_core::preview::weather_text(&kind, &state, locale);
+        let icon_path = if kind == "weather-icon" {
+            let set = if icon_set.trim().is_empty() {
+                rusty_core::weather::DEFAULT_WEATHER_PACK
+            } else {
+                icon_set.trim()
+            };
+            let mut path = rusty_core::weather::pack_dir(Path::new(&app_data_root), set)
+                .join(format!("w{:02}.png", state.index));
+            if !path.is_file() {
+                path = rusty_core::weather::pack_dir(
+                    Path::new(&app_data_root),
+                    rusty_core::weather::DEFAULT_WEATHER_PACK,
+                )
+                .join(format!("w{:02}.png", state.index));
+            }
+            path.to_string_lossy().to_string()
+        } else {
+            String::new()
+        };
+        Ok(json!({ "text": text, "iconPath": icon_path }))
+    })();
+    respond(result)
+}
+
+/// Lista warunków pogodowych do rozwijanej listy w Custom Data. Nazwy pochodzą
+/// z tej samej tabeli `locale.rs`, której używa podgląd i generowany JS — dzięki
+/// temu etykieta w edytorze i tekst na tarczy zawsze się zgadzają.
+#[no_mangle]
+pub extern "C" fn rw_weather_conditions(locale: *const c_char) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let locale_code = unsafe { read_input(locale) };
+        let locale = rusty_core::locale::WatchfaceLocale::from_code(&locale_code);
+        let conditions = locale
+            .weather_names()
+            .iter()
+            .enumerate()
+            .map(|(code, name)| json!({ "code": code, "name": name }))
+            .collect::<Vec<_>>();
+        Ok(json!({ "conditions": conditions }))
+    })();
+    respond(result)
+}
+
+/// Predefiniowana data i czas podglądu edytora (Live Preview OFF). Jedyny
+/// źródło tych wartości to `preview.rs`, więc edytor i eksportujący podgląd
+/// pozostają spójne bez duplikowania stałych w C#.
+#[no_mangle]
+pub extern "C" fn rw_preview_default_datetime() -> *mut c_char {
+    respond(Ok(json!(rusty_core::preview::DEFAULT_PREVIEW_DATETIME)))
 }
 
 /// Ustawia domyślny system jednostek projektu (ustawienie aplikacji).
@@ -426,12 +595,14 @@ pub extern "C" fn rw_ensure_defaults(
     bundled_fonts_dir: *const c_char,
     bundled_hands_dir: *const c_char,
     bundled_status_dir: *const c_char,
+    bundled_weather_dir: *const c_char,
 ) -> *mut c_char {
     let result = (|| -> Result<Value> {
         let root = unsafe { read_input(app_data_root) };
         let bundled_fonts = unsafe { read_input(bundled_fonts_dir) };
         let bundled_hands = unsafe { read_input(bundled_hands_dir) };
         let bundled_status = unsafe { read_input(bundled_status_dir) };
+        let bundled_weather = unsafe { read_input(bundled_weather_dir) };
         string_result(rusty_core::fonts::ensure_default(
             Path::new(&root),
             Path::new(&bundled_fonts),
@@ -443,6 +614,10 @@ pub extern "C" fn rw_ensure_defaults(
         string_result(rusty_core::status_icons::ensure_default(
             Path::new(&root),
             Path::new(&bundled_status),
+        ))?;
+        string_result(rusty_core::weather::ensure_default(
+            Path::new(&root),
+            Path::new(&bundled_weather),
         ))?;
         Ok(json!({ "seeded": true }))
     })();
@@ -849,6 +1024,89 @@ pub extern "C" fn rw_set_status_pack(
             &widget_id,
         ))?;
         rusty_core::status_icons::prune_unused(&mut project, dir);
+        rusty_core::save_project(path, &project)?;
+        Ok(json!({ "layers": rusty_core::layers::describe(&project) }))
+    })();
+    respond(result)
+}
+
+/// Lista zainstalowanych paczek ikon pogody (Classic i paczki użytkownika).
+#[no_mangle]
+pub extern "C" fn rw_weather_packs_list(
+    app_data_root: *const c_char,
+    bundled_dir: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let root = unsafe { read_input(app_data_root) };
+        let bundled = unsafe { read_input(bundled_dir) };
+        string_result(rusty_core::weather::ensure_default(
+            Path::new(&root),
+            Path::new(&bundled),
+        ))?;
+        let packs = string_result(rusty_core::weather::list(Path::new(&root)))?;
+        Ok(json!({ "packs": packs }))
+    })();
+    respond(result)
+}
+
+#[no_mangle]
+pub extern "C" fn rw_weather_packs_add(
+    app_data_root: *const c_char,
+    folder: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let root = unsafe { read_input(app_data_root) };
+        let folder = unsafe { read_input(folder) };
+        let pack = string_result(rusty_core::weather::add(
+            Path::new(&root),
+            Path::new(&folder),
+        ))?;
+        Ok(json!({ "pack": pack }))
+    })();
+    respond(result)
+}
+
+#[no_mangle]
+pub extern "C" fn rw_weather_packs_remove(
+    app_data_root: *const c_char,
+    id: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let root = unsafe { read_input(app_data_root) };
+        let id = unsafe { read_input(id) };
+        string_result(rusty_core::weather::remove(Path::new(&root), &id))?;
+        Ok(json!({ "removed": id }))
+    })();
+    respond(result)
+}
+
+/// Przypisuje paczkę do widgetu ikony pogody. `attach_to_project` kopiuje i
+/// skaluje wszystkie 29 ikon do aktualnej ramki — osobne `scale_project_icons`
+/// byłoby drugim, identycznym przetwarzaniem całej paczki. Ta funkcja jest
+/// wywoływana w wątku tła; podgląd przełącza się natychmiast z magazynu.
+#[no_mangle]
+pub extern "C" fn rw_set_weather_pack(
+    project_file: *const c_char,
+    widget_id: *const c_char,
+    set_id: *const c_char,
+    app_data_root: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<Value> {
+        let project_file = unsafe { read_input(project_file) };
+        let widget_id = unsafe { read_input(widget_id) };
+        let set_id = unsafe { read_input(set_id) };
+        let root = unsafe { read_input(app_data_root) };
+        let path = Path::new(&project_file);
+        let dir = path.parent().context("project file has no parent")?;
+        let mut project = rusty_core::load_project(path)?;
+        string_result(rusty_core::weather::attach_to_project(
+            &mut project,
+            dir,
+            Path::new(&root),
+            &widget_id,
+            &set_id,
+        ))?;
+        rusty_core::weather::prune_unused(&mut project, dir);
         rusty_core::save_project(path, &project)?;
         Ok(json!({ "layers": rusty_core::layers::describe(&project) }))
     })();
@@ -1402,12 +1660,14 @@ mod tests {
         let fonts_arg = CString::new(bundled.join("Fonts").to_string_lossy().as_bytes()).unwrap();
         let hands_arg = CString::new(bundled.join("Hands").to_string_lossy().as_bytes()).unwrap();
         let status_arg = CString::new(bundled.join("Status").to_string_lossy().as_bytes()).unwrap();
+        let weather_arg = CString::new(bundled.join("Weather").to_string_lossy().as_bytes()).unwrap();
 
         let value = take(rw_ensure_defaults(
             root_arg.as_ptr(),
             fonts_arg.as_ptr(),
             hands_arg.as_ptr(),
             status_arg.as_ptr(),
+            weather_arg.as_ptr(),
         ));
         assert_eq!(value["ok"], true, "error: {}", value["error"]);
         assert!(root.join("Fonts").join("Inter-Regular.ttf").is_file());
@@ -2109,12 +2369,14 @@ mod tests {
         let bundled_arg = CString::new(bundled.join("Hands").to_string_lossy().as_bytes()).unwrap();
         let fonts_arg = CString::new(bundled.join("Fonts").to_string_lossy().as_bytes()).unwrap();
         let status_arg = CString::new(bundled.join("Status").to_string_lossy().as_bytes()).unwrap();
+        let weather_arg = CString::new(bundled.join("Weather").to_string_lossy().as_bytes()).unwrap();
         assert_eq!(
             take(rw_ensure_defaults(
                 root_arg.as_ptr(),
                 fonts_arg.as_ptr(),
                 bundled_arg.as_ptr(),
-                status_arg.as_ptr()
+                status_arg.as_ptr(),
+                weather_arg.as_ptr()
             ))["ok"],
             true
         );
@@ -2363,6 +2625,313 @@ mod tests {
     }
 
     #[test]
+    fn goal_widgets_roundtrip_through_ffi() {
+        let value = take(rw_supported_widgets());
+        assert_eq!(value["ok"], true);
+        let goals: Vec<&str> = value["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["category"] == "goals")
+            .map(|item| item["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            goals,
+            vec![
+                "steps-target",
+                "calories-target",
+                "stand-target",
+                "fat-burning-target",
+                "sleep-target"
+            ]
+        );
+
+        let root = std::env::temp_dir().join(format!("rw-ffi-goals-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let root_arg = CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        let name = CString::new("Goals").unwrap();
+        let author = CString::new("Dev").unwrap();
+        let created = take(rw_create_project(root_arg.as_ptr(), name.as_ptr(), author.as_ptr(), 95));
+        assert_eq!(created["ok"], true, "error: {}", created["error"]);
+        let file = created["data"]["file"].as_str().unwrap();
+        let project_file = CString::new(file).unwrap();
+
+        for kind in goals {
+            let kind_arg = CString::new(kind).unwrap();
+            let added = take(rw_add_widget(
+                project_file.as_ptr(),
+                kind_arg.as_ptr(),
+                root_arg.as_ptr(),
+                root_arg.as_ptr(),
+                root_arg.as_ptr(),
+            ));
+            assert_eq!(added["ok"], true, "kind={kind} error: {}", added["error"]);
+            let layers = added["data"]["layers"].as_array().unwrap();
+            assert_eq!(layers.last().unwrap()["kind"], kind, "kind={kind}");
+        }
+
+        let no_unit = CString::new(
+            r#"{"id":"calories-target","x":23,"y":150,"w":420,"h":60,"textSize":40,"color":"0xFFFFFFFF","align":"center","showUnit":false}"#,
+        )
+        .unwrap();
+        let updated = take(rw_set_widget(project_file.as_ptr(), no_unit.as_ptr(), root_arg.as_ptr()));
+        assert_eq!(updated["ok"], true, "error: {}", updated["error"]);
+        let project = rusty_core::load_project(Path::new(file)).unwrap();
+        let calories = project.widgets.iter().find(|w| w.id == "calories-target").unwrap();
+        assert!(!calories.show_unit);
+        assert_eq!(calories.text.as_deref(), Some("2000"));
+
+        assert!(rusty_core::validate(&project).is_empty());
+        let js = rusty_core::codegen::generate_index_js(&project);
+        for token in [
+            "hmSensor.id.STAND",
+            "hmSensor.id.FAT_BURRING",
+            "String(_tStep.target)",
+            "String(_tStand.target) + ' h'",
+            "String(_tFat.target) + ' min'",
+        ] {
+            assert!(js.contains(token), "generated JS lacks {token}: {js}");
+        }
+        assert!(!js.contains("String(_tCalorie.target) + ' kcal'"));
+        let zip = rusty_core::package::export_zip_bytes(Path::new(file)).unwrap();
+        assert!(zip.len() > 100);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn additional_health_widgets_and_alpha_roundtrip_through_ffi() {
+        let root = std::env::temp_dir().join(format!("rw-ffi-health-extra-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let root_arg = CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        let name = CString::new("Health Extra").unwrap();
+        let author = CString::new("Dev").unwrap();
+        let created = take(rw_create_project(root_arg.as_ptr(), name.as_ptr(), author.as_ptr(), 96));
+        assert_eq!(created["ok"], true, "error: {}", created["error"]);
+        let file = created["data"]["file"].as_str().unwrap();
+        let project_file = CString::new(file).unwrap();
+
+        for kind in ["stand", "fat-burning", "pai-weekly"] {
+            let kind_arg = CString::new(kind).unwrap();
+            let added = take(rw_add_widget(
+                project_file.as_ptr(),
+                kind_arg.as_ptr(),
+                root_arg.as_ptr(),
+                root_arg.as_ptr(),
+                root_arg.as_ptr(),
+            ));
+            assert_eq!(added["ok"], true, "kind={kind} error: {}", added["error"]);
+            let layers = added["data"]["layers"].as_array().unwrap();
+            assert_eq!(layers.last().unwrap()["kind"], kind, "kind={kind}");
+            assert_eq!(layers.last().unwrap()["alpha"], 255);
+        }
+
+        let settings = CString::new(
+            r#"{"id":"stand","x":23,"y":150,"w":420,"h":60,"textSize":40,"color":"0xFFFFFFFF","align":"center","alpha":128}"#,
+        )
+        .unwrap();
+        let updated = take(rw_set_widget(project_file.as_ptr(), settings.as_ptr(), root_arg.as_ptr()));
+        assert_eq!(updated["ok"], true, "error: {}", updated["error"]);
+        let stand_layer = updated["data"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == "stand")
+            .unwrap();
+        assert_eq!(stand_layer["alpha"], 128);
+
+        let project = rusty_core::load_project(Path::new(file)).unwrap();
+        assert!(rusty_core::validate(&project).is_empty());
+        let js = rusty_core::codegen::generate_index_js(&project);
+        for token in [
+            "hmSensor.id.STAND",
+            "hmSensor.id.FAT_BURRING",
+            "_hPaiWeekly.totalpai || 0",
+            "alpha: 128",
+        ] {
+            assert!(js.contains(token), "generated JS lacks {token}: {js}");
+        }
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn weather_widgets_and_icon_pack_roundtrip_through_ffi() {
+        let root = std::env::temp_dir().join(format!("rw-ffi-weather-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let root_arg = CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../native/RustyWatch/Assets");
+        let bundled_fonts = CString::new(bundled.join("Fonts").to_string_lossy().as_bytes()).unwrap();
+        let bundled_hands = CString::new(bundled.join("Hands").to_string_lossy().as_bytes()).unwrap();
+        let bundled_status = CString::new(bundled.join("Status").to_string_lossy().as_bytes()).unwrap();
+        let bundled_weather = CString::new(bundled.join("Weather").to_string_lossy().as_bytes()).unwrap();
+        let seeded = take(rw_ensure_defaults(
+            root_arg.as_ptr(),
+            bundled_fonts.as_ptr(),
+            bundled_hands.as_ptr(),
+            bundled_status.as_ptr(),
+            bundled_weather.as_ptr(),
+        ));
+        assert_eq!(seeded["ok"], true, "error: {}", seeded["error"]);
+
+        let name = CString::new("Weather Face").unwrap();
+        let author = CString::new("Dev").unwrap();
+        let created = take(rw_create_project(root_arg.as_ptr(), name.as_ptr(), author.as_ptr(), 31));
+        let file = created["data"]["file"].as_str().unwrap().to_string();
+        let file_arg = CString::new(file.as_str()).unwrap();
+
+        for kind in [
+            "sleep-target",
+            "weather-condition",
+            "weather-city",
+            "weather-icon",
+        ] {
+            let kind_arg = CString::new(kind).unwrap();
+            let added = take(rw_add_widget(
+                file_arg.as_ptr(),
+                kind_arg.as_ptr(),
+                root_arg.as_ptr(),
+                bundled_hands.as_ptr(),
+                bundled_status.as_ptr(),
+            ));
+            assert_eq!(added["ok"], true, "kind={kind}: {}", added["error"]);
+        }
+
+        // Przypisujemy domyślną paczkę i skalujemy WSZYSTKIE 29 ikon do ramki.
+        let widget_arg = CString::new("weather-icon").unwrap();
+        let classic = CString::new(rusty_core::weather::DEFAULT_WEATHER_PACK).unwrap();
+        let switched = take(rw_set_weather_pack(
+            file_arg.as_ptr(),
+            widget_arg.as_ptr(),
+            classic.as_ptr(),
+            root_arg.as_ptr(),
+        ));
+        assert_eq!(switched["ok"], true, "error: {}", switched["error"]);
+
+        // Jedno przejście attach_to_project skaluje wszystkie 29 ikon do
+        // aktualnej ramki — drugie scale_project_icons byłoby niepotrzebne.
+        let project_dir = Path::new(&file).parent().unwrap();
+        let (_fx, _fy, default_w, default_h) = rusty_core::weather::default_frame();
+        for index in 0..29 {
+            let path = project_dir
+                .join("assets/weather/Classic")
+                .join(format!("w{index:02}.png"));
+            let image = image::open(&path).unwrap();
+            assert_eq!(
+                image.dimensions(),
+                (default_w as u32, default_h as u32),
+                "{path:?}"
+            );
+        }
+
+        let settings = CString::new(
+            r#"{"id":"weather-icon","x":40,"y":40,"w":120,"h":120,"autoScale":true}"#,
+        )
+        .unwrap();
+        assert_eq!(take(rw_set_widget(file_arg.as_ptr(), settings.as_ptr(), root_arg.as_ptr()))["ok"], true);
+
+        for index in 0..29 {
+            let path = project_dir
+                .join("assets/weather/Classic")
+                .join(format!("w{index:02}.png"));
+            let image = image::open(&path).unwrap();
+            assert_eq!(image.dimensions(), (120, 120), "{path:?}");
+        }
+
+        let project = rusty_core::load_project(Path::new(&file)).unwrap();
+        assert!(rusty_core::validate(&project).is_empty());
+        let js = rusty_core::codegen::generate_index_js(&project);
+        assert!(js.contains("hmSensor.id.WEATHER"));
+        assert!(js.contains("hmSetting.getSleepTarget()"));
+        assert!(js.contains("_cityName("));
+
+        let zip = rusty_core::export_zip(Path::new(&file), &root.join("weather.zip")).unwrap();
+        assert!(zip.exists());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn weather_preview_ffi_defaults_to_cloudy_warsaw() {
+        let root = std::env::temp_dir().join(format!("rw-ffi-weather-format-{}", std::process::id()));
+        let root_arg = CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        let overrides = CString::new("{}").unwrap();
+        let pl = CString::new("pl").unwrap();
+        let en = CString::new("en").unwrap();
+        let classic = CString::new("Classic").unwrap();
+
+        let city = CString::new("weather-city").unwrap();
+        let pl_result = take(rw_format_weather_field(
+            city.as_ptr(), overrides.as_ptr(), pl.as_ptr(), root_arg.as_ptr(), classic.as_ptr(),
+        ));
+        assert_eq!(pl_result["ok"], true, "error: {}", pl_result["error"]);
+        assert_eq!(pl_result["data"]["text"], "Warszawa");
+        let en_result = take(rw_format_weather_field(
+            city.as_ptr(), overrides.as_ptr(), en.as_ptr(), root_arg.as_ptr(), classic.as_ptr(),
+        ));
+        assert_eq!(en_result["data"]["text"], "Warsaw");
+
+        let condition = CString::new("weather-condition").unwrap();
+        let condition_result = take(rw_format_weather_field(
+            condition.as_ptr(), overrides.as_ptr(), pl.as_ptr(), root_arg.as_ptr(), classic.as_ptr(),
+        ));
+        assert_eq!(condition_result["data"]["text"], "Pochmurno");
+
+        let icon = CString::new("weather-icon").unwrap();
+        let icon_result = take(rw_format_weather_field(
+            icon.as_ptr(), overrides.as_ptr(), pl.as_ptr(), root_arg.as_ptr(), classic.as_ptr(),
+        ));
+        let path = icon_result["data"]["iconPath"].as_str().unwrap();
+        assert!(path.ends_with("w00.png"), "unexpected icon path: {path}");
+        // Ikona nie może rysować "--" w podglądzie edytora.
+        assert_eq!(icon_result["data"]["text"], "");
+    }
+
+    #[test]
+    fn weather_conditions_ffi_returns_localized_names() {
+        let pl = CString::new("pl").unwrap();
+        let en = CString::new("en").unwrap();
+        let pl_result = take(rw_weather_conditions(pl.as_ptr()));
+        assert_eq!(pl_result["ok"], true, "error: {}", pl_result["error"]);
+        let conditions = pl_result["data"]["conditions"].as_array().unwrap();
+        assert_eq!(conditions.len(), 29);
+        assert_eq!(conditions[0]["code"], 0);
+        assert_eq!(conditions[0]["name"], "Pochmurno");
+        assert_eq!(conditions[15]["name"], "Burza");
+
+        let en_result = take(rw_weather_conditions(en.as_ptr()));
+        let en_conditions = en_result["data"]["conditions"].as_array().unwrap();
+        assert_eq!(en_conditions[0]["name"], "Cloudy");
+        assert_eq!(en_conditions[15]["name"], "Thunderstorm");
+    }
+
+    #[test]
+    fn preview_default_datetime_ffi_matches_source_frame() {
+        let value = take(rw_preview_default_datetime());
+        assert_eq!(value["ok"], true, "error: {}", value["error"]);
+        let data = &value["data"];
+        assert_eq!(data["day"], 31);
+        assert_eq!(data["month"], 7);
+        assert_eq!(data["year"], 2022);
+        assert_eq!(data["hour"], 21);
+        assert_eq!(data["minute"], 37);
+        assert_eq!(data["second"], 40);
+
+        let preset = rusty_core::preview::FRAME_PRESETS
+            [rusty_core::preview::PREVIEW_FRAME_INDEX];
+        assert_eq!(data["day"], preset.date.day);
+        assert_eq!(data["month"], preset.date.month);
+        assert_eq!(data["year"], preset.date.year);
+        assert_eq!(data["hour"], preset.hour);
+        assert_eq!(data["minute"], preset.minute);
+        assert_eq!(data["second"], preset.second);
+    }
+
+    #[test]
     fn images_store_roundtrip() {
         let root = std::env::temp_dir().join(format!("rw-ffi-images-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -2586,12 +3155,14 @@ mod tests {
         let fonts_arg = CString::new(bundled.join("Fonts").to_string_lossy().as_bytes()).unwrap();
         let hands_arg = CString::new(bundled.join("Hands").to_string_lossy().as_bytes()).unwrap();
         let status_arg = CString::new(bundled.join("Status").to_string_lossy().as_bytes()).unwrap();
+        let weather_arg = CString::new(bundled.join("Weather").to_string_lossy().as_bytes()).unwrap();
         assert_eq!(
             take(rw_ensure_defaults(
                 root_arg.as_ptr(),
                 fonts_arg.as_ptr(),
                 hands_arg.as_ptr(),
-                status_arg.as_ptr()
+                status_arg.as_ptr(),
+                weather_arg.as_ptr()
             ))["ok"],
             true
         );

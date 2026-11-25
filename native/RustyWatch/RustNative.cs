@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
@@ -26,6 +27,14 @@ internal sealed record HandSetListDto(List<HandSetDto> Hands);
 internal sealed record StatusPackDto(string Id, string Name, uint Size, string? Fingerprint = null);
 
 internal sealed record StatusPackListDto(List<StatusPackDto> Packs);
+
+/// <summary>Paczka ikon pogody z magazynu w %APPDATA%\RustyWatch\Weather.</summary>
+internal sealed record WeatherPackDto(string Id, string Name, uint Size, string? Fingerprint = null);
+
+internal sealed record WeatherPackListDto(List<WeatherPackDto> Packs);
+
+/// <summary>Predefiniowana data/czas podglądu, gdy Live Preview jest wyłączone.</summary>
+internal sealed record PreviewDateTimeDto(int Day, int Month, int Year, int Hour, int Minute, int Second);
 
 /// <summary>Mostek P/Invoke do biblioteki rusty_ffi (rusty-core).</summary>
 internal static class RustNative
@@ -112,6 +121,27 @@ internal static class RustNative
         [MarshalAs(UnmanagedType.LPUTF8Str)] string settingsJson,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot);
 
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_rescale_widget_assets")]
+    private static extern IntPtr RescaleWidgetAssets(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string widgetId,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_format_weather_field")]
+    private static extern IntPtr FormatWeatherField(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string kind,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string overridesJson,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string locale,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string iconSet);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_weather_conditions")]
+    private static extern IntPtr WeatherConditions(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string locale);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_preview_default_datetime")]
+    private static extern IntPtr PreviewDefaultDateTime();
+
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_set_measurement_system")]
     private static extern IntPtr SetMeasurementSystem(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
@@ -127,7 +157,8 @@ internal static class RustNative
         [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledFontsDir,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledHandsDir,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledStatusDir);
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledStatusDir,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledWeatherDir);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_fonts_list")]
     private static extern IntPtr FontsList(
@@ -201,6 +232,28 @@ internal static class RustNative
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_set_status_pack")]
     private static extern IntPtr SetStatusPack(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string widgetId,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string setId,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_weather_packs_list")]
+    private static extern IntPtr WeatherPacksList(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledDir);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_weather_packs_add")]
+    private static extern IntPtr WeatherPacksAdd(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string folder);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_weather_packs_remove")]
+    private static extern IntPtr WeatherPacksRemove(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string id);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_set_weather_pack")]
+    private static extern IntPtr SetWeatherPack(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string widgetId,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string setId,
@@ -350,7 +403,8 @@ internal static class RustNative
             AppPaths.DataDirectory,
             AppPaths.BundledFontsDirectory,
             AppPaths.BundledHandsDirectory,
-            AppPaths.BundledStatusDirectory), out error);
+            AppPaths.BundledStatusDirectory,
+            AppPaths.BundledWeatherDirectory), out error);
 
     public static string? CreateProject(string path, string name, string author, uint appId, out string? error)
         => Call(() => CreateProject(path, name, author, appId), out error);
@@ -404,6 +458,43 @@ internal static class RustNative
 
     public static string? SetWidget(string projectFile, string settingsJson, out string? error)
         => Call(() => SetWidget(projectFile, settingsJson, AppPaths.DataDirectory), out error);
+
+    /// <summary>Skaluje zasoby graficzne widgetu — wołane z wątka tła.</summary>
+    public static string? RescaleWidgetAssets(string projectFile, string widgetId, out string? error)
+        => Call(() => RescaleWidgetAssets(projectFile, widgetId, AppPaths.DataDirectory), out error);
+
+    /// <summary>Podgląd pogody na żywo: domyślnie pochmurna Warszawa.</summary>
+    public static string? FormatWeatherField(string kind, string overridesJson, string locale,
+        string iconSet, out string? error)
+        => Call(() => FormatWeatherField(kind, overridesJson, locale, AppPaths.DataDirectory, iconSet),
+            out error);
+
+    /// <summary>Nazwy warunków pogodowych do listy w Custom Data (z tabeli Rusta).</summary>
+    public static List<ChoiceItem> WeatherConditions(string locale, out string? error)
+    {
+        var raw = Call(() => WeatherConditions(locale), out error);
+        if (raw is null) return new List<ChoiceItem>();
+        using var document = JsonDocument.Parse(raw);
+        var items = new List<ChoiceItem>();
+        foreach (var item in document.RootElement.GetProperty("conditions").EnumerateArray())
+        {
+            items.Add(new ChoiceItem
+            {
+                Value = item.GetProperty("code").GetInt32().ToString(CultureInfo.InvariantCulture),
+                Name = item.GetProperty("name").GetString() ?? "",
+            });
+        }
+        return items;
+    }
+
+    /// <summary>Predefiniowany moment podglądu z Rusta (31.07.2022 21:37:40).</summary>
+    public static PreviewDateTimeDto? PreviewDefaultDateTime(out string? error)
+    {
+        var raw = Call(() => PreviewDefaultDateTime(), out error);
+        if (raw is null) return null;
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        return JsonSerializer.Deserialize<PreviewDateTimeDto>(raw, options);
+    }
 
     public static string? SetMeasurementSystem(string projectFile, string system, out string? error)
         => Call(() => SetMeasurementSystem(projectFile, system), out error);
@@ -528,6 +619,37 @@ internal static class RustNative
     public static string? SetStatusPack(string projectFile, string widgetId, string setId, out string? error)
         => Call(
             () => SetStatusPack(projectFile, widgetId, setId, AppPaths.DataDirectory),
+            out error);
+
+    public static List<WeatherPackDto> WeatherPacksList(out string? error)
+    {
+        var raw = Call(
+            () => WeatherPacksList(AppPaths.DataDirectory, AppPaths.BundledWeatherDirectory),
+            out error);
+        if (raw is null) return new List<WeatherPackDto>();
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var result = JsonSerializer.Deserialize<WeatherPackListDto>(raw, options);
+        return result?.Packs ?? new List<WeatherPackDto>();
+    }
+
+    public static WeatherPackDto? WeatherPacksAdd(string folder, out string? error)
+    {
+        var raw = Call(() => WeatherPacksAdd(AppPaths.DataDirectory, folder), out error);
+        if (raw is null) return null;
+        using var document = JsonDocument.Parse(raw);
+        var element = document.RootElement.GetProperty("pack");
+        return new WeatherPackDto(
+            element.GetProperty("id").GetString() ?? "",
+            element.GetProperty("name").GetString() ?? "",
+            element.GetProperty("size").GetUInt32());
+    }
+
+    public static string? WeatherPacksRemove(string id, out string? error)
+        => Call(() => WeatherPacksRemove(AppPaths.DataDirectory, id), out error);
+
+    public static string? SetWeatherPack(string projectFile, string widgetId, string setId, out string? error)
+        => Call(
+            () => SetWeatherPack(projectFile, widgetId, setId, AppPaths.DataDirectory),
             out error);
 
     public static string? AttachStatusPackToMissing(string projectFile, out string? error)

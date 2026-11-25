@@ -119,6 +119,8 @@ pub struct LayerView {
     pub measurement_system: Option<String>,
     /// Tylko dla widgetów zdrowotnych: czy pokazywać jednostkę (`bpm`, `°C`, `kcal`, `%`).
     pub show_unit: bool,
+    /// Krycie widgetu 0–255 (domyślnie 255) — podgląd i JS używają tej samej wartości.
+    pub alpha: u8,
     /// Tylko dla `analog-time`: wybrany zestaw wskazówek i ścieżki jego plików.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hand_set: Option<String>,
@@ -136,6 +138,9 @@ pub struct LayerView {
     /// Tylko dla `status-*`: `alarm`, `dnd`, `bluetooth` albo `lock`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_type: Option<String>,
+    /// Tylko dla `weather-icon`: wybrana paczka z `%APPDATA%\RustyWatch\Weather`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weather_icon_set: Option<String>,
 }
 
 fn widget_kind(widget: &Widget) -> &'static str {
@@ -170,6 +175,21 @@ fn widget_kind(widget: &Widget) -> &'static str {
         Some(DataSource::Calorie) => "calories",
         Some(DataSource::Spo2) => "spo2",
         Some(DataSource::Battery) => "battery",
+        Some(DataSource::StepTarget) => "steps-target",
+        Some(DataSource::CalorieTarget) => "calories-target",
+        Some(DataSource::StandTarget) => "stand-target",
+        Some(DataSource::FatBurningTarget) => "fat-burning-target",
+        Some(DataSource::Stand) => "stand",
+        Some(DataSource::FatBurning) => "fat-burning",
+        Some(DataSource::PaiWeekly) => "pai-weekly",
+        Some(DataSource::SleepTarget) => "sleep-target",
+        Some(DataSource::WeatherCondition) => "weather-condition",
+        Some(DataSource::WeatherCity) => "weather-city",
+        Some(DataSource::WeatherHigh) => "weather-high",
+        Some(DataSource::WeatherLow) => "weather-low",
+        Some(DataSource::Sunrise) => "sunrise",
+        Some(DataSource::Sunset) => "sunset",
+        Some(DataSource::WeatherIcon) => "weather-icon",
         _ => match widget.kind {
             WidgetKind::Image => "image",
             WidgetKind::Images => "images",
@@ -213,6 +233,7 @@ pub fn describe(project: &Project) -> Vec<LayerView> {
                 visible: w.visible,
                 measurement_system: w.measurement_system.map(|system| system.as_str().to_string()),
                 show_unit: w.show_unit,
+                alpha: w.alpha,
                 hand_set: w.hand_set.clone(),
                 hour_src: w.hour_src.clone(),
                 minute_src: w.minute_src.clone(),
@@ -220,6 +241,7 @@ pub fn describe(project: &Project) -> Vec<LayerView> {
                 cap_src: w.cap_src.clone(),
                 status_icon_set: w.status_icon_set.clone(),
                 status_type: w.status_type.map(|status| status.as_str().to_string()),
+                weather_icon_set: w.weather_icon_set.clone(),
             })
         })
         .collect()
