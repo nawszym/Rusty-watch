@@ -116,6 +116,11 @@ System Volume Information/
 /test-*/
 
 # --- Python (lokalne środowiska narzędziowe) -------------------------------
+# Generator PNG ikon pogody był narzędziem jednorazowym — gotowe PNG-i są
+# committowane i zbundlowane, więc skrypt nie trafia na GitHub.
+scripts/generate_weather_icons.py
+__pycache__/
+*.pyc
 .venv/
 venv/
 pyvenv.cfg

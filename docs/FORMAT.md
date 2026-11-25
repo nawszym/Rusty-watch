@@ -158,10 +158,11 @@ Stary klucz `customPreviewDataEnabled` nie jest już używany — nie migrujemy 
 ## Ikony pogody
 
 Wbudowana jest tylko paczka **Classic**. Mastery SVG (OFL 1.1) leżą w
-`native/RustyWatch/Assets/Weather/Source/w00.svg` … `w28.svg`, a skrypt
-`scripts/generate_weather_icons.py` renderuje je do 512×512 PNG z glifem
-zajmującym ~80% kwadratu i ~10% bezpiecznego marginesu — dzięki temu ikona
-nie jest przycinana przy żadnym rozmiarze ramki. `weather::resize_png`
+`native/RustyWatch/Assets/Weather/Source/w00.svg` … `w28.svg` jako dowód
+pochodzenia; gotowe PNG-i 512×512 z glifem zajmującym ~80% kwadratu i ~10%
+bezpiecznego marginesu są committowane w `Assets/Weather/Classic/` i kopiowane
+do outputu aplikacji — dzięki temu ikona nie jest przycinana przy żadnym
+rozmiarze ramki, a do buildu nie potrzeba żadnego generatora. `weather::resize_png`
 skaluje w przestrzeni premultiplied alpha (bez jasnych krawędzi). ZeppOS nie
 ładuje SVG w tarczy, więc na zegarek trafiają PNG. Ewentualny stary folder
 `Reversed` w `%APPDATA%\RustyWatch\Weather` pozostaje na dysku, ale nie jest

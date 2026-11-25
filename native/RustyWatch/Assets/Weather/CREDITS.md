@@ -10,5 +10,6 @@
   the glyph fills ~80% of the square with ~10% safe padding on every side, so
   nothing is clipped at any widget size. ZeppOS cannot load SVG at runtime, so
   these PNGs are what the editor preview and the exported watchface both use.
-  `scripts/generate_weather_icons.py` reproduces them (requires pymupdf + pillow).
+  They are committed and bundled with the application; no regeneration tool is
+  shipped in the repository.
 - Transparent pixels have RGB=(0,0,0) to avoid white rectangles on real firmware.
