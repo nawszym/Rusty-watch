@@ -65,6 +65,16 @@ mod tests {
 
 
     #[test]
+    fn generated_js_background_is_fully_black() {
+        let project = Project::starter("Test");
+        let js = codegen::generate_index_js(&project);
+        assert!(
+            js.contains("hmUI.widget.FILL_RECT, { x: 0, y: 0, w: 466, h: 466, color: 0xFF000000"),
+            "tło nie jest w pełni czarne: {js}"
+        );
+    }
+
+    #[test]
     fn generated_js_uses_watchface_api() {
         let project = Project::starter("Test");
         let js = codegen::generate_index_js(&project);
@@ -239,8 +249,12 @@ mod tests {
         let mut icon = archive.by_name("assets/Preview.png").unwrap();
         let mut png = Vec::new();
         icon.read_to_end(&mut png).unwrap();
-        let image = image::load_from_memory(&png).unwrap();
+        let image = image::load_from_memory(&png).unwrap().to_rgba8();
         assert_eq!(image.dimensions(), (314, 314));
+        // Ikona to oprawiony podgląd, nie stare logo: przezroczyste rogi i brąz.
+        assert_eq!(image.get_pixel(0, 0).0[3], 0);
+        let brown = image.get_pixel(157, 27).0;
+        assert!(brown[0] > brown[2], "brak pierścienia logo: {brown:?}");
         std::fs::remove_dir_all(&dir).ok();
     }
 

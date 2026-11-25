@@ -442,11 +442,11 @@ pub fn generate_index_js_with_hands(
     out.push_str(&prelude);
     out.push_str("    __$$module$$__.module = DeviceRuntimeCore.WatchFace({\n");
     out.push_str("      init_view() {\n");
-    // Referencyjna tarcza zaczyna od pełnego, nieprzezroczystego prostokąta —
-    // nawet gdy ładowanie którejś czcionki/obrazu zawiedzie, ekran nie jest czarny.
+    // Tarcza zaczyna od pełnego, nieprzezroczystego czarnego prostokąta —
+    // nawet gdy ładowanie którejś czcionki/obrazu zawiedzie, ekran nie jest pusty.
     let screen = project.device.profile().design_width;
     out.push_str(&format!(
-        "        hmUI.createWidget(hmUI.widget.FILL_RECT, {{ x: 0, y: 0, w: {screen}, h: {screen}, color: 0xFF05070D, show_level: hmUI.show_level.ONLY_NORMAL }})\n"
+        "        hmUI.createWidget(hmUI.widget.FILL_RECT, {{ x: 0, y: 0, w: {screen}, h: {screen}, color: 0xFF000000, show_level: hmUI.show_level.ONLY_NORMAL }})\n"
     ));
     if needs_auto_mileage {
         out.push_str("      _initMileageUnit()\n");

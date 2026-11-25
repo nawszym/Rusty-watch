@@ -1397,7 +1397,7 @@
                             CloseButtonText="{Binding Strings[Close]}"
                             DefaultButton="Close">
             <StackPanel Spacing="12" MinWidth="340" HorizontalAlignment="Center">
-                <!-- Gotowy animowany podgląd (7 klatek, ~1,7 s na klatkę) nad danymi eksportu. -->
+                <!-- Gotowy animowany podgląd (8 klatek, ~1,7 s na klatkę) nad danymi eksportu. -->
                 <Border x:Name="ExportPreviewBorder" Width="240" Height="240"
                         CornerRadius="120" Background="Black" HorizontalAlignment="Center">
                     <Image x:Name="ExportPreviewImage" Width="240" Height="240"

@@ -964,8 +964,9 @@ pub extern "C" fn rw_validate_project(path: *const c_char) -> *mut c_char {
     respond(result)
 }
 
-/// Losuje całą serię danych dla 7 klatek podglądu. Jedno wywołanie na eksport —
-/// edytor przekazuje zwrócony JSON do każdej klatki, więc dane są spójne.
+/// Losuje całą serię danych dla 8 klatek podglądu (7 oryginalnych + kopia
+/// 21:37:40). Jedno wywołanie na eksport — edytor przekazuje zwrócony JSON do
+/// każdej klatki, więc dane są spójne.
 #[no_mangle]
 pub extern "C" fn rw_preview_random_series(locale: *const c_char) -> *mut c_char {
     let result = (|| -> Result<Value> {
@@ -1009,7 +1010,8 @@ pub extern "C" fn rw_render_preview_frame(
     respond(result)
 }
 
-/// Składa `preview.gif` (7 klatek, zapętlenie, ~1,7 s na klatkę) i `preview.png`.
+/// Składa `preview.gif` (8 klatek, zapętlenie, ~1,7 s na klatkę) i oprawiony
+/// statyczny `preview.png`.
 #[no_mangle]
 pub extern "C" fn rw_encode_preview_gif(
     project: *const c_char,
@@ -1032,18 +1034,30 @@ pub extern "C" fn rw_encode_preview_gif(
         }
         let gif_path = dir.join("preview.gif");
         let png_path = dir.join("preview.png");
-        string_result(rusty_core::preview::write_gif(&frames, &gif_path))?;
 
-        // Statyczny PNG to dokładnie 7. klatka wygenerowanego GIF-a (21:37,
-        // wszystkie ikony STATUS), więc oba pliki pokazują ten sam stan tarczy.
-        let reference = rusty_core::preview::FRAME_COUNT - 1;
-        string_result(rusty_core::preview::write_png(&frames[reference], &png_path))?;
+        // Statyczny PNG korzysta z ostatniej klatki (dokładna kopia 21:37:40),
+        // ale zamiast surowej klatki zapisujemy oprawiony podgląd: tarcza
+        // pomniejszona w środku, strefy bezpieczne i zewnętrzna warstwa logo.
+        // Ten sam plik jest później skalowany do ikony w ZIP-ie.
+        let reference = rusty_core::preview::PREVIEW_FRAME_INDEX;
+        let branded = rusty_core::preview::compose_branded_preview(
+            &frames[reference],
+            rusty_core::model::SCREEN_SIZE,
+        );
+        string_result(rusty_core::preview::write_png(&branded, &png_path))?;
+
+        // Oprawiony podgląd jest PIERWSZĄ klatką GIF-a: surowa kopia 21:37
+        // zostaje usunięta, a jej miejsce w animacji zajmuje ten sam obraz co
+        // preview.png. GIF ma nadal 8 klatek.
+        frames.pop();
+        frames.insert(0, branded);
+        string_result(rusty_core::preview::write_gif(&frames, &gif_path))?;
         let _ = fs::remove_dir_all(&cache);
         Ok(json!({
             "gif": gif_path.to_string_lossy(),
             "png": png_path.to_string_lossy(),
             "frames": frames.len(),
-            "referenceFrame": reference + 1,
+            "referenceFrame": 1,
         }))
     })();
     respond(result)
@@ -2482,7 +2496,7 @@ mod tests {
     }
 
     #[test]
-    fn preview_generation_creates_png_and_7_frame_gif() {
+    fn preview_generation_creates_branded_png_and_8_frame_gif() {
         let root = std::env::temp_dir().join(format!("rw-ffi-preview-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
@@ -2500,7 +2514,7 @@ mod tests {
         let series_json = series["data"].to_string();
         let series_arg = CString::new(series_json.as_bytes()).unwrap();
 
-        for index in 0..7u32 {
+        for index in 0..8u32 {
             let frame = take(rw_render_preview_frame(
                 project_arg.as_ptr(),
                 index,
@@ -2510,8 +2524,8 @@ mod tests {
         }
         let encoded = take(rw_encode_preview_gif(project_arg.as_ptr(), series_arg.as_ptr()));
         assert_eq!(encoded["ok"], true, "error: {}", encoded["error"]);
-        assert_eq!(encoded["data"]["frames"], 7);
-        assert_eq!(encoded["data"]["referenceFrame"], 7);
+        assert_eq!(encoded["data"]["frames"], 8);
+        assert_eq!(encoded["data"]["referenceFrame"], 1);
 
         let png = std::path::Path::new(&project_file)
             .parent()
@@ -2523,21 +2537,36 @@ mod tests {
         assert!(std::fs::metadata(&gif).unwrap().len() > 1000);
         assert!(!png.parent().unwrap().join("preview-cache").exists());
 
-        // Statyczny PNG to dokładnie 7. klatka, a GIF ma nieskończone zapętlenie.
-        let again = take(rw_render_preview_frame(
+        // Klatka 8 jest dokładną kopią 21:37:40 — surowe rendery są identyczne.
+        let seventh = take(rw_render_preview_frame(
             project_arg.as_ptr(),
             6,
             series_arg.as_ptr(),
         ));
-        assert_eq!(again["ok"], true, "error: {}", again["error"]);
-        let frame7 = std::path::Path::new(again["data"]["frame"].as_str().unwrap());
-        assert_eq!(std::fs::read(&png).unwrap(), std::fs::read(frame7).unwrap());
+        let eighth = take(rw_render_preview_frame(
+            project_arg.as_ptr(),
+            7,
+            series_arg.as_ptr(),
+        ));
+        assert_eq!(seventh["ok"], true, "error: {}", seventh["error"]);
+        assert_eq!(eighth["ok"], true, "error: {}", eighth["error"]);
+        let frame7 = std::path::Path::new(seventh["data"]["frame"].as_str().unwrap());
+        let frame8 = std::path::Path::new(eighth["data"]["frame"].as_str().unwrap());
+        assert_eq!(std::fs::read(frame7).unwrap(), std::fs::read(frame8).unwrap());
+
+        // preview.png jest oprawiony — nie jest surową klatką: przezroczyste rogi.
+        let branded = image::open(&png).unwrap().to_rgba8();
+        assert_eq!(branded.get_pixel(0, 0).0[3], 0);
+        assert_eq!(branded.get_pixel(465, 465).0[3], 0);
+        let brown = branded.get_pixel(233, 40).0;
+        assert!(brown[0] > brown[2], "brak brązowego pierścienia: {brown:?}");
+        assert_ne!(std::fs::read(&png).unwrap(), std::fs::read(frame8).unwrap());
         std::fs::remove_dir_all(frame7.parent().unwrap()).ok();
         let gif_bytes = std::fs::read(&gif).unwrap();
         assert!(gif_bytes.windows(11).any(|w| w == b"NETSCAPE2.0"));
         assert!(gif_bytes.windows(2).any(|w| w == [0xAA, 0x00]), "delay != 170");
 
-        // Placeholder 314x314 trafia do ZIP jako ikona tarczy; GIF zostaje lokalny.
+        // Ikona 314x314 trafia do ZIP jako oprawiony podgląd; GIF zostaje lokalny.
         let zip = png.parent().unwrap().join("Preview.Face.zip");
         let exported = rusty_core::export_zip(std::path::Path::new(&project_file), &zip).unwrap();
         let listing = rusty_core::inspect_zip(&exported).unwrap();

@@ -1,6 +1,10 @@
-//! Renderer statycznego podglądu tarczy (`preview.png`) i animacji 7 klatek
+//! Renderer statycznego podglądu tarczy (`preview.png`) i animacji 8 klatek
 //! (`preview.gif`). Cała logika jest w Rust — WinUI dostaje tylko gotowe pliki,
 //! więc nie ma offscreen-renderowania kontrolek ani artefaktów pod edytorem.
+//!
+//! Ostatnia klatka jest dokładną kopią 21:37:40 i to z niej powstaje oprawiony
+//! statyczny podgląd: przeskalowana tarcza, czarne strefy bezpieczne, brązowy
+//! pierścień logo z zębatką i cienki pomarańczowy obrys.
 //!
 //! Dane klatek mają dwie warstwy:
 //! * [`FRAME_PRESETS`] — zahardkodowany szkielet czasu i **prawdziwych dat**
@@ -26,8 +30,13 @@ use crate::locale::WatchfaceLocale;
 use crate::model::{MeasurementSystem, StatusType, SCREEN_SIZE};
 use crate::{date_format, time_format};
 
-/// Liczba klatek animacji — jedna na każdy dzień tygodnia.
-pub const FRAME_COUNT: usize = 7;
+/// Liczba klatek animacji: 7 oryginalnych (poniedziałek–niedziela) oraz
+/// dołączona na końcu dokładna kopia klatki 21:37:40, która zasila `preview.png`.
+pub const FRAME_COUNT: usize = 8;
+/// Liczba oryginalnych, różnych klatek — używana do wszystkich ciągów danych.
+pub const SOURCE_FRAME_COUNT: usize = 7;
+/// Indeks klatki 21:37:40 — źródło statycznego podglądu.
+pub const PREVIEW_FRAME_INDEX: usize = 7;
 /// Opóźnienie jednej klatki GIF-a w setnych sekundy (~1,7 s).
 const GIF_FRAME_DELAY: u16 = 170;
 /// Promień okręgu tarczy Active 2 (Round).
@@ -36,16 +45,17 @@ const SCREEN_RADIUS: f64 = 233.0;
 const DEFAULT_FONT_BYTES: &[u8] =
     include_bytes!("../../../native/RustyWatch/Assets/Fonts/Inter-Regular.ttf");
 
-const HOURS: [u8; FRAME_COUNT] = [6, 9, 12, 15, 18, 20, 21];
-const MINUTES: [u8; FRAME_COUNT] = [5, 11, 17, 23, 29, 33, 37];
-const SECONDS: [u8; FRAME_COUNT] = [4, 10, 16, 22, 28, 34, 40];
+const HOURS: [u8; FRAME_COUNT] = [6, 9, 12, 15, 18, 20, 21, 21];
+const MINUTES: [u8; FRAME_COUNT] = [5, 11, 17, 23, 29, 33, 37, 37];
+const SECONDS: [u8; FRAME_COUNT] = [4, 10, 16, 22, 28, 34, 40, 40];
 
 /// Widoczność ikon STATUS w kolejnych klatkach. Bity: ALARM=1, DND=2,
 /// BLUETOOTH=4 (oznacza rozłączenie), LOCK=8.
 ///
-/// Ikony w rzeczywistości pojawiają się rzadko — tylko 5 z 7 klatek ma jakąś
-/// ikonę. Ostatnia klatka (7) ma wszystkie cztery i jest źródłem `preview.png`.
-/// Liczby widocznych ikon są celowo nierośnące: 2,2,0,3,0,1,4.
+/// Ikony w rzeczywistości pojawiają się rzadko — tylko 5 z 7 oryginalnych klatek
+/// ma jakąś ikonę. Klatka 7 (21:37:40) ma wszystkie cztery; klatka 8 jest jej
+/// dokładną kopią i zasila `preview.png`.
+/// Liczby widocznych ikon są celowo nierośnące: 2,2,0,3,0,1,4(+4).
 const STATUS_MASKS: [u8; FRAME_COUNT] = [
     0b1010, // 1: noc, DND i blokada
     0b1010, // 2: DND i blokada
@@ -53,7 +63,8 @@ const STATUS_MASKS: [u8; FRAME_COUNT] = [
     0b1011, // 4: alarm + DND + blokada
     0b0000, // 5: pusto
     0b0100, // 6: chwilowe rozłączenie Bluetooth
-    0b1111, // 7: pełny zestaw (→ preview.png)
+    0b1111, // 7: pełny zestaw (21:37:40)
+    0b1111, // 8: kopia klatki 7 (→ preview.png)
 ];
 
 /// Która wartość ma być wymuszona na skrajną, żeby przetestować układ widgetu.
@@ -91,7 +102,7 @@ const fn make_preset(index: usize) -> PreviewFramePreset {
         status_mask: STATUS_MASKS[index],
         force_extreme: if index == 0 {
             Some(PreviewExtreme::MinHeartRate)
-        } else if index == FRAME_COUNT - 1 {
+        } else if index >= SOURCE_FRAME_COUNT - 1 {
             Some(PreviewExtreme::MaxHeartRate)
         } else {
             None
@@ -109,10 +120,11 @@ const DATES: [(u32, u32, i32); FRAME_COUNT] = [
     (20, 5, 2022),
     (25, 6, 2022),
     (31, 7, 2022),
+    (31, 7, 2022),
 ];
 
-/// 7 stanów tarczy: godziny rosną, minuty i sekundy nigdy nie cofają się,
-/// każda klatka ma inny, prawdziwy dzień tygodnia, datę i miesiąc.
+/// 7 oryginalnych stanów tarczy (godziny rosną, minuty i sekundy nigdy nie cofają
+/// się, każda klatka ma inny prawdziwy dzień tygodnia) + kopia ostatniej z nich.
 pub const FRAME_PRESETS: [PreviewFramePreset; FRAME_COUNT] = [
     make_preset(0),
     make_preset(1),
@@ -121,6 +133,7 @@ pub const FRAME_PRESETS: [PreviewFramePreset; FRAME_COUNT] = [
     make_preset(4),
     make_preset(5),
     make_preset(6),
+    make_preset(PREVIEW_FRAME_INDEX),
 ];
 
 /// Data klatki — z predefiniowanego kalendarza 7 prawdziwych dat.
@@ -187,7 +200,8 @@ pub struct PreviewFrameData {
     pub spo2: u8,
 }
 
-/// Losuje całą serię 7 klatek. `seed` pozwala uzyskać powtarzalny wynik w testach.
+/// Losuje 7 oryginalnych klatek i dokleja dokładną kopię ostatniej (21:37:40).
+/// `seed` pozwala uzyskać powtarzalny wynik w testach.
 pub fn random_series(seed: u64, locale: &str) -> PreviewRandomSeries {
     let mut rng = fastrand::Rng::with_seed(seed);
     let mut dates = Vec::with_capacity(FRAME_COUNT);
@@ -206,7 +220,7 @@ pub fn random_series(seed: u64, locale: &str) -> PreviewRandomSeries {
     let mut metres = 0u32;
     let mut pai_value = 0u16;
 
-    for (index, preset) in FRAME_PRESETS.iter().enumerate() {
+    for (index, preset) in FRAME_PRESETS.iter().take(SOURCE_FRAME_COUNT).enumerate() {
         dates.push(preset.date);
 
         heart = match preset.force_extreme {
@@ -217,24 +231,26 @@ pub fn random_series(seed: u64, locale: &str) -> PreviewRandomSeries {
         heart_rates.push(heart);
 
         // Narastające, ale z losowym wahaniem wokół równomiernego przebiegu tygodnia.
-        let kcal_target = (2450.0 * index as f64 / (FRAME_COUNT - 1) as f64).round() as i32;
+        let kcal_target =
+            (2450.0 * index as f64 / (SOURCE_FRAME_COUNT - 1) as f64).round() as i32;
         kcal = (kcal_target + rng.i32(-45..=45)).max(kcal as i32).min(2450) as u16;
         if index == 0 {
             kcal = 0;
         }
-        if index == FRAME_COUNT - 1 {
+        if index == SOURCE_FRAME_COUNT - 1 {
             kcal = 2450;
         }
         calories.push(kcal);
 
-        let metre_target = (12300.0 * index as f64 / (FRAME_COUNT - 1) as f64).round() as i32;
+        let metre_target =
+            (12300.0 * index as f64 / (SOURCE_FRAME_COUNT - 1) as f64).round() as i32;
         metres = (metre_target + rng.i32(-220..=220))
             .max(metres as i32)
             .min(12300) as u32;
         if index == 0 {
             metres = 0;
         }
-        if index == FRAME_COUNT - 1 {
+        if index == SOURCE_FRAME_COUNT - 1 {
             metres = 12300;
         }
         distances_m.push(metres);
@@ -244,15 +260,32 @@ pub fn random_series(seed: u64, locale: &str) -> PreviewRandomSeries {
         pai_value = (pai_value + rng.u16(0..=16)).min(268);
         pai.push(pai_value);
         skin_temp_c.push(36.2 + rng.f32() * 1.0);
-        sleep_minutes.push(if (1..7).contains(&index) {
+        sleep_minutes.push(if (1..SOURCE_FRAME_COUNT).contains(&index) {
             rng.u32(300..=420)
-        } else if index >= FRAME_COUNT - 2 {
+        } else if index >= SOURCE_FRAME_COUNT - 2 {
             rng.u32(180..=390)
         } else {
             0
         });
         spo2.push(rng.u8(95..=100));
     }
+
+    // Ostatnia klatka to kopia 21:37:40 — identyczne dane, więc statyczny
+    // podgląd i GIF kończą się dokładnie tym samym stanem tarczy.
+    let last = SOURCE_FRAME_COUNT - 1;
+    let copy = SOURCE_FRAME_COUNT;
+    let date_copy = dates[last];
+    dates.push(date_copy);
+    heart_rates.push(heart_rates[last]);
+    calories.push(calories[last]);
+    distances_m.push(distances_m[last]);
+    steps_per_km.push(steps_per_km[last]);
+    stress.push(stress[last]);
+    pai.push(pai[last]);
+    skin_temp_c.push(skin_temp_c[last]);
+    sleep_minutes.push(sleep_minutes[last]);
+    spo2.push(spo2[last]);
+    debug_assert_eq!(copy, PREVIEW_FRAME_INDEX);
 
     PreviewRandomSeries {
         dates,
@@ -304,8 +337,11 @@ pub fn frame_data(index: usize, series: &PreviewRandomSeries) -> Result<PreviewF
     let distance_m = series.distances_m[index];
     let steps_per_km = series.steps_per_km[index];
     let steps = (distance_m as f64 / 1000.0 * steps_per_km as f64).round() as u32;
-    // Bateria maleje liniowo 100% -> 10% i nie jest losowana.
-    let battery_pct = 100 - (index as u32 * 90 / (FRAME_COUNT as u32 - 1)) as u8;
+    // Bateria maleje liniowo 100% -> 10% i nie jest losowana. Ostatnia klatka
+    // jest kopią poprzedniej, więc nie może dostać innego poziomu baterii.
+    let source_index = index.min(SOURCE_FRAME_COUNT - 1);
+    let battery_pct =
+        100 - (source_index as u32 * 90 / (SOURCE_FRAME_COUNT as u32 - 1)) as u8;
 
     Ok(PreviewFrameData {
         index,
@@ -786,7 +822,7 @@ pub fn write_png(image: &RgbaImage, path: &Path) -> Result<(), String> {
         .map_err(|e| format!("Nie można zakodować PNG: {e}"))
 }
 
-/// Koduje 7 klatek do animowanego GIF-a (~1,7 s na klatkę).
+/// Koduje klatki do animowanego GIF-a (~1,7 s na klatkę).
 pub fn write_gif(frames: &[RgbaImage], path: &Path) -> Result<(), String> {
     if frames.is_empty() {
         return Err("Brak klatek do zapisu GIF".to_string());
@@ -821,6 +857,126 @@ pub fn write_gif(frames: &[RgbaImage], path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Gotowa zewnętrzna warstwa logo (brązowy łuk + zębatka) z `logo/`.
+const GEAR_OUTLAYER_PNG: &[u8] = include_bytes!("../../../logo/gear-outlayer.png");
+/// Promienie łuku w źródłowym rysunku 1024 × 1024 wokół środka (512,512).
+const GEAR_OUTER_RADIUS: f64 = 333.6;
+const GEAR_INNER_RADIUS: f64 = 275.0;
+const RING_BLACK: Rgba<u8> = Rgba([0, 0, 0, 255]);
+/// Ciemny obrys tarczy (#404040) — ma być ledwo widoczny na tle tarczy.
+const RING_OUTLINE: Rgba<u8> = Rgba([64, 64, 64, 255]);
+
+// Promienie kolejnych stref jako ułamek połowy boku kwadratu:
+// przezroczyste tło → czarna strefa bezpieczna → zewnętrzna warstwa logo
+// → wewnętrzna czarna strefa → przeskalowana tarcza z ciemnym obrysem.
+const R_EDGE: f64 = 0.98;
+const R_BROWN_OUT: f64 = 0.90;
+const R_FACE: f64 = 0.66;
+
+/// Wypełnienie koła o promieniu `radius` w odległości `distance` (1 px wygładzenie).
+fn disc_coverage(radius: f64, distance: f64) -> f64 {
+    (radius - distance + 0.5).clamp(0.0, 1.0)
+}
+
+fn annulus_coverage(distance: f64, inner: f64, outer: f64) -> f64 {
+    disc_coverage(outer, distance) * (1.0 - disc_coverage(inner, distance))
+}
+
+/// Straight-alpha `source-over`: kładzie `color` z kryciem `factor` na `dst`.
+fn paint_over(dst: &mut Rgba<u8>, color: Rgba<u8>, factor: f64) {
+    if factor <= 0.0 {
+        return;
+    }
+    let src_alpha = (color.0[3] as f64 / 255.0) * factor;
+    if src_alpha <= 0.0 {
+        return;
+    }
+    let dst_alpha = dst.0[3] as f64 / 255.0;
+    let out_alpha = src_alpha + dst_alpha * (1.0 - src_alpha);
+    if out_alpha <= 0.0 {
+        *dst = Rgba([0, 0, 0, 0]);
+        return;
+    }
+    for channel in 0..3 {
+        let src = color.0[channel] as f64 * src_alpha;
+        let back = dst.0[channel] as f64 * dst_alpha * (1.0 - src_alpha);
+        dst.0[channel] = ((src + back) / out_alpha).round().clamp(0.0, 255.0) as u8;
+    }
+    dst.0[3] = (out_alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+}
+
+/// Składa oprawiony podgląd: pełna klatka tarczy jest zmniejszana do środkowego
+/// okręgu z ledwo widocznym ciemnym obrysem, wokół niej są czarne strefy
+/// bezpieczne i zewnętrzna warstwa logo z `logo/gear-outlayer.png`. Poza
+/// outermost okręgiem piksele są w pełni przezroczyste.
+pub fn compose_branded_preview(frame: &RgbaImage, size: u32) -> RgbaImage {
+    // Zewnętrzna warstwa logo jest gotowym rysunkiem — nie odtwarzamy jej w kodzie.
+    let mut gear = image::load_from_memory(GEAR_OUTLAYER_PNG)
+        .expect("osadzony gear-outlayer.png")
+        .to_rgba8();
+    // Przezroczyste piksele mają białe RGB — wyzerujemy je, żeby przy próbkowaniu
+    // nie wnosiły jasnej obwódki na krawędzi łuku.
+    for pixel in gear.pixels_mut() {
+        if pixel.0[3] == 0 {
+            *pixel = Rgba([0, 0, 0, 0]);
+        }
+    }
+    let gear_center = (gear.width() as f64 - 1.0) / 2.0;
+
+    let mut out = RgbaImage::from_pixel(size, size, Rgba([0, 0, 0, 0]));
+    let half = size as f64 / 2.0;
+    let center = (size as f64 - 1.0) / 2.0;
+    let edge = R_EDGE * half;
+    let brown_out = R_BROWN_OUT * half;
+    // Łuk w rysunku ma promień ~333.6 px — dopasowujemy go do `brown_out`.
+    let gear_scale = brown_out / GEAR_OUTER_RADIUS;
+    let inner_black = GEAR_INNER_RADIUS * gear_scale;
+    let face = R_FACE * half;
+    let outline_px = 2.0;
+    // Tarcza ma promień 233 px na 466 px boku — odwzorowujemy ten okrąg na `face`.
+    let scale = 2.0 * face / frame.width() as f64;
+    let src_center = (frame.width() as f64 - 1.0) / 2.0;
+
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f64 - center;
+            let dy = y as f64 - center;
+            let distance = (dx * dx + dy * dy).sqrt();
+            if distance > edge + 1.0 {
+                continue;
+            }
+            let mut pixel = Rgba([0, 0, 0, 0]);
+
+            // Zewnętrzna czarna strefa bezpieczna.
+            paint_over(&mut pixel, RING_BLACK, disc_coverage(edge, distance));
+
+            // Gotowa zewnętrzna warstwa logo (łuk + zębatka) zamiast rysowania w kodzie.
+            let gx = gear_center + dx / gear_scale;
+            let gy = gear_center + dy / gear_scale;
+            paint_over(&mut pixel, sample_bilinear(&gear, gx, gy), 1.0);
+
+            // Wewnętrzna czarna strefa bezpieczna zaczyna się przy krawędzi łuku.
+            paint_over(&mut pixel, RING_BLACK, disc_coverage(inner_black, distance));
+
+            // Przeskalowana pełna klatka tarczy i ciemny, ledwo widoczny obrys.
+            if distance <= face + 1.0 {
+                let sx = src_center + dx / scale;
+                let sy = src_center + dy / scale;
+                let face_pixel = sample_bilinear(frame, sx, sy);
+                paint_over(&mut pixel, face_pixel, disc_coverage(face, distance));
+                paint_over(
+                    &mut pixel,
+                    RING_OUTLINE,
+                    annulus_coverage(distance, face - outline_px, face),
+                );
+            }
+
+            out.put_pixel(x, y, pixel);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -832,7 +988,7 @@ mod tests {
 
     #[test]
     fn presets_have_strictly_increasing_time_and_real_dates() {
-        for i in 1..FRAME_COUNT {
+        for i in 1..SOURCE_FRAME_COUNT {
             assert!(FRAME_PRESETS[i].hour > FRAME_PRESETS[i - 1].hour);
             assert!(FRAME_PRESETS[i].minute > FRAME_PRESETS[i - 1].minute);
             assert!(FRAME_PRESETS[i].second > FRAME_PRESETS[i - 1].second);
@@ -854,12 +1010,15 @@ mod tests {
     }
 
     #[test]
-    fn every_frame_has_a_distinct_real_weekday_and_month() {
-        let months: std::collections::HashSet<u32> =
-            FRAME_PRESETS.iter().map(|p| p.date.month).collect();
-        assert_eq!(months.len(), FRAME_COUNT);
+    fn every_source_frame_has_a_distinct_real_weekday_and_month() {
+        let months: std::collections::HashSet<u32> = FRAME_PRESETS
+            .iter()
+            .take(SOURCE_FRAME_COUNT)
+            .map(|p| p.date.month)
+            .collect();
+        assert_eq!(months.len(), SOURCE_FRAME_COUNT);
         let mut previous = 0;
-        for (index, preset) in FRAME_PRESETS.iter().enumerate() {
+        for (index, preset) in FRAME_PRESETS.iter().take(SOURCE_FRAME_COUNT).enumerate() {
             let weekday = crate::date_format::weekday_number(
                 preset.date.day, preset.date.month, preset.date.year, FirstDayOfWeek::Monday,
             );
@@ -870,10 +1029,51 @@ mod tests {
     }
 
     #[test]
-    fn frame_7_is_the_static_21_37_preview() {
-        let frame = FRAME_PRESETS[FRAME_COUNT - 1];
-        assert_eq!((frame.hour, frame.minute, frame.second), (21, 37, 40));
-        assert_eq!(frame.status_mask, 0b1111);
+    fn last_frame_is_exact_21_37_copy_and_feeds_preview() {
+        let source = FRAME_PRESETS[SOURCE_FRAME_COUNT - 1];
+        let copy = FRAME_PRESETS[PREVIEW_FRAME_INDEX];
+        assert_eq!((source.hour, source.minute, source.second), (21, 37, 40));
+        assert_eq!(source.status_mask, 0b1111);
+        assert_eq!(
+            (copy.hour, copy.minute, copy.second, copy.date, copy.status_mask),
+            (source.hour, source.minute, source.second, source.date, source.status_mask)
+        );
+        assert_eq!(FRAME_COUNT, SOURCE_FRAME_COUNT + 1);
+    }
+
+    #[test]
+    fn preview_frame_reuses_all_random_values() {
+        let series = sample_series();
+        let source = frame_data(SOURCE_FRAME_COUNT - 1, &series).unwrap();
+        let copy = frame_data(PREVIEW_FRAME_INDEX, &series).unwrap();
+        assert_eq!(
+            (
+                source.date,
+                source.battery_pct,
+                source.heart_rate,
+                source.calories,
+                source.distance_m,
+                source.steps,
+                source.stress,
+                source.pai,
+                source.skin_temp_c,
+                source.sleep_minutes,
+                source.spo2,
+            ),
+            (
+                copy.date,
+                copy.battery_pct,
+                copy.heart_rate,
+                copy.calories,
+                copy.distance_m,
+                copy.steps,
+                copy.stress,
+                copy.pai,
+                copy.skin_temp_c,
+                copy.sleep_minutes,
+                copy.spo2,
+            )
+        );
     }
 
     #[test]
@@ -882,7 +1082,7 @@ mod tests {
             .iter()
             .map(|frame| frame.status_mask.count_ones())
             .collect();
-        assert_eq!(counts, [2, 2, 0, 3, 0, 1, 4]);
+        assert_eq!(counts, [2, 2, 0, 3, 0, 1, 4, 4]);
         let states: std::collections::HashSet<u32> = counts.iter().copied().collect();
         assert_eq!(states, [0, 1, 2, 3, 4].into_iter().collect());
         assert_eq!(counts.iter().filter(|count| **count == 0).count(), 2);
@@ -917,7 +1117,7 @@ mod tests {
     fn steps_are_derived_from_distance_and_battery_decreases() {
         let series = sample_series();
         let mut previous_battery = 255u8;
-        for index in 0..FRAME_COUNT {
+        for index in 0..SOURCE_FRAME_COUNT {
             let frame = frame_data(index, &series).unwrap();
             let expected =
                 (frame.distance_m as f64 / 1000.0 * frame.steps_per_km as f64).round() as u32;
@@ -977,11 +1177,83 @@ mod tests {
     }
 
     #[test]
+    fn gif_last_frame_uses_the_branded_preview() {
+        let face = RgbaImage::from_pixel(SCREEN_SIZE, SCREEN_SIZE, Rgba([30, 60, 90, 255]));
+        let branded = compose_branded_preview(&face, SCREEN_SIZE);
+        let mut frames = vec![face; FRAME_COUNT];
+        frames[0] = branded;
+        let path = std::env::temp_dir().join(format!("rw-branded-gif-{}.gif", std::process::id()));
+        write_gif(&frames, &path).unwrap();
+
+        let mut options = gif::DecodeOptions::new();
+        options.set_color_output(gif::ColorOutput::RGBA);
+        let mut decoder = options.read_info(File::open(&path).unwrap()).unwrap();
+        let mut decoded = Vec::new();
+        while decoder.read_next_frame().unwrap().is_some() {
+            let rgba = decoder.current_frame_info().unwrap().buffer.to_vec();
+            decoded.push(rgba);
+        }
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(decoded.len(), FRAME_COUNT);
+        let first = &decoded[0];
+        assert_eq!(first[3], 0, "pierwsza klatka nie jest oprawionym podglądem");
+        let ring = (40 * SCREEN_SIZE as usize + 233) * 4;
+        assert!(
+            first[ring] > 60 && first[ring] > first[ring + 2],
+            "brak brązowego pierścienia w pierwszej klatce"
+        );
+        assert_eq!(decoded.last().unwrap()[3], 255, "ostatnia klatka jest surowa");
+    }
+
+    #[test]
     fn cutout_paints_corners_black() {
         let mut image = RgbaImage::from_pixel(SCREEN_SIZE, SCREEN_SIZE, Rgba([200, 100, 50, 255]));
         apply_round_cutout(&mut image);
         assert_eq!(image.get_pixel(0, 0).0, [0, 0, 0, 255]);
         assert_eq!(image.get_pixel(465, 465).0, [0, 0, 0, 255]);
         assert_ne!(image.get_pixel(233, 233).0, [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn branded_preview_layers_match_the_mockup() {
+        // Syntetyczna tarcza: środek ma być widoczny w blue area, a rogi mają
+        // być przezroczyste (na zrzucie pokazane na zielono).
+        let face = RgbaImage::from_pixel(SCREEN_SIZE, SCREEN_SIZE, Rgba([30, 60, 90, 255]));
+        let image = compose_branded_preview(&face, SCREEN_SIZE);
+        assert_eq!(image.dimensions(), (466, 466));
+        assert_eq!(image.get_pixel(0, 0).0[3], 0);
+        assert_eq!(image.get_pixel(465, 465).0[3], 0);
+
+        // Zewnętrzna strefa bezpieczna (między brązem a krawędzią).
+        assert_eq!(image.get_pixel(233, 20).0, [0, 0, 0, 255]);
+        // Brązowy pierścień na górze.
+        let brown = image.get_pixel(233, 40).0;
+        assert!(brown[0] > brown[2], "oczekiwany brąz: {brown:?}");
+        // Zębatka po prawej stronie (na zewnątrz brązowego pierścienia).
+        let gear = image.get_pixel(448, 233).0;
+        assert!(gear[0] > 150 && gear[1] > 60, "oczekiwana zębatka: {gear:?}");
+        // Wewnętrzna czarna strefa bezpieczna (między pierścieniem a tarczą).
+        assert_eq!(image.get_pixel(233, 66).0, [0, 0, 0, 255]);
+        // Przeskalowana tarcza w środku.
+        assert_eq!(image.get_pixel(233, 233).0, [30, 60, 90, 255]);
+        // Ciemny, ledwo widoczny obrys na granicy tarczy (#404040).
+        let outline = (70..85)
+            .map(|y| image.get_pixel(233, y).0)
+            .max_by_key(|pixel| pixel[0])
+            .unwrap();
+        assert!(
+            (55..=70).contains(&outline[0]) && outline[0] == outline[1] && outline[1] == outline[2],
+            "zły obrys: {outline:?}"
+        );
+    }
+
+    #[test]
+    fn branded_preview_scales_to_watch_icon_size() {
+        let face = RgbaImage::from_pixel(SCREEN_SIZE, SCREEN_SIZE, Rgba([30, 60, 90, 255]));
+        let icon = compose_branded_preview(&face, 314);
+        assert_eq!(icon.dimensions(), (314, 314));
+        assert_eq!(icon.get_pixel(0, 0).0[3], 0);
+        assert_eq!(icon.get_pixel(157, 157).0, [30, 60, 90, 255]);
     }
 }

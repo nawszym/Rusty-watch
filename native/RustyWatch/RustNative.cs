@@ -582,7 +582,7 @@ internal static class RustNative
     public static string? PrepareEmulatorWorkspace(string project, string root, out string? error)
         => Call(() => PrepareEmulatorWorkspace(project, root), out error);
 
-    /// <summary>Losuje dane 7 klatek podglądu (jedno wywołanie na eksport).</summary>
+    /// <summary>Losuje dane 8 klatek podglądu (jedno wywołanie na eksport).</summary>
     public static string? PreviewRandomSeries(string locale, out string? error)
         => Call(() => PreviewRandomSeries(locale), out error);
 
@@ -590,7 +590,7 @@ internal static class RustNative
     public static string? RenderPreviewFrame(string project, uint index, string seriesJson, out string? error)
         => Call(() => RenderPreviewFrame(project, index, seriesJson), out error);
 
-    /// <summary>Składa preview.png i 7-klatkowy preview.gif w folderze projektu.</summary>
+    /// <summary>Składa oprawiony preview.png i 8-klatkowy preview.gif w folderze projektu.</summary>
     public static string? EncodePreviewGif(string project, string seriesJson, out string? error)
         => Call(() => EncodePreviewGif(project, seriesJson), out error);
 

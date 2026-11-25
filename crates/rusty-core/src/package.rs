@@ -21,27 +21,40 @@ use crate::validate::validate;
 /// Referencyjna tarcza z innego edytora używa dokładnie 314 × 314 RGBA.
 pub const WATCHFACE_PREVIEW_SIZE: u32 = 314;
 
-/// Tymczasowy podgląd tarczy na zegarku: przeskalowane logo aplikacji.
-/// Generowanie właściwego podglądu z 7 klatek dawało obraz 466 × 466, którego
-/// instalator nie akceptował jako ikony. Do czasu osobnej poprawki generatora
-/// podglądu używamy poprawnego placeholdera o wymaganym rozmiarze.
-const BUNDLED_APP_LOGO: &[u8] = include_bytes!("../../../native/RustyWatch/Assets/Logo.png");
-
-fn placeholder_preview_icon_bytes(shape: ScreenShape) -> Result<Vec<u8>> {
-    let logo = image::load_from_memory(BUNDLED_APP_LOGO).context("nie można odczytać Logo.png")?;
-    let mut scaled = logo
-        .resize_exact(
+/// Ikona tarczy w ZIP-ie: oprawiony podgląd `preview.png` z folderu projektu
+/// przeskalowany do rozdzielczości wymaganej przez zegarek (314 × 314). Edytor
+/// generuje ten plik przed otwarciem okna eksportu, więc oba obrazy pokazują
+/// identyczny stan tarczy. Eksport CLI (bez wygenerowanego podglądu) renderuje
+/// deterministycznie klatkę 21:37:40 i przechodzi przez tę samą oprawę.
+fn watchface_icon_bytes(project: &Project, project_dir: &Path) -> Result<Vec<u8>> {
+    let preview = project_dir.join("preview.png");
+    let rendered = if preview.is_file() {
+        image::open(&preview)
+            .with_context(|| format!("nie można odczytać {}", preview.display()))?
+            .to_rgba8()
+    } else {
+        let series = crate::preview::random_series(0, "en");
+        let frame = crate::preview::frame_data(crate::preview::PREVIEW_FRAME_INDEX, &series)
+            .map_err(anyhow::Error::msg)?;
+        let raw = crate::preview::render_frame(project_dir, project, &frame, &series);
+        crate::preview::compose_branded_preview(&raw, raw.width())
+    };
+    let mut icon = if rendered.dimensions() == (WATCHFACE_PREVIEW_SIZE, WATCHFACE_PREVIEW_SIZE) {
+        rendered
+    } else {
+        image::imageops::resize(
+            &rendered,
             WATCHFACE_PREVIEW_SIZE,
             WATCHFACE_PREVIEW_SIZE,
             image::imageops::FilterType::Lanczos3,
         )
-        .to_rgba8();
-    mask_to_screen_shape(&mut scaled, shape);
+    };
+    mask_to_screen_shape(&mut icon, project.device.profile().screen_shape);
     let mut bytes = Vec::new();
     image::codecs::png::PngEncoder::new(&mut bytes).write_image(
-        scaled.as_raw(),
-        scaled.width(),
-        scaled.height(),
+        icon.as_raw(),
+        icon.width(),
+        icon.height(),
         image::ExtendedColorType::Rgba8,
     )?;
     Ok(bytes)
@@ -173,7 +186,7 @@ pub fn export_zip(project_file: &Path, output: &Path) -> Result<PathBuf> {
 
     // Zegarek czyta miniaturę z `assets/Preview.png` (314 × 314). Wszystkie
     // zasoby są płaskie — dokładnie tak, jak odwołuje się wygenerowany JS.
-    let icon_bytes = placeholder_preview_icon_bytes(project.device.profile().screen_shape)?;
+    let icon_bytes = watchface_icon_bytes(&project, project_dir)?;
     write_entry(
         &mut zip,
         &format!("assets/{WATCHFACE_PREVIEW_ICON}"),
@@ -375,8 +388,8 @@ pub fn export_zip_bytes(project_file: &Path) -> Result<Vec<u8>> {
             generate_index_js_with_hands(&project, &placements).as_bytes(),
             options,
         )?;
-        // Tymczasowy placeholder o rozdzielczości wymaganej przez zegarek.
-        let icon_bytes = placeholder_preview_icon_bytes(project.device.profile().screen_shape)?;
+        // Oprawiony podgląd przeskalowany do rozdzielczości wymaganej przez zegarek.
+        let icon_bytes = watchface_icon_bytes(&project, project_dir)?;
         write_entry(
             &mut zip,
             &format!("assets/{WATCHFACE_PREVIEW_ICON}"),
