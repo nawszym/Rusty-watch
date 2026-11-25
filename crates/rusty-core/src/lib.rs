@@ -105,7 +105,6 @@ mod tests {
                 "calories-target",
                 "stand-target",
                 "fat-burning-target",
-                "sleep-target"
             ]
         );
 
@@ -277,8 +276,8 @@ mod tests {
             "hmSensor.id.WEATHER",
             "getForecastWeather()",
             "_cityName(_wData && _wData.cityName)",
-            "_wForecast.data[0].index",
-            "_wTide.data[0].sunrise.hour",
+            "_wForecast.data[_wd_",
+            "_wTide.data[_wd_",
             "L.weather[",
             "setProperty(hmUI.prop.SRC, weatherIcons_",
         ] {
@@ -1193,7 +1192,6 @@ mod tests {
             ("stress", "STRESS", "--", "stress"),
             ("pai", "PAI", "--", "pai"),
             ("skin-temp", "BODY_TEMP", "-- °C", "skin-temp"),
-            ("sleep", "SLEEP", "--:--", "sleep"),
             ("calories", "CALORIE", "-- kcal", "calories"),
             ("spo2", "SPO2", "--%", "spo2"),
         ];
@@ -1229,6 +1227,265 @@ mod tests {
                 "kind={kind} JS: {js}"
             );
         }
+    }
+
+    #[test]
+    fn sleep_widgets_live_in_sleep_category_and_generate_js() {
+        let expected = vec![
+            "sleep",
+            "sleep-score",
+            "sleep-deep",
+            "sleep-light",
+            "sleep-rem",
+            "sleep-wake",
+            "sleep-start",
+            "sleep-end",
+            "sleep-target",
+        ];
+        let actual: Vec<_> = widgets::supported_widgets()
+            .into_iter()
+            .filter(|item| item.category == widgets::CATEGORY_SLEEP)
+            .map(|item| item.kind)
+            .collect();
+        assert_eq!(actual, expected);
+
+        let mut project = Project::starter("Sleep");
+        for kind in expected {
+            widgets::add_widget(&mut project, kind).unwrap();
+        }
+        assert!(validate(&project).is_empty());
+        let js = codegen::generate_index_js(&project);
+        for token in [
+            "hmSensor.id.SLEEP",
+            "function _getSleep()",
+            "s.getBasicInfo()",
+            "s.getSleepStageData()",
+            "_fmtSleepHM(",
+            "_sleepStageText(",
+            "sleepTick()",
+        ] {
+            assert!(js.contains(token), "generated JS lacks {token}");
+        }
+        assert!(!js.contains("new Date"));
+    }
+
+    #[test]
+    fn sleep_stage_mode_changes_preview_and_export() {
+        let mut project = Project::starter("Sleep");
+        let widget = widgets::add_widget(&mut project, "sleep-deep").unwrap();
+        assert_eq!(widget.text.as_deref(), Some("-- min"));
+        let settings = serde_json::json!({
+            "id": widget.id,
+            "x": 23, "y": 150, "w": 420, "h": 60,
+            "textSize": 40, "color": "0xFFFFFFFF", "align": "center",
+            "sleepStageMode": "percent",
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.sleep_stage_mode, crate::model::SleepStageMode::Percent);
+        assert_eq!(updated.text.as_deref(), Some("--%"));
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("_sleepStageText(_sModels && _sModels.DEEP_STAGE, true)"));
+    }
+
+    #[test]
+    fn heart_stats_read_today_array_without_redeclaring_getter() {
+        let mut project = Project::starter("HrStats");
+        for kind in ["heart", "heart-min", "heart-max", "heart-avg"] {
+            widgets::add_widget(&mut project, kind).unwrap();
+        }
+        let js = codegen::generate_index_js(&project);
+        for token in [
+            "_refreshHrStats()",
+            "heart.today",
+            "_hrStats.min",
+            "_hrStats.max",
+            "_hrStats.avg",
+            "if (v <= 0 || v > 250) continue",
+        ] {
+            assert!(js.contains(token), "generated JS lacks {token}");
+        }
+        let declarations = js.matches("const _hHeart = _getHealthHeart()").count();
+        assert_eq!(declarations, 1, "getter must be emitted once: {js}");
+        assert!(!js.contains("new Date"));
+    }
+
+    #[test]
+    fn weather_day_offset_controls_forecast_day() {
+        let mut project = Project::starter("Forecast");
+        let widget = widgets::add_widget(&mut project, "weather-high").unwrap();
+        let settings = serde_json::json!({
+            "id": widget.id,
+            "x": 23, "y": 150, "w": 420, "h": 60,
+            "textSize": 40, "color": "0xFFFFFFFF", "align": "center",
+            "weatherDayOffset": 2,
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.weather_day_offset, 2);
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("const _wd_"), "day constant missing: {js}");
+        assert!(js.contains("_wForecast.data[_wd_"), "day not used: {js}");
+        assert!(!js.contains("_wForecast.data[0].high"));
+
+        let state = preview::WeatherPreviewState::from(preview::DEFAULT_PREVIEW_WEATHER)
+            .with_overrides(&serde_json::json!({ "dayOffset": 2 }));
+        assert_eq!(state.day_offset, 2);
+        assert_eq!(state.resolved_day().unwrap().index, 6);
+        assert_eq!(preview::weather_text("weather-high", &state, crate::locale::WatchfaceLocale::English), "23°");
+    }
+
+    #[test]
+    fn sensor_fields_package_one_are_in_catalog_and_export() {
+        let cases = [
+            ("heart-last", "health", "heart-last", "HEART", "-- bpm"),
+            ("spo2-hour-avg", "health", "spo2-hour-avg", "SPO2", "--%"),
+            ("pai-prepai", "health", "pai-prepai", "PAI", "--"),
+            ("sleep-wake", "sleep", "sleep-wake", "SLEEP", "-- min"),
+            ("sun-current", "weather", "sun-current", "WEATHER", "--:--"),
+        ];
+        for (kind, category, layer_kind, sensor_id, initial) in cases {
+            let entry = widgets::supported_widgets()
+                .into_iter()
+                .find(|item| item.kind == kind)
+                .unwrap_or_else(|| panic!("missing catalog entry {kind}"));
+            assert_eq!(entry.category, category, "kind={kind}");
+            assert!(!entry.has_pattern, "kind={kind}");
+
+            let mut project = Project::starter("Package One");
+            let widget = widgets::add_widget(&mut project, kind).unwrap();
+            assert_eq!(widget.text.as_deref(), Some(initial), "kind={kind}");
+            assert_eq!(widget.time_format, None, "kind={kind}");
+            assert_eq!(
+                layers::describe(&project).last().unwrap().kind,
+                layer_kind,
+                "kind={kind}"
+            );
+            assert!(validate(&project).is_empty(), "kind={kind}");
+            let js = codegen::generate_index_js(&project);
+            assert!(js.contains(&format!("hmSensor.id.{sensor_id}")), "kind={kind}");
+            assert!(!js.contains("new Date"), "kind={kind}");
+        }
+
+        let mut project = Project::starter("Sources");
+        for kind in [
+            "heart-last",
+            "spo2-hour-avg",
+            "pai-prepai",
+            "sleep-wake",
+            "sun-current",
+        ] {
+            widgets::add_widget(&mut project, kind).unwrap();
+        }
+        let js = codegen::generate_index_js(&project);
+        for token in [
+            "_hHeart.last",
+            "_spo2Hour",
+            "hourAvgofDay",
+            "prepai0",
+            "WAKE_STAGE",
+            "function _sunCurrentText()",
+        ] {
+            assert!(js.contains(token), "generated JS lacks {token}");
+        }
+        // Kilka widgetów czyta ten sam czujnik — getter może być wyemitowany tylko raz.
+        assert_eq!(js.matches("const _hHeart = _getHealthHeart()").count(), 1);
+        assert_eq!(js.matches("const _hPai = _getHealthPai()").count(), 1);
+        assert!(!js.contains("@zos/ui"));
+    }
+
+    #[test]
+    fn weather_current_uses_firmware_bound_text_font() {
+        let mut project = Project::starter("Current temp");
+        let widget = widgets::add_widget(&mut project, "weather-current").unwrap();
+        // Tekst w projekcie jest tylko wartością zastęczą dla podglądu PC —
+        // nie trafia do JS, bo firmware podstawia prawdziwą temperaturę.
+        assert_eq!(widget.text.as_deref(), Some("22°"));
+        let settings = serde_json::json!({
+            "id": widget.id,
+            "x": 23, "y": 150, "w": 420, "h": 60,
+            "textSize": 40, "color": "0xFFFFFFFF", "align": "center",
+            "text": "18°",
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.text.as_deref(), Some("22°"), "text content must not be editable");
+
+        let js = codegen::generate_index_js(&project);
+        for token in [
+            "hmUI.widget.TEXT_FONT",
+            "type: hmUI.data_type.WEATHER_CURRENT",
+            "unit_type: 1",
+            "text_size: 40",
+            "align_h: hmUI.align.CENTER_H",
+            "show_level: hmUI.show_level.ONLY_NORMAL",
+        ] {
+            assert!(js.contains(token), "generated JS lacks {token}: {js}");
+        }
+        assert!(!js.contains("22°"), "no static text may be exported: {js}");
+        assert!(!js.contains("hmSensor.id.WEATHER"));
+        assert!(!js.contains("@zos/ui"));
+
+        let no_unit = serde_json::json!({
+            "id": widget.id,
+            "x": 23, "y": 150, "w": 420, "h": 60,
+            "textSize": 40, "color": "0xFFFFFFFF", "align": "center",
+            "showUnit": false,
+        });
+        widgets::update_widget(&mut project, &no_unit).unwrap();
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("unit_type: 0"), "showUnit must map to unit_type: {js}");
+
+        let state = preview::WeatherPreviewState::from(preview::DEFAULT_PREVIEW_WEATHER);
+        assert_eq!(state.current, 22);
+        assert_eq!(
+            preview::weather_text("weather-current", &state, crate::locale::WatchfaceLocale::English),
+            "22°"
+        );
+        let overridden = state.with_overrides(&serde_json::json!({ "current": 18 }));
+        assert_eq!(
+            preview::weather_text("weather-current", &overridden, crate::locale::WatchfaceLocale::English),
+            "18°"
+        );
+        assert!(validate(&project).is_empty());
+    }
+
+    #[test]
+    fn sun_current_preview_matches_watch_minutes() {
+        let base = preview::DEFAULT_PREVIEW_WEATHER;
+        let forecast = preview::forecast_days(base);
+        let state = preview::WeatherPreviewState::from(base)
+            .with_overrides(&serde_json::json!({ "nowMinute": 1297 }));
+        assert_eq!(state.now_minute, 1297);
+        let text = preview::weather_text("sun-current", &state, crate::locale::WatchfaceLocale::English);
+        let parts: Vec<_> = text.split(':').collect();
+        assert_eq!(parts.len(), 2, "unexpected text: {text}");
+        assert!(parts[0].parse::<u32>().is_ok() && parts[1].parse::<u32>().is_ok());
+        assert_eq!(preview::sun_current_minutes(&forecast, 1297).is_some(), true);
+        assert_eq!(preview::sun_current_minutes(&forecast, 1440), None);
+        let missing = preview::WeatherPreviewState {
+            forecast: Vec::new(),
+            ..state
+        };
+        assert_eq!(
+            preview::weather_text("sun-current", &missing, crate::locale::WatchfaceLocale::English),
+            "--:--"
+        );
+    }
+
+    #[test]
+    fn sleep_wake_supports_duration_and_percent() {
+        let mut project = Project::starter("Wake");
+        let widget = widgets::add_widget(&mut project, "sleep-wake").unwrap();
+        assert_eq!(widget.text.as_deref(), Some("-- min"));
+        let settings = serde_json::json!({
+            "id": widget.id,
+            "x": 23, "y": 150, "w": 420, "h": 60,
+            "textSize": 40, "color": "0xFFFFFFFF", "align": "center",
+            "sleepStageMode": "percent",
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.sleep_stage_mode, crate::model::SleepStageMode::Percent);
+        assert_eq!(updated.text.as_deref(), Some("--%"));
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("_sleepStageText(_sModels && _sModels.WAKE_STAGE, true)"));
     }
 
     #[test]

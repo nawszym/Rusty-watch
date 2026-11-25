@@ -61,12 +61,24 @@ pub fn validate(project: &Project) -> Vec<String> {
             | WidgetKind::StepText
             | WidgetKind::DistanceText
             | WidgetKind::HeartRateText
+            | WidgetKind::HeartRateLastText
+            | WidgetKind::HeartRateMinText
+            | WidgetKind::HeartRateMaxText
+            | WidgetKind::HeartRateAvgText
             | WidgetKind::StressText
             | WidgetKind::PaiText
             | WidgetKind::SkinTempText
             | WidgetKind::SleepText
+            | WidgetKind::SleepScoreText
+            | WidgetKind::SleepDeepText
+            | WidgetKind::SleepLightText
+            | WidgetKind::SleepRemText
+            | WidgetKind::SleepWakeText
+            | WidgetKind::SleepStartText
+            | WidgetKind::SleepEndText
             | WidgetKind::CalorieText
             | WidgetKind::Spo2Text
+            | WidgetKind::Spo2HourAvgText
             | WidgetKind::BatteryText
             | WidgetKind::StepTargetText
             | WidgetKind::CalorieTargetText
@@ -75,13 +87,16 @@ pub fn validate(project: &Project) -> Vec<String> {
             | WidgetKind::StandText
             | WidgetKind::FatBurningText
             | WidgetKind::PaiWeeklyText
+            | WidgetKind::PaiPrepaiText
             | WidgetKind::SleepTargetText
             | WidgetKind::WeatherConditionText
             | WidgetKind::WeatherCityText
+            | WidgetKind::WeatherCurrentText
             | WidgetKind::WeatherHighText
             | WidgetKind::WeatherLowText
             | WidgetKind::SunriseText
-            | WidgetKind::SunsetText => {
+            | WidgetKind::SunsetText
+            | WidgetKind::SunCurrentText => {
                 if widget.text_size.unwrap_or(0) == 0 {
                     errors.push(format!("Widget tekstowy '{}' nie ma rozmiaru czcionki", widget.id));
                 }

@@ -65,9 +65,10 @@ Projekt powstał jako własna implementacja inspirowana edytorem
 - **Tekst** — Text (user defined)
 - **Obraz** — Image (niebieska ramka dopasowana do naturalnego rozmiaru i tylko przesuw; dwuklik daje czerwoną ramkę, która rozciąga obraz przy zmianie rozmiaru)
 - **Dystans** — Step counter, Distance
-- **Cele** — Step target, Calorie target, Stand target, Fat burning target, Sleep target, Sleep target
-- **Zdrowie** — Heart rate, Stress, PAI, Skin temperature, Sleep, Calories, SpO₂, Stand hours, Fat burning, PAI (week)
-- **Pogoda** — nazwa pogody, miasto, temperatura max/min, wschód/zachód i 29 ikon (Classic)
+- **Cele** — Step target, Calorie target, Stand target, Fat burning target
+- **Zdrowie** — aktualne i ostatnie tętno oraz Najniższe/Najwyższe/Średnie z `HEART.today`, Stress, PAI (dziś, z 7 dni, tygodniowe), Skin temperature, Calories, SpO₂ (aktualne i średnia z godziny), Stand hours, Fat burning
+- **Sen** — czas snu, wynik snu, fazy DEEP/LIGHT/REM, czas czuwania (minuty albo % snu), początek i koniec snu, cel snu
+- **Pogoda** — nazwa pogody, miasto, **temperatura bieżąca od firmware'u zegarka** (edytowalne wyrównanie, czcionka, rozmiar i kolor — nie wartość), temperatura max/min, wschód/zachód, **czas do wschodu/zachodu** i 29 ikon (Classic). Pola z prognozy mają ustawienie **dnia prognozy**: Dziś / Jutro / Pojutrze / +3 / +4; brakujący dzień pokazuje `--`.
 
 Nowy widget dodajesz przyciskiem **+ Add widget** na pasku podglądu; katalog po lewej
 to tylko podgląd obsługiwanych typów. Numeracja dnia tygodnia domyślnie przyjmuje
@@ -129,10 +130,12 @@ Kategoria **SYSTEM** zawiera **Baterię** (z czujnika `BATTERY`, domyślnie wyś
 ### 🌐 Języki interfejsu i tarczy
 
 Interfejs edytora ma wbudowane katalogi **EN** i **PL** z natychmiastowym przełączaniem.
-Nowe języki wystarczy dodać jako plik `%APPDATA%\RustyWatch\Localization\<kod>.json`
+Domyślnie przy pierwszym uruchomieniu jest angielski — aplikacja nigdy nie przejmuje języka
+Windows. Nowe języki wystarczy dodać jako plik `%APPDATA%\RustyWatch\Localization\<kod>.json`
 i kliknąć **Reload languages** — bez rebuildu i reinstallu. Osobna opcja **Watchface preview
-language** wybiera wariant pokazywany w podglądzie; na zegarku język jest zawsze wykrywany
-automatycznie.
+language** (również domyślnie angielska) wybiera wariant pokazywany w podglądzie **oraz**
+zapisywany w generowanych plikach `preview.png`/`preview.gif`; na zegarku język jest zawsze
+wykrywany automatycznie.
 
 ### 👤 Dla kogo?
 
@@ -272,7 +275,7 @@ Nazwa, autor i App ID trafiają do `app.json` jako `appName`, `vender`, `appId` 
 
 ### 🧪 Testy i weryfikacja
 
-1. `cargo test --workspace` — 130 testów core + 33 FFI.
+1. `cargo test --workspace` — 141 testów core + 36 FFI.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 błędów, 0 ostrzeżeń.
 3. Uruchom aplikację i sprawdź ekrany w **EN i PL**.
 4. Round-trip `new → export → open → export` musi zachować dane.

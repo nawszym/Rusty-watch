@@ -141,6 +141,10 @@ pub struct LayerView {
     /// Tylko dla `weather-icon`: wybrana paczka z `%APPDATA%\RustyWatch\Weather`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weather_icon_set: Option<String>,
+    /// Dzień prognozy (0 = dziś, 4 = +4 dni) dla widgetów pogodowych.
+    pub weather_day_offset: u8,
+    /// Sposób prezentacji fazy snu: `duration` albo `percent`.
+    pub sleep_stage_mode: String,
 }
 
 fn widget_kind(widget: &Widget) -> &'static str {
@@ -168,12 +172,24 @@ fn widget_kind(widget: &Widget) -> &'static str {
         Some(DataSource::Step) => "steps",
         Some(DataSource::Distance) => "distance",
         Some(DataSource::HeartRate) => "heart",
+        Some(DataSource::HeartRateLast) => "heart-last",
+        Some(DataSource::HeartRateMin) => "heart-min",
+        Some(DataSource::HeartRateMax) => "heart-max",
+        Some(DataSource::HeartRateAvg) => "heart-avg",
         Some(DataSource::Stress) => "stress",
         Some(DataSource::Pai) => "pai",
         Some(DataSource::SkinTemp) => "skin-temp",
         Some(DataSource::Sleep) => "sleep",
+        Some(DataSource::SleepScore) => "sleep-score",
+        Some(DataSource::SleepDeep) => "sleep-deep",
+        Some(DataSource::SleepLight) => "sleep-light",
+        Some(DataSource::SleepRem) => "sleep-rem",
+        Some(DataSource::SleepWake) => "sleep-wake",
+        Some(DataSource::SleepStart) => "sleep-start",
+        Some(DataSource::SleepEnd) => "sleep-end",
         Some(DataSource::Calorie) => "calories",
         Some(DataSource::Spo2) => "spo2",
+        Some(DataSource::Spo2HourAvg) => "spo2-hour-avg",
         Some(DataSource::Battery) => "battery",
         Some(DataSource::StepTarget) => "steps-target",
         Some(DataSource::CalorieTarget) => "calories-target",
@@ -182,13 +198,16 @@ fn widget_kind(widget: &Widget) -> &'static str {
         Some(DataSource::Stand) => "stand",
         Some(DataSource::FatBurning) => "fat-burning",
         Some(DataSource::PaiWeekly) => "pai-weekly",
+        Some(DataSource::PaiPrepai) => "pai-prepai",
         Some(DataSource::SleepTarget) => "sleep-target",
         Some(DataSource::WeatherCondition) => "weather-condition",
         Some(DataSource::WeatherCity) => "weather-city",
+        Some(DataSource::WeatherCurrent) => "weather-current",
         Some(DataSource::WeatherHigh) => "weather-high",
         Some(DataSource::WeatherLow) => "weather-low",
         Some(DataSource::Sunrise) => "sunrise",
         Some(DataSource::Sunset) => "sunset",
+        Some(DataSource::SunCurrent) => "sun-current",
         Some(DataSource::WeatherIcon) => "weather-icon",
         _ => match widget.kind {
             WidgetKind::Image => "image",
@@ -242,6 +261,8 @@ pub fn describe(project: &Project) -> Vec<LayerView> {
                 status_icon_set: w.status_icon_set.clone(),
                 status_type: w.status_type.map(|status| status.as_str().to_string()),
                 weather_icon_set: w.weather_icon_set.clone(),
+                weather_day_offset: w.weather_day_offset,
+                sleep_stage_mode: w.sleep_stage_mode.as_str().to_string(),
             })
         })
         .collect()

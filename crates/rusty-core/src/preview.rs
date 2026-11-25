@@ -282,6 +282,7 @@ pub const WEATHER_FRAMES: [WeatherSnapshot; FRAME_COUNT] = [
 #[derive(Debug, Clone)]
 pub struct WeatherPreviewState {
     pub city: String,
+    /// Pola dnia 0 — zachowane dla zgodności z istniejącym API FFI i testami.
     pub index: u8,
     pub high: i32,
     pub low: i32,
@@ -289,21 +290,90 @@ pub struct WeatherPreviewState {
     pub sunrise_minute: u8,
     pub sunset_hour: u8,
     pub sunset_minute: u8,
+    /// Deterministyczna prognoza na 5 dni (indeks 0 = dziś).
+    pub forecast: Vec<WeatherSnapshot>,
+    /// Dzień wybrany w ustawieniach widgetu (0…4).
+    pub day_offset: u8,
+    /// Minuta dnia używana przez `sun-current` (domyślnie 21:37 z predefiniowanej klatki).
+    pub now_minute: i32,
+    /// Wartość zastępcza temperatury bieżącej na PC. Tarcza czyta ją z firmware'u
+    /// przez `hmUI.data_type.WEATHER_CURRENT` — podgląd nie ma dostępu do tego wiązania.
+    pub current: i32,
+}
+
+impl WeatherPreviewState {
+    /// Dzień faktycznie wyświetlany przez widget; brak wpisu oznacza `--`.
+    pub fn resolved_day(&self) -> Option<&WeatherSnapshot> {
+        self.forecast.get(self.day_offset as usize)
+    }
+}
+
+/// Uzupełnia dni 1…4 deterministycznie na podstawie dnia 0. Zegarek czyta
+/// `forecastData.data[i]` — podgląd na PC nie ma czujnika, więc dane kolejnych
+/// dni muszą być przewidywalne i niezależne od Custom Data.
+pub fn forecast_days(base: WeatherSnapshot) -> Vec<WeatherSnapshot> {
+    (0..5)
+        .map(|day| {
+            if day == 0 {
+                base
+            } else {
+                let day = day as i32;
+                WeatherSnapshot {
+                    city: base.city,
+                    index: ((base.index as usize + day as usize * 3) % 29) as u8,
+                    high: (base.high + day * 2 - 3).clamp(-99, 99),
+                    low: (base.low + day - 2).clamp(-99, 99),
+                    sunrise_hour: (base.sunrise_hour + day as u8) % 24,
+                    sunrise_minute: (base.sunrise_minute + day as u8 * 3) % 60,
+                    sunset_hour: (base.sunset_hour + day as u8) % 24,
+                    sunset_minute: (base.sunset_minute + day as u8 * 2) % 60,
+                }
+            }
+        })
+        .collect()
 }
 
 impl From<WeatherSnapshot> for WeatherPreviewState {
     fn from(value: WeatherSnapshot) -> Self {
+        let forecast = forecast_days(value);
+        let day = forecast[0];
         Self {
-            city: value.city.to_string(),
-            index: value.index,
-            high: value.high,
-            low: value.low,
-            sunrise_hour: value.sunrise_hour,
-            sunrise_minute: value.sunrise_minute,
-            sunset_hour: value.sunset_hour,
-            sunset_minute: value.sunset_minute,
+            city: day.city.to_string(),
+            index: day.index,
+            high: day.high,
+            low: day.low,
+            sunrise_hour: day.sunrise_hour,
+            sunrise_minute: day.sunrise_minute,
+            sunset_hour: day.sunset_hour,
+            sunset_minute: day.sunset_minute,
+            forecast,
+            day_offset: 0,
+            now_minute: 21 * 60 + 37,
+            current: day.high,
         }
     }
+}
+
+/// Minuty do najbliższego wschodu albo zachodu. Szukamy zdarzenia w dzisiejszej
+/// albo jutrzejszej prognozie — dokładnie tak samo robi helper `_sunCurrentText()`
+/// w generowanym JS (bez użycia `Date`).
+pub fn sun_current_minutes(forecast: &[WeatherSnapshot], now_minute: i32) -> Option<i32> {
+    if now_minute < 0 || now_minute >= 1440 || forecast.is_empty() {
+        return None;
+    }
+    let mut next: Option<i32> = None;
+    for (day, snapshot) in forecast.iter().take(2).enumerate() {
+        for event in [
+            snapshot.sunrise_hour as i32 * 60 + snapshot.sunrise_minute as i32,
+            snapshot.sunset_hour as i32 * 60 + snapshot.sunset_minute as i32,
+        ] {
+            let at = day as i32 * 1440 + event;
+            if at >= now_minute && next.map_or(true, |current| at < current) {
+                next = Some(at);
+            }
+        }
+    }
+    next.map(|at| at - now_minute)
 }
 
 fn override_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
@@ -329,41 +399,62 @@ fn override_time(value: &serde_json::Value, key: &str) -> Option<(u8, u8)> {
 /// domyślne — dzięki temu podgląd zawsze ma komplet danych).
 impl WeatherPreviewState {
     pub fn with_overrides(mut self, overrides: &serde_json::Value) -> Self {
+        // Dzień wybranego widgetu — ten sam indeks trafia do `forecastData.data[N]`.
+        if let Some(day) = override_i64(overrides, "dayOffset") {
+            self.day_offset = day.clamp(0, 4) as u8;
+        }
+        if let Some(minute) = override_i64(overrides, "nowMinute") {
+            self.now_minute = minute.clamp(0, 1439) as i32;
+        }
+        if let Some(current) = override_i64(overrides, "current") {
+            self.current = current.clamp(-99, 99) as i32;
+        }
         if let Some(city) = overrides.get("city").and_then(|v| v.as_str()) {
             if !city.trim().is_empty() {
                 self.city = city.trim().to_string();
             }
         }
-        if let Some(index) = override_i64(overrides, "index") {
-            self.index = index.clamp(0, 28) as u8;
+        if let Some(day) = self.forecast.get_mut(self.day_offset as usize) {
+            if let Some(index) = override_i64(overrides, "index") {
+                day.index = index.clamp(0, 28) as u8;
+            }
+            if let Some(high) = override_i64(overrides, "high") {
+                day.high = high.clamp(-99, 99) as i32;
+            }
+            if let Some(low) = override_i64(overrides, "low") {
+                day.low = low.clamp(-99, 99) as i32;
+            }
+            if let Some(hour) = override_i64(overrides, "sunriseHour") {
+                day.sunrise_hour = hour.clamp(0, 23) as u8;
+            }
+            if let Some(minute) = override_i64(overrides, "sunriseMinute") {
+                day.sunrise_minute = minute.clamp(0, 59) as u8;
+            }
+            if let Some(hour) = override_i64(overrides, "sunsetHour") {
+                day.sunset_hour = hour.clamp(0, 23) as u8;
+            }
+            if let Some(minute) = override_i64(overrides, "sunsetMinute") {
+                day.sunset_minute = minute.clamp(0, 59) as u8;
+            }
+            // Jedno pole `HH:MM` zastępuje dawne pary godzina/minuta.
+            if let Some((hour, minute)) = override_time(overrides, "sunrise") {
+                day.sunrise_hour = hour;
+                day.sunrise_minute = minute;
+            }
+            if let Some((hour, minute)) = override_time(overrides, "sunset") {
+                day.sunset_hour = hour;
+                day.sunset_minute = minute;
+            }
         }
-        if let Some(high) = override_i64(overrides, "high") {
-            self.high = high.clamp(-99, 99) as i32;
-        }
-        if let Some(low) = override_i64(overrides, "low") {
-            self.low = low.clamp(-99, 99) as i32;
-        }
-        if let Some(hour) = override_i64(overrides, "sunriseHour") {
-            self.sunrise_hour = hour.clamp(0, 23) as u8;
-        }
-        if let Some(minute) = override_i64(overrides, "sunriseMinute") {
-            self.sunrise_minute = minute.clamp(0, 59) as u8;
-        }
-        if let Some(hour) = override_i64(overrides, "sunsetHour") {
-            self.sunset_hour = hour.clamp(0, 23) as u8;
-        }
-        if let Some(minute) = override_i64(overrides, "sunsetMinute") {
-            self.sunset_minute = minute.clamp(0, 59) as u8;
-        }
-        // Jedno pole `HH:MM` zastępuje dawne pary godzina/minuta. Obsługujemy
-        // też stare wartości zapisane w settings.json (wyżej) dla kompatybilności.
-        if let Some((hour, minute)) = override_time(overrides, "sunrise") {
-            self.sunrise_hour = hour;
-            self.sunrise_minute = minute;
-        }
-        if let Some((hour, minute)) = override_time(overrides, "sunset") {
-            self.sunset_hour = hour;
-            self.sunset_minute = minute;
+        // Pola „mirror" dla istniejących konsumentów FFI i testów.
+        if let Some(day) = self.resolved_day().copied() {
+            self.index = day.index;
+            self.high = day.high;
+            self.low = day.low;
+            self.sunrise_hour = day.sunrise_hour;
+            self.sunrise_minute = day.sunrise_minute;
+            self.sunset_hour = day.sunset_hour;
+            self.sunset_minute = day.sunset_minute;
         }
         self
     }
@@ -372,18 +463,35 @@ impl WeatherPreviewState {
 /// Tekst pola pogody — jedyna implementacja używana zarówno przez renderer
 /// klatek, jak i przez FFI podglądu na żywo (`rw_format_weather_field`).
 pub fn weather_text(kind: &str, state: &WeatherPreviewState, locale: WatchfaceLocale) -> String {
+    let Some(day) = state.resolved_day() else {
+        return match kind {
+            "weather-icon" => String::new(),
+            "sun-current" => "--:--".to_string(),
+            "weather-current" => "--°".to_string(),
+            _ => "--".to_string(),
+        };
+    };
+    let unknown = if locale == WatchfaceLocale::Polish {
+        "Nieznane"
+    } else {
+        "Unknown"
+    };
     match kind {
         "weather-condition" => locale
             .weather_names()
-            .get(state.index as usize)
+            .get(day.index as usize)
             .copied()
-            .unwrap_or("Nieznane")
+            .unwrap_or(unknown)
             .to_string(),
         "weather-city" => locale.city_name(&state.city),
-        "weather-high" => format!("{}°", state.high),
-        "weather-low" => format!("{}°", state.low),
-        "sunrise" => format!("{:02}:{:02}", state.sunrise_hour, state.sunrise_minute),
-        "sunset" => format!("{:02}:{:02}", state.sunset_hour, state.sunset_minute),
+        "weather-current" => format!("{}°", state.current),
+        "weather-high" => format!("{}°", day.high),
+        "weather-low" => format!("{}°", day.low),
+        "sunrise" => format!("{:02}:{:02}", day.sunrise_hour, day.sunrise_minute),
+        "sunset" => format!("{:02}:{:02}", day.sunset_hour, day.sunset_minute),
+        "sun-current" => sun_current_minutes(&state.forecast, state.now_minute)
+            .map(|left| format!("{}:{:02}", left / 60, left % 60))
+            .unwrap_or_else(|| "--:--".to_string()),
         // Ikona nie ma żadnego tekstu — wcześniej fallback zwracał "--", który
         // edytor rysował w ramce jako artifact przy każdym przeskalowaniu.
         "weather-icon" => String::new(),
@@ -638,6 +746,38 @@ pub fn text_for_layer(
                 frame.heart_rate.to_string()
             }
         }
+        "heart-last" => {
+            let value = frame.heart_rate.saturating_sub(2).max(1);
+            if unit {
+                format!("{value} bpm")
+            } else {
+                value.to_string()
+            }
+        }
+        "heart-min" => {
+            let value = frame.heart_rate.saturating_sub(12).max(1);
+            if unit {
+                format!("{value} bpm")
+            } else {
+                value.to_string()
+            }
+        }
+        "heart-max" => {
+            let value = frame.heart_rate.saturating_add(18);
+            if unit {
+                format!("{value} bpm")
+            } else {
+                value.to_string()
+            }
+        }
+        "heart-avg" => {
+            let value = frame.heart_rate.saturating_add(3);
+            if unit {
+                format!("{value} bpm")
+            } else {
+                value.to_string()
+            }
+        }
         "stress" => frame.stress.to_string(),
         "pai" => frame.pai.to_string(),
         "skin-temp" => {
@@ -648,6 +788,30 @@ pub fn text_for_layer(
             }
         }
         "sleep" => format!("{}:{:02}", frame.sleep_minutes / 60, frame.sleep_minutes % 60),
+        "sleep-score" => (60 + frame.sleep_minutes / 10).min(100).to_string(),
+        "sleep-deep" | "sleep-light" | "sleep-rem" | "sleep-wake" => {
+            let minutes = match layer.kind.as_str() {
+                "sleep-deep" => frame.sleep_minutes / 5,
+                "sleep-light" => frame.sleep_minutes / 2,
+                "sleep-wake" => frame.sleep_minutes / 8,
+                _ => frame.sleep_minutes / 4,
+            };
+            if layer.sleep_stage_mode == "percent" {
+                let percent = if frame.sleep_minutes == 0 {
+                    0
+                } else {
+                    minutes * 100 / frame.sleep_minutes
+                };
+                format!("{percent}%")
+            } else {
+                format!("{minutes} min")
+            }
+        }
+        "sleep-start" => "23:40".to_string(),
+        "sleep-end" => {
+            let minutes = (23 * 60 + 40 + frame.sleep_minutes) % 1440;
+            format!("{:02}:{:02}", minutes / 60, minutes % 60)
+        }
         "calories" => {
             if unit {
                 format!("{} kcal", frame.calories)
@@ -660,6 +824,14 @@ pub fn text_for_layer(
                 format!("{}%", frame.spo2)
             } else {
                 frame.spo2.to_string()
+            }
+        }
+        "spo2-hour-avg" => {
+            let value = frame.spo2.saturating_sub(1).max(1);
+            if unit {
+                format!("{value}%")
+            } else {
+                value.to_string()
             }
         }
         "stand" => {
@@ -677,13 +849,23 @@ pub fn text_for_layer(
             }
         }
         "pai-weekly" => frame.pai_weekly.to_string(),
+        "pai-prepai" => (0u16..7)
+            .map(|day| frame.pai.saturating_sub(day * 3) as u32)
+            .sum::<u32>()
+            .to_string(),
         "sleep-target" => "-- h".to_string(),
-        "weather-condition" | "weather-city" | "weather-high" | "weather-low" | "sunrise"
-        | "sunset" => weather_text(
-            layer.kind.as_str(),
-            &WeatherPreviewState::from(frame.weather),
-            locale,
-        ),
+        "weather-condition" | "weather-city" | "weather-current" | "weather-high"
+        | "weather-low" | "sunrise" | "sunset" | "sun-current" => {
+            let mut state = WeatherPreviewState::from(frame.weather);
+            if layer.kind == "sun-current" {
+                // „Czas do" jest z definicji bieżący — nie zależy od dnia prognozy.
+                state.day_offset = 0;
+                state.now_minute = frame.hour as i32 * 60 + frame.minute as i32;
+            } else {
+                state.day_offset = layer.weather_day_offset.min(4);
+            }
+            weather_text(layer.kind.as_str(), &state, locale)
+        }
         "battery" => format!("{}%", frame.battery_pct),
         "steps-target" => frame.steps_target.to_string(),
         "calories-target" => {
@@ -1068,7 +1250,12 @@ pub fn render_frame(
                     .weather_icon_set
                     .as_deref()
                     .unwrap_or(crate::weather::DEFAULT_WEATHER_PACK);
-                let index = frame.weather.index.min(28) as usize;
+                let days = forecast_days(frame.weather);
+                let day = days
+                    .get(layer.weather_day_offset.min(4) as usize)
+                    .copied()
+                    .unwrap_or(frame.weather);
+                let index = day.index.min(28) as usize;
                 let src = crate::weather::js_icon_path(set, index);
                 overlay_asset(
                     &mut canvas,

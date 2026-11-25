@@ -35,6 +35,46 @@ static HEALTH_SENSORS: &[HealthSensor] = &[
         unit: Some("bpm"),
     },
     HealthSensor {
+        source: DataSource::HeartRateLast,
+        var: "healthHeartSensor",
+        id: "HEART",
+        getter: "_getHealthHeart",
+        event: "CURRENT",
+        read_var: "_hHeart",
+        value: "_hHeart.last ? String(_hHeart.last) : '--'",
+        unit: Some("bpm"),
+    },
+    HealthSensor {
+        source: DataSource::HeartRateMin,
+        var: "healthHeartSensor",
+        id: "HEART",
+        getter: "_getHealthHeart",
+        event: "CURRENT",
+        read_var: "_hHeart",
+        value: "_hrStats.min",
+        unit: Some("bpm"),
+    },
+    HealthSensor {
+        source: DataSource::HeartRateMax,
+        var: "healthHeartSensor",
+        id: "HEART",
+        getter: "_getHealthHeart",
+        event: "CURRENT",
+        read_var: "_hHeart",
+        value: "_hrStats.max",
+        unit: Some("bpm"),
+    },
+    HealthSensor {
+        source: DataSource::HeartRateAvg,
+        var: "healthHeartSensor",
+        id: "HEART",
+        getter: "_getHealthHeart",
+        event: "CURRENT",
+        read_var: "_hHeart",
+        value: "_hrStats.avg",
+        unit: Some("bpm"),
+    },
+    HealthSensor {
         source: DataSource::Stress,
         var: "healthStressSensor",
         id: "STRESS",
@@ -95,6 +135,16 @@ static HEALTH_SENSORS: &[HealthSensor] = &[
         unit: Some("%"),
     },
     HealthSensor {
+        source: DataSource::Spo2HourAvg,
+        var: "healthSpo2Sensor",
+        id: "SPO2",
+        getter: "_getHealthSpo2",
+        event: "CHANGE",
+        read_var: "_hSpo2",
+        value: "(_hSpo2.hourAvgofDay && _hSpo2.hourAvgofDay[_spo2Hour] > 0) ? String(_hSpo2.hourAvgofDay[_spo2Hour]) : '--'",
+        unit: Some("%"),
+    },
+    HealthSensor {
         source: DataSource::Stand,
         var: "healthStandSensor",
         id: "STAND",
@@ -113,6 +163,18 @@ static HEALTH_SENSORS: &[HealthSensor] = &[
         read_var: "_hFatBurn",
         value: "_hFatBurn.current ? String(_hFatBurn.current) : '--'",
         unit: Some("min"),
+    },
+    // Suma z dzisiejszego `dailypai` i sześciu poprzednich dni (`prepai0…5`).
+    // Współdzieli getter i czujnik z dziennym PAI — nie tworzymy drugiego listenera.
+    HealthSensor {
+        source: DataSource::PaiPrepai,
+        var: "healthPaiSensor",
+        id: "PAI",
+        getter: "_getHealthPai",
+        event: "CHANGE",
+        read_var: "_hPai",
+        value: "String((_hPai.dailypai || 0) + (_hPai.prepai0 || 0) + (_hPai.prepai1 || 0) + (_hPai.prepai2 || 0) + (_hPai.prepai3 || 0) + (_hPai.prepai4 || 0) + (_hPai.prepai5 || 0))",
+        unit: None,
     },
     // `totalpai` to skumulowane PAI (tydzień). Własny getter, więc nie koliduje
     // z dziennym `dailypai` — oba czytają ten sam czujnik `hmSensor.id.PAI`.
@@ -199,7 +261,7 @@ struct WeatherField {
 static WEATHER_FIELDS: &[WeatherField] = &[
     WeatherField {
         source: DataSource::WeatherCondition,
-        value: "L.weather[Math.max(0, Math.min(28, (_wForecast.data[0] ? _wForecast.data[0].index : 25) | 0))] || L.weather[25]",
+        value: "L.weather[Math.max(0, Math.min(28, (_wForecast.data[$D] ? _wForecast.data[$D].index : 25) | 0))] || L.weather[25]",
     },
     WeatherField {
         source: DataSource::WeatherCity,
@@ -207,25 +269,52 @@ static WEATHER_FIELDS: &[WeatherField] = &[
     },
     WeatherField {
         source: DataSource::WeatherHigh,
-        value: "(_wForecast.data[0] && _wForecast.data[0].high !== undefined) ? String(_wForecast.data[0].high) + '°' : '--°'",
+        value: "(_wForecast.data[$D] && _wForecast.data[$D].high !== undefined) ? String(_wForecast.data[$D].high) + '°' : '--°'",
     },
     WeatherField {
         source: DataSource::WeatherLow,
-        value: "(_wForecast.data[0] && _wForecast.data[0].low !== undefined) ? String(_wForecast.data[0].low) + '°' : '--°'",
+        value: "(_wForecast.data[$D] && _wForecast.data[$D].low !== undefined) ? String(_wForecast.data[$D].low) + '°' : '--°'",
     },
     WeatherField {
         source: DataSource::Sunrise,
-        value: "(_wTide.data[0] && _wTide.data[0].sunrise) ? p2(_wTide.data[0].sunrise.hour) + ':' + p2(_wTide.data[0].sunrise.minute) : '--:--'",
+        value: "(_wTide.data[$D] && _wTide.data[$D].sunrise) ? p2(_wTide.data[$D].sunrise.hour) + ':' + p2(_wTide.data[$D].sunrise.minute) : '--:--'",
     },
     WeatherField {
         source: DataSource::Sunset,
-        value: "(_wTide.data[0] && _wTide.data[0].sunset) ? p2(_wTide.data[0].sunset.hour) + ':' + p2(_wTide.data[0].sunset.minute) : '--:--'",
+        value: "(_wTide.data[$D] && _wTide.data[$D].sunset) ? p2(_wTide.data[$D].sunset.hour) + ':' + p2(_wTide.data[$D].sunset.minute) : '--:--'",
+    },
+    // Czas do najbliższego wschodu/zachodu — dzień jest wybierany wewnątrz
+    // helpera (dziś albo jutro), więc nie używa `$D` jak pozostałe pola.
+    WeatherField {
+        source: DataSource::SunCurrent,
+        value: "_sunCurrentText()",
     },
 ];
 
 fn weather_field(source: Option<DataSource>) -> Option<&'static WeatherField> {
     let source = source?;
     WEATHER_FIELDS.iter().find(|field| field.source == source)
+}
+
+/// Wyrażenie JS dla pola snu. Fazy mogą być pokazane w minutach albo jako
+/// udział procentowy całego snu — wybór zapisujemy w ustawieniach widgetu.
+fn sleep_value(source: DataSource, mode: crate::model::SleepStageMode) -> String {
+    let percent = mode == crate::model::SleepStageMode::Percent;
+    match source {
+        DataSource::SleepScore => {
+            "(_sBasic && _sBasic.score !== undefined && _sBasic.score !== null) ? String(_sBasic.score) : '--'".to_string()
+        }
+        DataSource::SleepDeep => format!("_sleepStageText(_sModels && _sModels.DEEP_STAGE, {percent})"),
+        DataSource::SleepLight => format!("_sleepStageText(_sModels && _sModels.LIGHT_STAGE, {percent})"),
+        DataSource::SleepRem => format!("_sleepStageText(_sModels && _sModels.REM_STAGE, {percent})"),
+        DataSource::SleepWake => format!("_sleepStageText(_sModels && _sModels.WAKE_STAGE, {percent})"),
+        DataSource::SleepStart => "_fmtSleepHM(_sBasic ? _sBasic.startTime : null)".to_string(),
+        DataSource::SleepEnd => {
+            "_fmtSleepHM(_sBasic && _sBasic.endTime !== undefined ? _sBasic.endTime + 1 : null)"
+                .to_string()
+        }
+        _ => "'--'".to_string(),
+    }
 }
 
 /// Wszystkie warianty Active 2, które ZeppOS rozpoznaje na tarczy.
@@ -427,12 +516,15 @@ pub fn generate_index_js_with_hands(
     let needs_world_clock = widgets
         .iter()
         .any(|w| w.data_source == Some(DataSource::WorldClock));
-    let weather_widgets: Vec<(usize, &'static WeatherField)> = widgets
+    let weather_widgets: Vec<(usize, &'static WeatherField, u8)> = widgets
         .iter()
         .enumerate()
-        .filter_map(|(index, w)| weather_field(w.data_source).map(|field| (index, field)))
+        .filter_map(|(index, w)| {
+            weather_field(w.data_source)
+                .map(|field| (index, field, w.weather_day_offset.min(4)))
+        })
         .collect();
-    let weather_icons: Vec<(usize, String)> = widgets
+    let weather_icons: Vec<(usize, String, u8)> = widgets
         .iter()
         .enumerate()
         .filter(|(_, w)| w.kind == WidgetKind::WeatherIcon)
@@ -445,7 +537,7 @@ pub fn generate_index_js_with_hands(
             let names: Vec<String> = (0..crate::weather::ICON_COUNT)
                 .map(|i| js_string(&crate::export_paths::exported_asset_name(&crate::weather::js_icon_path(set, i))))
                 .collect();
-            Some((index, names.join(", ")))
+            Some((index, names.join(", "), w.weather_day_offset.min(4)))
         })
         .collect();
     let sleep_target_indexes: Vec<usize> = widgets
@@ -453,6 +545,17 @@ pub fn generate_index_js_with_hands(
         .enumerate()
         .filter(|(_, w)| w.data_source == Some(DataSource::SleepTarget))
         .map(|(index, _)| index)
+        .collect();
+    let sleep_widgets: Vec<(usize, DataSource, crate::model::SleepStageMode)> = widgets
+        .iter()
+        .enumerate()
+        .filter_map(|(index, w)| {
+            if w.kind.is_sleep() && w.data_source != Some(DataSource::Sleep) {
+                w.data_source.map(|source| (index, source, w.sleep_stage_mode))
+            } else {
+                None
+            }
+        })
         .collect();
     let health_widgets: Vec<(usize, &'static HealthSensor, bool)> = widgets
         .iter()
@@ -525,7 +628,7 @@ pub fn generate_index_js_with_hands(
         prelude.push_str("  if (!weatherSensor && hmSensor && hmSensor.createSensor && hmSensor.id && hmSensor.id.WEATHER) {\n");
         prelude.push_str("    try { weatherSensor = hmSensor.createSensor(hmSensor.id.WEATHER) } catch (e) { weatherSensor = null }\n");
         prelude.push_str("  }\n  return weatherSensor\n}\n");
-        for (index, names) in &weather_icons {
+        for (index, names, _) in &weather_icons {
             prelude.push_str(&format!(
                 "const weatherIcons_{index} = [{names}]\n"
             ));
@@ -551,6 +654,36 @@ pub fn generate_index_js_with_hands(
     prelude.push_str("function _getTime() {\n");
     prelude.push_str("  if (!timeSensor) timeSensor = hmSensor.createSensor(hmSensor.id.TIME)\n");
     prelude.push_str("  return timeSensor\n}\n");
+    if weather_widgets
+        .iter()
+        .any(|(_, field, _)| field.source == DataSource::SunCurrent)
+    {
+        // Czas do najbliższego wschodu albo zachodu. Klasyczne API nie ma
+        // `Date`, więc liczymy minuty z czujnika TIME i tablicy tideData.
+        prelude.push_str(concat!(
+            "function _sunCurrentText() {\n",
+            "  const nowSensor = _getTime()\n",
+            "  if (!nowSensor) return '--:--'\n",
+            "  const now = ((nowSensor.hour | 0) * 60) + (nowSensor.minute | 0)\n",
+            "  const days = _wTide && _wTide.data\n",
+            "  if (!days || !days.length) return '--:--'\n",
+            "  let next = -1\n",
+            "  for (let d = 0; d < 2 && next < 0; d++) {\n",
+            "    const day = days[d]\n",
+            "    if (!day) continue\n",
+            "    const events = [day.sunrise, day.sunset]\n",
+            "    for (let i = 0; i < events.length; i++) {\n",
+            "      const e = events[i]\n",
+            "      if (!e || e.hour === undefined || e.minute === undefined) continue\n",
+            "      const at = d * 1440 + (e.hour | 0) * 60 + (e.minute | 0)\n",
+            "      if (at >= now && (next < 0 || at < next)) next = at\n",
+            "    }\n  }\n",
+            "  if (next < 0) return '--:--'\n",
+            "  const left = next - now\n",
+            "  return String(Math.floor(left / 60)) + ':' + String(left % 60).padStart(2, '0')\n",
+            "}\n"
+        ));
+    }
     // Brak czujnika kroków nie może położyć całej tarczy — izolujemy jego
     // utworzenie i pozostawiamy tekst początkowy („0"), gdy API go nie udostępnia.
     prelude.push_str("function _getStep() {\n");
@@ -611,6 +744,60 @@ pub fn generate_index_js_with_hands(
             prelude.push_str("  return Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0')\n");
             prelude.push_str("}\n");
         }
+    }
+    if health_widgets.iter().any(|(_, sensor, _)| {
+        matches!(
+            sensor.source,
+            DataSource::HeartRateMin | DataSource::HeartRateMax | DataSource::HeartRateAvg
+        )
+    }) {
+        prelude.push_str(concat!(
+            "let _hrStats = { min: '--', max: '--', avg: '--' }\n",
+            "let _hrStatsMinute = -1\n",
+            "function _refreshHrStats() {\n",
+            "  const heart = _getHealthHeart()\n",
+            "  const values = (heart && heart.today && heart.today.length) ? heart.today : null\n",
+            "  const t = _getTime()\n",
+            "  const stamp = t ? (t.hour * 60 + t.minute) : -1\n",
+            "  if (!values || stamp === _hrStatsMinute) return\n",
+            "  _hrStatsMinute = stamp\n",
+            "  let min = 0, max = 0, sum = 0, count = 0\n",
+            "  for (let i = 0; i < values.length; i++) {\n",
+            "    const v = values[i] | 0\n",
+            "    if (v <= 0 || v > 250) continue\n",
+            "    if (!count || v < min) min = v\n",
+            "    if (v > max) max = v\n",
+            "    sum += v\n    count++\n  }\n",
+            "  _hrStats = count ? { min: String(min), max: String(max), avg: String(Math.round(sum / count)) } : { min: '--', max: '--', avg: '--' }\n",
+            "}\n"
+        ));
+    }
+    if !sleep_widgets.is_empty() {
+        prelude.push_str(concat!(
+            "let sleepSensor = null\nlet sleepTick = null\n",
+            "let _sBasic = null\nlet _sStages = []\nlet _sModels = null\nlet _sTotal = 0\nlet _sInfoMinute = -1\n",
+            "function _getSleep() {\n",
+            "  if (!sleepSensor && hmSensor && hmSensor.createSensor && hmSensor.id && hmSensor.id.SLEEP) {\n",
+            "    try { sleepSensor = hmSensor.createSensor(hmSensor.id.SLEEP) } catch (e) { sleepSensor = null }\n",
+            "  }\n  return sleepSensor\n}\n",
+            "function _fmtSleepHM(minutes) {\n",
+            "  if (minutes === null || minutes === undefined || isNaN(minutes)) return '--:--'\n",
+            "  let m = Math.round(minutes) % 1440\n  if (m < 0) m += 1440\n",
+            "  return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0')\n}\n",
+            "function _sleepStageMinutes(model) {\n",
+            "  if (!_sStages.length || model === undefined || model === null) return null\n",
+            "  let total = 0\n",
+            "  for (let i = 0; i < _sStages.length; i++) {\n",
+            "    const stage = _sStages[i]\n",
+            "    if (stage && stage.model === model) total += Math.max(0, (stage.stop | 0) - (stage.start | 0))\n",
+            "  }\n  return total\n}\n",
+            "function _sleepStageText(model, percent) {\n",
+            "  const minutes = _sleepStageMinutes(model)\n",
+            "  if (minutes === null) return percent ? '--%' : '-- min'\n",
+            "  if (!percent) return String(minutes) + ' min'\n",
+            "  if (!_sTotal || _sTotal <= 0) return '--%'\n",
+            "  return String(Math.round(minutes * 100 / _sTotal)) + '%'\n}\n"
+        ));
     }
 
     // Getery pól celu. `_getStep()` jest już wygenerowany powyżej i współdzielony
@@ -730,11 +917,32 @@ pub fn generate_index_js_with_hands(
         // Jeden wspólny tick dla wszystkich widgetów zdrowotnych — aktualizuje
         // je raz na zmianie czujnika oraz przy każdym tyknięciu zegara.
         out.push_str("      healthTick = () => {\n");
+        // Jeden getter na czujnik — kilka widgetów może czytać ten sam `HEART`.
+        let mut emitted_getters = std::collections::HashSet::new();
+        for (_, sensor, _) in &health_widgets {
+            if emitted_getters.insert(sensor.getter) {
+                out.push_str(&format!(
+                    "        const {} = {}()\n",
+                    sensor.read_var, sensor.getter
+                ));
+            }
+        }
+        if health_widgets
+            .iter()
+            .any(|(_, sensor, _)| sensor.source == DataSource::Spo2HourAvg)
+        {
+            out.push_str("        const _spo2Now = _getTime()\n");
+            out.push_str("        const _spo2Hour = _spo2Now ? (_spo2Now.hour | 0) : 0\n");
+        }
+        if health_widgets.iter().any(|(_, sensor, _)| {
+            matches!(
+                sensor.source,
+                DataSource::HeartRateMin | DataSource::HeartRateMax | DataSource::HeartRateAvg
+            )
+        }) {
+            out.push_str("        _refreshHrStats()\n");
+        }
         for (index, sensor, show_unit) in &health_widgets {
-            out.push_str(&format!(
-                "        const {} = {}()\n",
-                sensor.read_var, sensor.getter
-            ));
             let read = match (*show_unit, sensor.unit) {
                 (true, Some(unit)) => {
                     format!("String({value}) + ' {unit}'", value = sensor.value)
@@ -760,6 +968,31 @@ pub fn generate_index_js_with_hands(
         out.push_str("        if (sensor && sensor.addEventListener && sensor.event && sensor.event[entry.event]) sensor.addEventListener(sensor.event[entry.event], healthTick)\n");
         out.push_str("      })\n");
         out.push_str("      healthTick()\n");
+    }
+
+    if !sleep_widgets.is_empty() {
+        out.push_str("      sleepTick = () => {\n");
+        out.push_str("        const s = _getSleep()\n");
+        out.push_str("        if (!s) return\n");
+        // Dane snu zmieniają się co ~30 min — nie odświeżamy ich co sekundę,
+        // gdy tarcza ma widget sekund. Jeden odczyt na minutę wystarczy.
+        out.push_str("        const _st = _getTime()\n");
+        out.push_str("        const _stamp = _st ? (_st.hour * 60 + _st.minute) : -1\n");
+        out.push_str("        if (_stamp === _sInfoMinute) return\n");
+        out.push_str("        _sInfoMinute = _stamp\n");
+        out.push_str("        try { s.updateInfo() } catch (e) {}\n");
+        out.push_str("        try { _sBasic = s.getBasicInfo() || null } catch (e) { _sBasic = null }\n");
+        out.push_str("        try { _sModels = s.getSleepStageModel() || null } catch (e) { _sModels = null }\n");
+        out.push_str("        try { const stages = s.getSleepStageData(); _sStages = (stages && stages.length) ? stages : [] } catch (e) { _sStages = [] }\n");
+        out.push_str("        try { _sTotal = s.getTotalTime() || 0 } catch (e) { _sTotal = 0 }\n");
+        for (index, source, mode) in &sleep_widgets {
+            out.push_str(&format!(
+                "        refs[{index}].setProperty(hmUI.prop.TEXT, {})\n",
+                sleep_value(*source, *mode)
+            ));
+        }
+        out.push_str("      }\n");
+        out.push_str("      sleepTick()\n");
     }
 
     if !target_widgets.is_empty() {
@@ -806,18 +1039,23 @@ pub fn generate_index_js_with_hands(
         out.push_str("        if (!_wData) return\n");
         out.push_str("        _wForecast = (_wData.forecastData && _wData.forecastData.data && _wData.forecastData.data.length) ? _wData.forecastData : { data: [] }\n");
         out.push_str("        _wTide = (_wData.tideData && _wData.tideData.data && _wData.tideData.data.length) ? _wData.tideData : { data: [] }\n");
-        for (index, field) in &weather_widgets {
+        for (index, field, day) in &weather_widgets {
+            // Dzień prognozy jest stały dla widgetu — basic Arrays have no Date API
+            // na tarczy, więc indeks dnia wstawiamy już w codegenie.
+            out.push_str(&format!("        const _wd_{index} = {day}\n"));
             out.push_str(&format!(
                 "        refs[{index}].setProperty(hmUI.prop.TEXT, {})\n",
-                field.value
+                field.value.replace("$D", &format!("_wd_{index}"))
             ));
         }
-        for (index, _) in &weather_icons {
+        for (index, _, day) in &weather_icons {
+            out.push_str(&format!("        const _wd_{index} = {day}\n"));
             // Real firmware smears partially transparent edges when SRC is set
             // again and again (the clock tick calls weatherTick every second).
             // Cache the last index so the icon is replaced only on a real change.
+            // Brakujący dzień prognozy nie zmienia ikony — zostaje poprzednia.
             out.push_str(&format!(
-                "        const _wi_{index} = Math.max(0, Math.min(28, (_wForecast.data[0] ? _wForecast.data[0].index : 25) | 0))\n        if (_wi_{index} !== _lastWeatherIcon[{index}] && weatherIcons_{index}[_wi_{index}]) {{\n          refs[{index}].setProperty(hmUI.prop.SRC, weatherIcons_{index}[_wi_{index}])\n          _lastWeatherIcon[{index}] = _wi_{index}\n        }}\n"
+                "        if (_wForecast.data[_wd_{index}]) {{\n          const _wi_{index} = Math.max(0, Math.min(28, (_wForecast.data[_wd_{index}].index !== undefined ? _wForecast.data[_wd_{index}].index : 25) | 0))\n          if (_wi_{index} !== _lastWeatherIcon[{index}] && weatherIcons_{index}[_wi_{index}]) {{\n            refs[{index}].setProperty(hmUI.prop.SRC, weatherIcons_{index}[_wi_{index}])\n            _lastWeatherIcon[{index}] = _wi_{index}\n          }}\n        }}\n"
             ));
         }
         out.push_str("      }\n");
@@ -857,6 +1095,9 @@ pub fn generate_index_js_with_hands(
     }
     if !health_widgets.is_empty() {
         out.push_str("        if (healthTick) healthTick()\n");
+    }
+    if !sleep_widgets.is_empty() {
+        out.push_str("        if (sleepTick) sleepTick()\n");
     }
     if !target_widgets.is_empty() {
         out.push_str("        if (targetTick) targetTick()\n");
@@ -930,6 +1171,9 @@ pub fn generate_index_js_with_hands(
         out.push_str("      })\n");
         out.push_str("      healthSensors = null\n      healthTick = null\n");
     }
+    if !sleep_widgets.is_empty() {
+        out.push_str("      sleepSensor = null\n      sleepTick = null\n");
+    }
     if !target_widgets.is_empty() {
         out.push_str("      if (targetSensors && targetTick) targetSensors.forEach((entry) => {\n");
         out.push_str("        const sensor = entry.get()\n");
@@ -972,6 +1216,11 @@ fn optional_field(out: &mut String, indent: &str, key: &str, value: &Option<Stri
 }
 
 fn initial_text(w: &Widget) -> Option<String> {
+    // Temperatura bieżąca jest wiązana przez firmware (`TEXT_FONT` + `type`) —
+    // żaden statyczny tekst nie może trafić do wygenerowanego JS.
+    if w.kind == WidgetKind::WeatherCurrentText {
+        return None;
+    }
     match (&w.data_source, &w.time_format) {
         (Some(DataSource::Time), Some(pattern)) => Some(
             time_format::format(pattern, 0, 0, 0).unwrap_or_else(|_| {
@@ -1180,12 +1429,24 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
         | WidgetKind::StepText
         | WidgetKind::DistanceText
         | WidgetKind::HeartRateText
+        | WidgetKind::HeartRateLastText
+        | WidgetKind::HeartRateMinText
+        | WidgetKind::HeartRateMaxText
+        | WidgetKind::HeartRateAvgText
         | WidgetKind::StressText
         | WidgetKind::PaiText
         | WidgetKind::SkinTempText
         | WidgetKind::SleepText
+        | WidgetKind::SleepScoreText
+        | WidgetKind::SleepDeepText
+        | WidgetKind::SleepLightText
+        | WidgetKind::SleepRemText
+        | WidgetKind::SleepWakeText
+        | WidgetKind::SleepStartText
+        | WidgetKind::SleepEndText
         | WidgetKind::CalorieText
         | WidgetKind::Spo2Text
+        | WidgetKind::Spo2HourAvgText
         | WidgetKind::BatteryText
         | WidgetKind::StepTargetText
         | WidgetKind::CalorieTargetText
@@ -1194,14 +1455,27 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
         | WidgetKind::StandText
         | WidgetKind::FatBurningText
         | WidgetKind::PaiWeeklyText
+        | WidgetKind::PaiPrepaiText
         | WidgetKind::SleepTargetText
         | WidgetKind::WeatherConditionText
         | WidgetKind::WeatherCityText
+        | WidgetKind::WeatherCurrentText
         | WidgetKind::WeatherHighText
         | WidgetKind::WeatherLowText
         | WidgetKind::SunriseText
-        | WidgetKind::SunsetText => {
-            optional_field(&mut props, pad, "text", &initial_text(w), false);
+        | WidgetKind::SunsetText
+        | WidgetKind::SunCurrentText => {
+            if w.kind == WidgetKind::WeatherCurrentText {
+                // `TEXT_FONT` nie przyjmuje własnej treści — firmware podstawia
+                // temperaturę bieżącą i odświeża ją co minutę / przy odświeżeniu ekranu.
+                props.push_str(&format!("{pad}type: hmUI.data_type.WEATHER_CURRENT,\n"));
+                props.push_str(&format!(
+                    "{pad}unit_type: {},\n",
+                    if w.show_unit { 1 } else { 0 }
+                ));
+            } else {
+                optional_field(&mut props, pad, "text", &initial_text(w), false);
+            }
             if let Some(size) = w.text_size {
                 props.push_str(&format!("{pad}text_size: {size},\n"));
             }
@@ -1235,6 +1509,10 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
         "hmUI.createWidget(hmUI.widget.{}, {{\n{}    }})",
         match w.kind {
             WidgetKind::Image | WidgetKind::Images | WidgetKind::WeatherIcon => "IMG",
+            // Undocumented, ale klasyczny widget hmUI (const 34) używany m.in.
+            // przez edytor SashaCX75 dla Active 2. firmware wiąże wartość
+            // z `hmUI.data_type.WEATHER_CURRENT` — bez sensora i nasłuchiwania JS.
+            WidgetKind::WeatherCurrentText => "TEXT_FONT",
             WidgetKind::Text
             | WidgetKind::TimeText
             | WidgetKind::DateText
@@ -1247,12 +1525,24 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
             | WidgetKind::StepText
             | WidgetKind::DistanceText
             | WidgetKind::HeartRateText
+            | WidgetKind::HeartRateLastText
+            | WidgetKind::HeartRateMinText
+            | WidgetKind::HeartRateMaxText
+            | WidgetKind::HeartRateAvgText
             | WidgetKind::StressText
             | WidgetKind::PaiText
             | WidgetKind::SkinTempText
             | WidgetKind::SleepText
+            | WidgetKind::SleepScoreText
+            | WidgetKind::SleepDeepText
+            | WidgetKind::SleepLightText
+            | WidgetKind::SleepRemText
+            | WidgetKind::SleepWakeText
+            | WidgetKind::SleepStartText
+            | WidgetKind::SleepEndText
             | WidgetKind::CalorieText
             | WidgetKind::Spo2Text
+            | WidgetKind::Spo2HourAvgText
             | WidgetKind::BatteryText
             | WidgetKind::StepTargetText
             | WidgetKind::CalorieTargetText
@@ -1261,13 +1551,15 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
             | WidgetKind::StandText
             | WidgetKind::FatBurningText
             | WidgetKind::PaiWeeklyText
+            | WidgetKind::PaiPrepaiText
             | WidgetKind::SleepTargetText
             | WidgetKind::WeatherConditionText
             | WidgetKind::WeatherCityText
             | WidgetKind::WeatherHighText
             | WidgetKind::WeatherLowText
             | WidgetKind::SunriseText
-            | WidgetKind::SunsetText => "TEXT",
+            | WidgetKind::SunsetText
+            | WidgetKind::SunCurrentText => "TEXT",
             WidgetKind::StatusIcon | WidgetKind::AnalogTime => {
                 unreachable!("image widgets are handled above")
             }

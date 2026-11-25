@@ -73,6 +73,10 @@ public sealed class LayerView
     [JsonPropertyName("statusType")] public string? StatusType { get; set; }
     /// <summary>Własny system jednostek widgetu dystansu; null = domyślny z projektu.</summary>
     [JsonPropertyName("measurementSystem")] public string? MeasurementSystem { get; set; }
+    /// <summary>Dzień prognozy pogody: 0 = dziś, 4 = +4 dni.</summary>
+    [JsonPropertyName("weatherDayOffset")] public byte WeatherDayOffset { get; set; }
+    /// <summary>Faza snu w minutach albo jako procent całego snu.</summary>
+    [JsonPropertyName("sleepStageMode")] public string SleepStageMode { get; set; } = "duration";
 }
 
 /// <summary>Wiersz listy warstw — panel pokazuje warstwę najwyższą na górze.</summary>
@@ -139,6 +143,8 @@ public sealed class WidgetCatalogItem
 {
     public string Kind { get; set; } = "";
     public string Category { get; set; } = "";
+    /// <summary>Tylko time i date mają wzorzec — źródło: katalog z Rusta.</summary>
+    public bool HasPattern { get; set; }
     public string Title { get; set; } = "";
     public string Description { get; set; } = "";
     public string Glyph { get; set; } = "\uE8B2";
@@ -428,6 +434,10 @@ public sealed class TimeSettings
     public string ImageFit { get; set; } = "contain";
     /// <summary>Wybrana paczka ikon pogody (Classic albo paczka użytkownika).</summary>
     public string WeatherIconSet { get; set; } = "Classic";
+    /// <summary>Dzień prognozy: 0 = dziś, 4 = +4 dni.</summary>
+    public byte WeatherDayOffset { get; set; }
+    /// <summary>Faza snu: duration (minuty) albo percent (%).</summary>
+    public string SleepStageMode { get; set; } = "duration";
 }
 
 /// <summary>Ramka tekstowego widgetu w podglądzie wraz z jego blokiem tekstu.</summary>
@@ -582,6 +592,7 @@ public sealed partial class MainWindow : Window
     private bool _loadingWatchfaceLanguage;
     private bool _loadingUnits;
     private bool _loadingFirstDay;
+    private bool _loadingWidgetOptions;
     private bool _loadingImages;
     private bool _loadingHands;
     private bool _loadingStatusPacks;
@@ -697,6 +708,8 @@ public sealed partial class MainWindow : Window
         LoadMeasurementSystemOptions();
         LoadFirstDayOfWeekOptions();
         LoadDistanceUnitOptions();
+        LoadWeatherDayOptions();
+        LoadSleepStageOptions();
         LoadWidgetCatalog();
         LoadFonts();
         LoadImages();
@@ -1073,7 +1086,8 @@ public sealed partial class MainWindow : Window
                 ? _settings.Pattern
                 : layer.TimeFormat ?? fallback;
             FormatTextForTime(layer.Kind, pattern, view.Text, previewNow, customFirstDay);
-            if (IsWeatherKind(layer.Kind)) ApplyWeatherPreview(layer, view);
+            if (IsWeatherKind(layer.Kind))
+                ApplyWeatherPreview(layer, view, previewNow);
             else ApplyCustomSensorOverride(layer.Kind, view.Text);
         }
 
@@ -1153,11 +1167,16 @@ public sealed partial class MainWindow : Window
     /// magazynu; brakujące dane Custom Data wracają do domyślnej, pochmurnej
     /// Warszawy. Tylko widoczna ikona jest skalowana (przez Stretch.Fill kontrolki).
     /// </summary>
-    private void ApplyWeatherPreview(LayerView layer, FrameView view)
+    private void ApplyWeatherPreview(LayerView layer, FrameView view, DateTime now)
     {
         // Pogoda zawsze pochodzi z danych predefiniowanych — Live Preview nie
         // przełącza żadnych czujników ani pogody na dane systemowe.
-        var overrides = WeatherOverridesJson();
+        // `sun-current` dostaje aktualną minutę, żeby liczyć czas do najbliższego
+        // wschodu/zachodu zgodnie z tym, co pokazuje tarcza na zegarku. Dla
+        // `weather-current` Rust zwraca wartość zastępczą (PC nie ma wiązania
+        // firmware'u z hmUI.data_type.WEATHER_CURRENT).
+        var day = layer.Kind is "sun-current" or "weather-current" ? (byte)0 : layer.WeatherDayOffset;
+        var overrides = WeatherOverridesJson(day, now);
         var raw = RustNative.FormatWeatherField(
             layer.Kind, overrides, EffectiveWatchfaceLanguage(),
             layer.WeatherIconSet ?? "Classic", out var error);
@@ -1186,11 +1205,11 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void RefreshWeatherIconPreview(string packId)
     {
-        var overrides = WeatherOverridesJson();
         var locale = EffectiveWatchfaceLanguage();
         foreach (var view in _frames.Values)
         {
             if (!IsWeatherIcon(view.Layer) || view.Picture is null) continue;
+            var overrides = WeatherOverridesJson(view.Layer.WeatherDayOffset);
             var raw = RustNative.FormatWeatherField(
                 "weather-icon", overrides, locale, packId, out _);
             if (raw is null) continue;
@@ -1205,12 +1224,17 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Tylko ustawione pola są wysyłane do Rusta — reszta dostaje wartości Warszawy.</summary>
-    private static string WeatherOverridesJson()
+    private static string WeatherOverridesJson(byte dayOffset = 0, DateTime? now = null)
     {
-        var values = new Dictionary<string, string>();
+        var moment = now ?? DefaultPreviewMoment();
+        var values = new Dictionary<string, string>
+        {
+            ["dayOffset"] = dayOffset.ToString(),
+            ["nowMinute"] = (moment.Hour * 60 + moment.Minute).ToString(CultureInfo.InvariantCulture),
+        };
         foreach (var key in new[]
         {
-            "city", "index", "high", "low", "sunrise", "sunset",
+            "city", "index", "high", "low", "current", "sunrise", "sunset",
         })
         {
             var value = AppSettingsStore.GetCustomPreviewValue(key);
@@ -1395,6 +1419,7 @@ public sealed partial class MainWindow : Window
             DigitalSettingsPanel.Visibility = Visibility.Collapsed;
             DigitalAlignPanel.Visibility = Visibility.Collapsed;
             StepInfoPanel.Visibility = Visibility.Collapsed;
+            SensorInfoPanel.Visibility = Visibility.Collapsed;
             GoalInfoPanel.Visibility = Visibility.Collapsed;
             DistanceUnitPanel.Visibility = Visibility.Collapsed;
             ShowUnitPanel.Visibility = Visibility.Collapsed;
@@ -1402,6 +1427,8 @@ public sealed partial class MainWindow : Window
             ImagesSettingsPanel.Visibility = Visibility.Collapsed;
             StatusSettingsPanel.Visibility = Visibility.Collapsed;
             WeatherSettingsPanel.Visibility = Visibility.Collapsed;
+            WeatherDayPanel.Visibility = Visibility.Collapsed;
+            SleepStageModePanel.Visibility = Visibility.Collapsed;
             InspectorTitle.Text = "";
             return;
         }
@@ -1415,16 +1442,24 @@ public sealed partial class MainWindow : Window
         var isDistance = layer.Kind == "distance";
         var isHealth = IsHealthKind(layer.Kind);
         var isGoal = IsGoalKind(layer.Kind);
+        var isWeather = IsWeatherKind(layer.Kind);
+        var isSleep = IsSleepKind(layer.Kind);
         WidgetInspector.Visibility = Visibility.Visible;
         DigitalSettingsPanel.Visibility = isAnalog || isImages || isStatus || isWeatherIcon ? Visibility.Collapsed : Visibility.Visible;
         DigitalAlignPanel.Visibility = isAnalog || isImages || isStatus || isWeatherIcon ? Visibility.Collapsed : Visibility.Visible;
-        // Tekst użytkownika i licznik kroków nie mają wzorca czasu/daty.
-        // Dla kroków zamiast pola treści pokazujemy informację o czujniku.
-        FormatPanel.Visibility = isUserText || isStep || isDistance || isHealth || isGoal || isImages || isStatus || isWeatherIcon || IsDateFieldKind(layer.Kind)
-            ? Visibility.Collapsed
-            : Visibility.Visible;
+        // Wzorzec czasu/daty ma tylko to, co katalog z Rusta oznaczył flagą
+        // hasPattern (time i date). Bateria i pola pogody czytają czujnik —
+        // pokazywanie im presetu HH:MM:SS było mylące i zapisywało timeFormat.
+        FormatPanel.Visibility = HasPatternKind(layer.Kind) ? Visibility.Visible : Visibility.Collapsed;
         UserTextPanel.Visibility = isUserText ? Visibility.Visible : Visibility.Collapsed;
         StepInfoPanel.Visibility = isStep ? Visibility.Visible : Visibility.Collapsed;
+        SensorInfoPanel.Visibility = IsSensorTextKind(layer.Kind) || isSleep
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        if (SensorInfoPanel.Visibility == Visibility.Visible)
+            SensorInfoHint.Text = layer.Kind == "battery"
+                ? L("SensorInfoBattery")
+                : isSleep ? L("SensorInfoSleep") : L("SensorInfoWeather");
         GoalInfoPanel.Visibility = isGoal ? Visibility.Visible : Visibility.Collapsed;
         if (isGoal)
         {
@@ -1440,6 +1475,13 @@ public sealed partial class MainWindow : Window
         ImagesSettingsPanel.Visibility = isImages ? Visibility.Visible : Visibility.Collapsed;
         StatusSettingsPanel.Visibility = isStatus ? Visibility.Visible : Visibility.Collapsed;
         WeatherSettingsPanel.Visibility = isWeatherIcon ? Visibility.Visible : Visibility.Collapsed;
+        // Miasto, temperatura bieżąca i „czas do" nie zależą od dnia prognozy.
+        WeatherDayPanel.Visibility = isWeather && layer.Kind is not ("weather-city" or "weather-current" or "sun-current")
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        SleepStageModePanel.Visibility = layer.Kind is "sleep-deep" or "sleep-light" or "sleep-rem" or "sleep-wake"
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         InspectorTitle.Text = isImages
             ? L("ImagesWidgetCardTitle")
             : isAnalog
@@ -1450,7 +1492,9 @@ public sealed partial class MainWindow : Window
         // wyśrodkowania są widoczne zarówno dla czasu cyfrowego, jak i analogowego.
         _settings = new TimeSettings
         {
-            Pattern = layer!.TimeFormat ?? (isDate ? DefaultDatePattern : "HH:MM:SS"),
+            Pattern = HasPatternKind(layer.Kind)
+                ? layer.TimeFormat ?? (isDate ? DefaultDatePattern : "HH:MM:SS")
+                : "",
             TextSize = layer.TextSize ?? 64,
             Font = layer.Font ?? "",
             Color = layer.Color ?? "0xFFFFFFFF",
@@ -1469,6 +1513,10 @@ public sealed partial class MainWindow : Window
             Alpha = layer.Alpha,
             ImageFit = string.IsNullOrEmpty(layer.ImageFit) ? "contain" : layer.ImageFit,
             WeatherIconSet = layer.WeatherIconSet ?? "Classic",
+            WeatherDayOffset = layer.WeatherDayOffset,
+            SleepStageMode = string.IsNullOrEmpty(layer.SleepStageMode)
+                ? "duration"
+                : layer.SleepStageMode,
         };
 
         if (isImages)
@@ -1545,6 +1593,10 @@ public sealed partial class MainWindow : Window
             : new[] { "HH:MM:SS", "HH:MM", "H:MM:SS", "hh:mm:ss A", "h:mm a" };
         FormatHintText.Text = isDate ? L("DateFormatHint") : L("FormatHint");
         FormatBox.Text = _settings.Pattern;
+        WeatherDayCombo.SelectedItem = (WeatherDayCombo.ItemsSource as IEnumerable<ChoiceItem>)?
+            .FirstOrDefault(item => item.Value == _settings.WeatherDayOffset.ToString());
+        SleepStageModeCombo.SelectedItem = (SleepStageModeCombo.ItemsSource as IEnumerable<ChoiceItem>)?
+            .FirstOrDefault(item => item.Value == _settings.SleepStageMode);
         UserTextBox.Text = _settings.UserText;
         if (HasUnitKind(layer.Kind))
         {
@@ -2054,26 +2106,19 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Język podglądu tarczy. Sama tarcza wykrywa język zegarka (pl-PL = 9) w runtime;
-    /// to ustawienie tylko mówi edytorowi, który wariant ma pokazać, żeby podgląd był 1:1.
+    /// Język podglądu tarczy wynika wyłącznie z ustawienia „Język podglądu tarczy"
+    /// (domyślnie angielski) — nie od języka Windows ani od języka interfejsu.
+    /// Sama tarcza wykrywa język zegarka (pl-PL = 9) w runtime; to ustawienie mówi
+    /// edytorowi, który wariant pokazać w podglądzie i w plikach preview.png/gif.
     /// </summary>
-    private string EffectiveWatchfaceLanguage()
-    {
-        var setting = AppSettingsStore.WatchfacePreviewLanguage;
-        return setting switch
-        {
-            "pl" or "en" => setting,
-            _ => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.Equals("pl",
-                StringComparison.OrdinalIgnoreCase) ? "pl" : "en",
-        };
-    }
+    private static string EffectiveWatchfaceLanguage()
+        => AppSettingsStore.WatchfacePreviewLanguage == "pl" ? "pl" : "en";
 
     private void LoadWatchfaceLanguageOptions()
     {
         _loadingWatchfaceLanguage = true;
         var items = new[]
         {
-            new ChoiceItem { Value = "auto", Name = L("WatchfaceLanguageAuto") },
             new ChoiceItem { Value = "pl", Name = L("WatchfaceLanguagePolish") },
             new ChoiceItem { Value = "en", Name = L("WatchfaceLanguageEnglish") },
         };
@@ -2112,6 +2157,33 @@ public sealed partial class MainWindow : Window
         _loadingUnits = true;
         DistanceUnitCombo.ItemsSource = UnitChoices();
         _loadingUnits = false;
+    }
+
+    private static ChoiceItem[] WeatherDayChoices() => new[]
+    {
+        new ChoiceItem { Value = "0", Name = L("WeatherDayToday") },
+        new ChoiceItem { Value = "1", Name = L("WeatherDayTomorrow") },
+        new ChoiceItem { Value = "2", Name = L("WeatherDayDayAfter") },
+        new ChoiceItem { Value = "3", Name = L("WeatherDayPlus3") },
+        new ChoiceItem { Value = "4", Name = L("WeatherDayPlus4") },
+    };
+
+    private void LoadWeatherDayOptions()
+    {
+        _loadingWidgetOptions = true;
+        WeatherDayCombo.ItemsSource = WeatherDayChoices();
+        _loadingWidgetOptions = false;
+    }
+
+    private void LoadSleepStageOptions()
+    {
+        _loadingWidgetOptions = true;
+        SleepStageModeCombo.ItemsSource = new[]
+        {
+            new ChoiceItem { Value = "duration", Name = L("SleepStageModeDuration") },
+            new ChoiceItem { Value = "percent", Name = L("SleepStageModePercent") },
+        };
+        _loadingWidgetOptions = false;
     }
 
     /// <summary>Stosuje system z ustawień aplikacji w otwartym projekcie (wpływa na JS).</summary>
@@ -2204,6 +2276,25 @@ public sealed partial class MainWindow : Window
         if (_settings is null || _loadingSettings || _loadingUnits) return;
         _settings.ShowUnit = ShowUnitCheckBox.IsChecked == true;
         PersistSettings();
+    }
+
+    private void WeatherDayCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_settings is null || _loadingSettings || _loadingWidgetOptions) return;
+        if ((sender as ComboBox)?.SelectedItem is not ChoiceItem item) return;
+        if (!byte.TryParse(item.Value, out var day)) return;
+        _settings.WeatherDayOffset = day;
+        PersistSettings();
+        UpdateClockText();
+    }
+
+    private void SleepStageModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_settings is null || _loadingSettings || _loadingWidgetOptions) return;
+        if ((sender as ComboBox)?.SelectedItem is not ChoiceItem item) return;
+        _settings.SleepStageMode = item.Value;
+        PersistSettings();
+        UpdateClockText();
     }
 
     private void OwnMeasurementSystemCheckBox_Click(object sender, RoutedEventArgs e)
@@ -2572,6 +2663,7 @@ public sealed partial class MainWindow : Window
         {
             Kind = item.Kind,
             Category = item.Category,
+            HasPattern = item.HasPattern,
             Title = WidgetTitle(item.Kind),
             Description = WidgetDescription(item.Kind),
             Glyph = item.Kind switch
@@ -2610,6 +2702,7 @@ public sealed partial class MainWindow : Window
         "distance" => L("WidgetCategoryDistance"),
         "goals" => L("WidgetCategoryGoals"),
         "health" => L("WidgetCategoryHealth"),
+        "sleep" => L("WidgetCategorySleep"),
         "system" => L("WidgetCategorySystem"),
         "weather" => L("WidgetCategoryWeather"),
         _ => category,
@@ -2635,22 +2728,37 @@ public sealed partial class MainWindow : Window
         "stand-target" => L("StandTargetWidgetCardTitle"),
         "fat-burning-target" => L("FatBurningTargetWidgetCardTitle"),
         "heart" => L("HeartWidgetCardTitle"),
+        "heart-last" => L("HeartLastWidgetCardTitle"),
+        "heart-min" => L("HeartMinWidgetCardTitle"),
+        "heart-max" => L("HeartMaxWidgetCardTitle"),
+        "heart-avg" => L("HeartAvgWidgetCardTitle"),
         "stress" => L("StressWidgetCardTitle"),
         "pai" => L("PaiWidgetCardTitle"),
         "skin-temp" => L("SkinTempWidgetCardTitle"),
         "sleep" => L("SleepWidgetCardTitle"),
+        "sleep-score" => L("SleepScoreWidgetCardTitle"),
+        "sleep-deep" => L("SleepDeepWidgetCardTitle"),
+        "sleep-light" => L("SleepLightWidgetCardTitle"),
+        "sleep-rem" => L("SleepRemWidgetCardTitle"),
+        "sleep-wake" => L("SleepWakeWidgetCardTitle"),
+        "sleep-start" => L("SleepStartWidgetCardTitle"),
+        "sleep-end" => L("SleepEndWidgetCardTitle"),
         "calories" => L("CaloriesWidgetCardTitle"),
         "spo2" => L("Spo2WidgetCardTitle"),
+        "spo2-hour-avg" => L("Spo2HourAvgWidgetCardTitle"),
         "stand" => L("StandWidgetCardTitle"),
         "fat-burning" => L("FatBurningWidgetCardTitle"),
         "pai-weekly" => L("PaiWeeklyWidgetCardTitle"),
+        "pai-prepai" => L("PaiPrepaiWidgetCardTitle"),
         "sleep-target" => L("SleepTargetWidgetCardTitle"),
         "weather-condition" => L("WeatherConditionWidgetCardTitle"),
         "weather-city" => L("WeatherCityWidgetCardTitle"),
+        "weather-current" => L("WeatherCurrentWidgetCardTitle"),
         "weather-high" => L("WeatherHighWidgetCardTitle"),
         "weather-low" => L("WeatherLowWidgetCardTitle"),
         "sunrise" => L("SunriseWidgetCardTitle"),
         "sunset" => L("SunsetWidgetCardTitle"),
+        "sun-current" => L("SunCurrentWidgetCardTitle"),
         "weather-icon" => L("WeatherIconWidgetCardTitle"),
         "battery" => L("BatteryWidgetCardTitle"),
         "status-alarm" => L("StatusAlarmWidgetCardTitle"),
@@ -2680,22 +2788,37 @@ public sealed partial class MainWindow : Window
         "stand-target" => L("StandTargetWidgetCardDesc"),
         "fat-burning-target" => L("FatBurningTargetWidgetCardDesc"),
         "heart" => L("HeartWidgetCardDesc"),
+        "heart-last" => L("HeartLastWidgetCardDesc"),
+        "heart-min" => L("HeartMinWidgetCardDesc"),
+        "heart-max" => L("HeartMaxWidgetCardDesc"),
+        "heart-avg" => L("HeartAvgWidgetCardDesc"),
         "stress" => L("StressWidgetCardDesc"),
         "pai" => L("PaiWidgetCardDesc"),
         "skin-temp" => L("SkinTempWidgetCardDesc"),
         "sleep" => L("SleepWidgetCardDesc"),
+        "sleep-score" => L("SleepScoreWidgetCardDesc"),
+        "sleep-deep" => L("SleepDeepWidgetCardDesc"),
+        "sleep-light" => L("SleepLightWidgetCardDesc"),
+        "sleep-rem" => L("SleepRemWidgetCardDesc"),
+        "sleep-wake" => L("SleepWakeWidgetCardDesc"),
+        "sleep-start" => L("SleepStartWidgetCardDesc"),
+        "sleep-end" => L("SleepEndWidgetCardDesc"),
         "calories" => L("CaloriesWidgetCardDesc"),
         "spo2" => L("Spo2WidgetCardDesc"),
+        "spo2-hour-avg" => L("Spo2HourAvgWidgetCardDesc"),
         "stand" => L("StandWidgetCardDesc"),
         "fat-burning" => L("FatBurningWidgetCardDesc"),
         "pai-weekly" => L("PaiWeeklyWidgetCardDesc"),
+        "pai-prepai" => L("PaiPrepaiWidgetCardDesc"),
         "sleep-target" => L("SleepTargetWidgetCardDesc"),
         "weather-condition" => L("WeatherConditionWidgetCardDesc"),
         "weather-city" => L("WeatherCityWidgetCardDesc"),
+        "weather-current" => L("WeatherCurrentWidgetCardDesc"),
         "weather-high" => L("WeatherHighWidgetCardDesc"),
         "weather-low" => L("WeatherLowWidgetCardDesc"),
         "sunrise" => L("SunriseWidgetCardDesc"),
         "sunset" => L("SunsetWidgetCardDesc"),
+        "sun-current" => L("SunCurrentWidgetCardDesc"),
         "weather-icon" => L("WeatherIconWidgetCardDesc"),
         "battery" => L("BatteryWidgetCardDesc"),
         "status-alarm" => L("StatusAlarmWidgetCardDesc"),
@@ -2705,27 +2828,42 @@ public sealed partial class MainWindow : Window
         _ => kind,
     };
 
+    /// <summary>Wzorzec czasu/daty ma tylko to, co katalog z Rusta oznaczył flagą hasPattern.</summary>
+    private bool HasPatternKind(string? kind)
+        => _widgetCatalog.Any(item => item.Kind == kind && item.HasPattern);
+
+    /// <summary>Kategoria SNU pochodzi z katalogu z Rusta — bez duplikowania listy typów.</summary>
+    private bool IsSleepKind(string? kind)
+        => _widgetCatalog.Any(item => item.Kind == kind && item.Category == "sleep");
+
     private static bool IsDateFieldKind(string? kind) => kind is
         "weekday-number" or "week-number" or "day-of-year" or "lunar-date" or "festival" or "world-clock";
 
     private static bool IsHealthKind(string? kind) => kind is
-        "heart" or "stress" or "pai" or "skin-temp" or "sleep" or "calories" or "spo2"
-        or "stand" or "fat-burning" or "pai-weekly";
+        "heart" or "heart-last" or "heart-min" or "heart-max" or "heart-avg"
+        or "stress" or "pai" or "skin-temp" or "sleep" or "calories"
+        or "spo2" or "spo2-hour-avg" or "stand" or "fat-burning"
+        or "pai-weekly" or "pai-prepai";
 
     private static bool IsGoalKind(string? kind) => kind is
         "steps-target" or "calories-target" or "stand-target" or "fat-burning-target" or "sleep-target";
 
     private static bool IsWeatherKind(string? kind) => kind is
-        "weather-condition" or "weather-city" or "weather-high" or "weather-low"
-        or "sunrise" or "sunset" or "weather-icon";
+        "weather-condition" or "weather-city" or "weather-current" or "weather-high"
+        or "weather-low" or "sunrise" or "sunset" or "sun-current" or "weather-icon";
 
     private static bool IsWeatherIcon(LayerView? layer) => layer?.Kind == "weather-icon";
 
+    /// <summary>Teksty czytane z czujnika/firmware'u: bateria i pola pogody (bez ikony).</summary>
+    private static bool IsSensorTextKind(string? kind)
+        => kind == "battery" || (IsWeatherKind(kind) && kind != "weather-icon");
+
     /// <summary>Tylko widgety z jednostką mają w inspektorze przełącznik jej pokazywania.</summary>
     private static bool HasUnitKind(string? kind) => kind is
-        "heart" or "skin-temp" or "calories" or "spo2"
+        "heart" or "heart-last" or "heart-min" or "heart-max" or "heart-avg"
+        or "skin-temp" or "calories" or "spo2" or "spo2-hour-avg"
         or "calories-target" or "stand-target" or "fat-burning-target"
-        or "stand" or "fat-burning";
+        or "stand" or "fat-burning" or "weather-current";
 
     private static ListView CreateCatalogList(DataTemplate template, bool selectable,
         SelectionChangedEventHandler? selectionChanged)
@@ -2863,7 +3001,6 @@ public sealed partial class MainWindow : Window
         if (_projectFile is null || _settings is null || _loadingSettings || _selectedLayerId is null) return;
         var kind = _layers.FirstOrDefault(l => l.Id == _selectedLayerId)?.Kind;
         var isUserText = kind == "text";
-        var isStep = kind == "steps";
         var isDistance = kind == "distance";
         var distanceUnits = isDistance && _settings.OwnMeasurementSystem
             ? _settings.MeasurementSystem
@@ -2880,12 +3017,9 @@ public sealed partial class MainWindow : Window
             color = _settings.Color,
             align = _settings.Align,
             vAlign = _settings.VAlign,
-            // Dla widgetu daty to pole niesie wzorzec daty (parser w Rust wybiera
-            // go na podstawie kind widgetu), dla czasu — wzorzec czasu. Tekst
-            // użytkownika i licznik kroków nie mają wzorca.
-            timeFormat = isUserText || isStep || isDistance || IsHealthKind(kind) || IsGoalKind(kind) || IsDateFieldKind(kind)
-                ? null
-                : _settings.Pattern,
+            // Tylko time i date mają wzorzec. Wysłanie timeFormat dla baterii
+            // lub pogody nadpisałoby ich tekst na "00:00:00" (regresja).
+            timeFormat = HasPatternKind(kind) ? _settings.Pattern : null,
             text = isUserText ? _settings.UserText : null,
             // Pusty string = użyj systemu z ustawień aplikacji (bez nadpisania).
             measurementSystem = distanceUnits,
@@ -2894,6 +3028,8 @@ public sealed partial class MainWindow : Window
             autoScale = _settings.AutoScale,
             textStyle = _settings.TextStyle,
             imageFit = _settings.ImageFit,
+            weatherDayOffset = _settings.WeatherDayOffset,
+            sleepStageMode = _settings.SleepStageMode,
             deferAssets,
         });
         var raw = RustNative.SetWidget(_projectFile, payload, out var error);
@@ -3050,6 +3186,8 @@ public sealed partial class MainWindow : Window
         target.MinuteSrc = source.MinuteSrc;
         target.SecondSrc = source.SecondSrc;
         target.CapSrc = source.CapSrc;
+        target.WeatherDayOffset = source.WeatherDayOffset;
+        target.SleepStageMode = source.SleepStageMode;
     }
 
     private static Color ParseArgb(string value)
@@ -3934,6 +4072,7 @@ public sealed partial class MainWindow : Window
         "calories" => "calories",
         "spo2" => "spo2",
         "battery" => "battery",
+        "weather-current" => "current",
         "lunar-date" => "lunarDate",
         "festival" => "festival",
         "world-clock" => "worldClock",
@@ -3954,6 +4093,7 @@ public sealed partial class MainWindow : Window
         "lunar-date" => L("LayerLunarDate"),
         "festival" => L("LayerFestival"),
         "world-clock" => L("LayerWorldClock"),
+        "weather-current" => L("LayerWeatherCurrent"),
         _ => kind,
     };
 
@@ -4268,6 +4408,8 @@ public sealed partial class MainWindow : Window
         LoadMeasurementSystemOptions();
         LoadFirstDayOfWeekOptions();
         LoadDistanceUnitOptions();
+        LoadWeatherDayOptions();
+        LoadSleepStageOptions();
         LoadFonts();
         LoadImages();
         LoadHandSets(); LoadStatusPacks(); LoadWeatherPacks();

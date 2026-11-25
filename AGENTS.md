@@ -89,7 +89,7 @@ Rust, Windows App SDK via NuGet (self-contained app).
    `timer.createTimer(0, 1000, tick)` + `timer.stopTimer`; listeners are cleaned up in `onDestroy`.
    The export **always** emits `hmUI.show_level.ONLY_NORMAL` (`codegen::JS_SHOW_LEVEL`), even for projects that still store `Always`: `ONAL_AOD` made the real firmware paint an opaque AOD overlay (white square with small hand frames, black screen with full-screen frames). AOD is driven by `WIDGET_DELEGATE` + `hmSetting.getScreenType()` instead. New widgets default to `ShowLevel::Normal`.
    Align / text-style / show-level JS expressions live in `model.rs::as_js()` with an `hmUI.` prefix.
- 4a. **The watchface detects its own language at runtime.** `crates/rusty-core/src/locale.rs` owns the PL/EN tables (Polish month abbreviations and AM/PM markers) and emits a JS block (inside the IIFE) calling `DeviceRuntimeCore.HmUtils.getLanguage()` with a guarded `hmSetting.getLanguage()` fallback — `9` = `pl-PL`, **every other value = English**. `codegen` uses `L.months` for Date widgets and `time_format::js_expression_localized` (`L.am`/`L.pm`) for time widgets; the JS locale block includes Polish diacritics directly in the initial widget text. Do not bake one language into the ZIP. The editor has a **watchface preview language** setting (`auto` = Windows UI culture, `pl`, `en`) in `AppSettingsStore`, passed through `rw_format_time`/`rw_month_name`, so the preview matches whichever variant the watch will show.
+ 4a. **The watchface detects its own language at runtime.** `crates/rusty-core/src/locale.rs` owns the PL/EN tables (Polish month abbreviations and AM/PM markers) and emits a JS block (inside the IIFE) calling `DeviceRuntimeCore.HmUtils.getLanguage()` with a guarded `hmSetting.getLanguage()` fallback — `9` = `pl-PL`, **every other value = English**. `codegen` uses `L.months` for Date widgets and `time_format::js_expression_localized` (`L.am`/`L.pm`) for time widgets; the JS locale block includes Polish diacritics directly in the initial widget text. Do not bake one language into the ZIP. The editor has a **watchface preview language** setting (`pl`/`en`, default `en`, no Windows-culture `auto`) in `AppSettingsStore`, passed through `rw_format_time`/`rw_month_name` and to generated preview frames, so the preview matches whichever variant the watch will show.
   4b. **Generated previews are Rust-only and deterministic per export.** `crates/rusty-core/src/preview.rs` owns the 7 hardcoded presets plus an appended exact copy of the 21:37:40 frame (`FRAME_PRESETS`: hours 06–21, minutes/seconds strictly increasing; `SOURCE_FRAME_COUNT = 7`, `FRAME_COUNT = 8`, `PREVIEW_FRAME_INDEX = 7`), the random `PreviewRandomSeries` (7 real dates 2022-01-03 … 2022-07-31 — Monday…Sunday in months January…July; realistic heart rate/calories/distance; the 8th entry duplicates the 7th), and the renderer. Steps are always derived from distance (`distance_m/1000 * steps_per_km`, 1300–1400 steps/km); battery decreases 100% → 10%. Every date widget in a frame uses that frame's single date (Sakamoto weekday with `project.first_day_of_week`, ISO week, day-of-year, `locale.rs` month names). `FRAME_PRESETS` also carries a `status_mask` (ALARM=1, DND=2, BLUETOOTH=4, LOCK=8): most frames show no icons; frame 7 (21:37:40) shows all four; frame 8 is an exact copy and is the source of `preview.png`. The mask sequence is `2,2,0,3,0,1,4,4` — non-monotonic, with 2 empty frames; frame 4 has ALARM+DND+LOCK, frame 6 only BLUETOOTH. The static `preview.png` is **not a raw frame**: `preview::compose_branded_preview()` draws a branded frame around the rendered 21:37 frame — fully transparent outside, outer black safe area, the `logo/gear-outlayer.png` outer layer (brown arc + gear, embedded in Rust), inner black safe area, and the full watchface scaled into the centre with a dark, barely visible outline (`#404040`). `preview.gif` has 8 frames with ~1.7 s per frame and an infinite loop: the 7 original frames have a black opaque cutout outside radius 233, frame 8 is the identical raw 21:37 copy rendered for the composition, and the **composed `preview.png` is the FIRST GIF frame** — the raw copy is dropped so the GIF still has 8 frames (composed frame, then the 7 raw ones). Neither file is zipped. Custom Data from the editor is deliberately ignored. Never render preview frames with offscreen WinUI controls.
   4c. **The generated watchface JS must never use `Date`.** The classic ZeppOS watchface runtime on the real watch does not expose `Date` (it works in the simulator, which has a full JS engine); calling it during `build()` aborts the watchface and leaves a black screen. `date_format.rs` emits `JS_DATE_FROM_T` (plain fields `d`/`m`/`m0`/`y`/`w` computed with Sakamoto's algorithm), `JS_ISO_WEEK` and `JS_DAY_OF_YEAR` using only arithmetic on those fields. `js_expression_localized` reads the same fields instead of `getDate()`/`getMonth()`/`getDay()`/`getFullYear()`. A regression test bans any `Date` API in generated JS. Text widgets emit `char_space: 0`, `line_space: 0` and `font: "fonts/font_<hash>.ttf"` exactly like the working reference (see 6a).
  5. **Layers are the single source of draw order.** `crates/rusty-core/src/layers.rs` resolves
@@ -213,8 +213,9 @@ anchor after scaling or after an inspector change (regression: preview and expor
 - Rust diagnostics are canonically Polish. English is produced by the pattern map in
   `LocalizationService.Error`. When adding a new Rust error message, add its pattern to that map
   and keys to all catalogs.
-- Language choice persists in `%APPDATA%\RustyWatch\settings.json`; default follows the
-  Windows UI culture.
+- Language choice persists in `%APPDATA%\RustyWatch\settings.json`; the default is English
+  (never the Windows UI culture). The separate watchface preview language is also English
+  by default and drives both the live editor preview and generated preview files.
 - Assistant-facing docs/code comments in this repo are largely Polish; keep new comments
   consistent with the surrounding file. User-facing strings must **always** come from catalogs.
 
@@ -254,6 +255,12 @@ Do not "fix" these by reverting to the obvious approach:
   so dragging/scaling applies to it even if another layer is visually on top. Selecting a row drives
   the right-hand **inspector** with that widget's settings
   (preset/custom format, font, font size, color, X/Y, alignment, text fit), auto-saved via `rw_set_widget`.
+  The format preset/box is shown **only** for widgets whose catalog entry has `hasPattern: true`
+  (i.e. `time` and `date`) — that flag comes from `rw_supported_widgets`, and `WidgetKind::uses_pattern()`
+  is the single source of truth in Rust (`rw_set_widget` ignores `timeFormat` for every other kind, so
+  battery/weather text is never overwritten with `00:00:00`). Sensor-backed text widgets show a short
+  localized hint instead. The **Opacity** slider is shared by all kinds, including analog, images,
+  STATUS and the weather icon; `rw_set_widget` persists `alpha` on every path.
   The **Font** ComboBox lists system font plus every installed font; the preview re-renders with the
   selected TTF immediately (no UI-only zoom or substitute font).
   Text widgets also have a draggable/resizable frame (ramka) in the preview; double-clicking it
@@ -299,8 +306,13 @@ Do not "fix" these by reverting to the obvious approach:
   **Image** (`images`) in the new **Images** category (`CATEGORY_IMAGES`);
   **Step counter** plus **Distance** in the **Distance**
   category (`CATEGORY_DISTANCE`); **Step target, Calorie target, Stand target** and
-  **Fat burning target** in the **Goals** category (`CATEGORY_GOALS`); and **Heart rate, Stress, PAI, Skin temperature, Sleep, Calories**
-  **SpO₂**, **Stand hours, Fat burning** and **PAI (week)** in the **Health** category (`CATEGORY_HEALTH`); **Battery** and four status icons
+  **Fat burning target** in the **Goals** category (`CATEGORY_GOALS`); **Heart rate** (current and last valid),
+  **Minimum/Maximum/Average heart rate** (computed from `HEART.today`, positive samples only, cached once per minute),
+  **Stress, PAI (today), PAI (last 7 days = `dailypai + prepai0…5`), PAI (week), Skin temperature, Calories,
+  SpO₂ (current and hourly average), Stand hours and Fat burning** in **Health** (`CATEGORY_HEALTH`);
+  **Sleep duration, Sleep score, Deep/Light/REM sleep, Time awake, Sleep start/end** and **Sleep target** live in the
+  **Sleep** category (`CATEGORY_SLEEP`) and read `SLEEP.getBasicInfo()/getSleepStageData()/getSleepStageModel()/getTotalTime()` —
+  `sleep-deep/light/rem/wake` have a `sleepStageMode` setting (`duration` or `percent`); **Battery** and four status icons
   (**DND**, **LOCK**, **BLUETOOTH**, **ALARM**) directly in the new **System** category
   (`CATEGORY_SYSTEM`) — there is no second-level STATUS subgroup. Categories are shown as plain headers
   with every widget visible — no arrow to click.
@@ -375,7 +387,9 @@ Do not "fix" these by reverting to the obvious approach:
   generated preview files ignore Custom Data as always.
   The **Health** category adds seven text widgets backed by classic `hmSensor`: `HEART` (bpm),
   `STRESS` (0–100), `PAI` (`dailypai`), `BODY_TEMP` (°C), `SLEEP` (`getTotalTime()` → `H:MM`),
-  `CALORIE` (kcal) and `SPO2` (%). `codegen.rs` keeps one shared `healthTick` plus one lazy
+  `CALORIE` (kcal), `SPO2` (current % and hourly average from `SPO2.hourAvgofDay`) and
+  `HEART.last` / `HEART.today` statistics (with `PAI.dailypai + prepai0…5` for the 7-day field).
+  `codegen.rs` keeps one shared `healthTick` plus one lazy
   `try/catch` getter per sensor, refreshes on each sensor's CHANGE (HEART: CURRENT) event and on
   the clock tick, and removes every listener in `onDestroy`. Missing sensors leave the neutral
   `--` preview text instead of breaking the watchface. Widgets with a unit (`HEART`, `BODY_TEMP`,
@@ -383,8 +397,26 @@ Do not "fix" these by reverting to the obvious approach:
   `true`) controls both the initial `-- bpm` text and the JS suffix, so disabling it emits a bare
   number. Unitless widgets (Stress, PAI, Sleep) hide that checkbox. HRV and Readiness are intentionally **not**
   in the catalog: HRV has no watchface sensor API and Readiness is only an `hmUI.data_type` value.
-  Goals also include **sleep-target** (`hmSetting.getSleepTarget()`, minutes; `-- h` when unset).
+  **sleep-target** (`hmSetting.getSleepTarget()`, minutes; `-- h` when unset) now lives in the Sleep category.
   Weather category is localized: `WidgetCategoryWeather` = **Weather** (EN) / **Pogoda** (PL).
+  Every weather text field and the icon has a `weatherDayOffset` setting (0…4, default `0`): codegen
+  emits `const _wd_<ref> = <offset>` and reads `forecastData.data[_wd_<ref>]` / `tideData.data[_wd_<ref>]`;
+  the Rust preview synthesizes five deterministic days from `WeatherSnapshot` and applies Custom Data
+  overrides to the selected day. Missing day ⇒ `--`/`--°`/`--:--` and the icon keeps its last valid SRC.
+  `weather-city` ignores the offset (city is not per-day). **`weather-current` uses the classic (undocumented)
+  `hmUI.widget.TEXT_FONT` with `type: hmUI.data_type.WEATHER_CURRENT` and `unit_type: 0/1`** — the firmware
+  supplies and refreshes the real temperature, so no `hmSensor`, timer or listener is generated and no
+  static `text:` is exported. This is an intentional exception to the usual `TEXT`/`IMG` rule: it is still
+  classic `hmUI` (widget id 34), used by the reference editor on Active 2, never `@zos/*`. The inspector
+  exposes only alignment, size, font, colour, opacity and **Show unit** — the value itself is not editable.
+  The PC preview shows a deterministic placeholder (`WeatherPreviewState::current`, default `22°`,
+  overridden by Custom Data `current`) because a PC cannot access the firmware binding; generated preview
+  files ignore Custom Data as always.
+  **`sun-current`** computes the time left to the next sunrise/sunset from `tideData.data[0..1]` and the
+  TIME sensor via generated `_sunCurrentText()` / Rust `sun_current_minutes()`; it also ignores the day
+  offset and tracks the editor clock when Live preview is on (`nowMinute` in the weather overrides).
+  The sleep fields and HR stats never introduce native zone/HRV data — classic ZeppOS watchface API has
+  none; HR stats are derived locally from `HEART.today`.
   The same table also serves **stand** (`STAND.current`, suffix `h`), **fat-burning**
   (`FAT_BURRING.current`, suffix `min`) and **pai-weekly** (`PAI.totalpai`). STAND and
   FAT_BURRING may be absent on Active 2 — the placeholder stays on the watchface and the
@@ -417,8 +449,8 @@ Do not "fix" these by reverting to the obvious approach:
   **Default author** field. A configured value is used as the author for new projects; an empty value falls back to
   `Environment.UserName`. Both settings live in `%APPDATA%\RustyWatch\settings.json` via
   `AppSettingsStore` (language lives there too — never overwrite one setting when saving another). It also has **Watchface preview language**
-  (`auto` = Windows UI culture, `pl`, `en`) which selects the PL/EN variant rendered in the editor;
-  the exported watchface always detects the watch language itself and is unaffected by this setting.
+  (`pl`/`en`, default `en`, no `auto`/Windows option) which selects the PL/EN variant rendered in the editor
+  **and** baked into generated `preview.png`/`preview.gif`; the exported watchface always detects the watch language itself and is unaffected by this setting.
   The **Default system of units** and **First day of week** selectors are also here; both are written to
   the open project so the exported ZIP uses them (`rw_set_measurement_system` / `rw_set_first_day_of_week`).
   The app logo lives in `native/RustyWatch/Assets/`: `AppIcon.ico` (multi-size icon for the exe and the
@@ -489,7 +521,7 @@ and no listener leaks.
 
 ## 9. Definition of done for a change
 
-1. `cargo test --workspace` green (currently 163 tests: 130 core + 33 FFI), no new warnings.
+1. `cargo test --workspace` green (currently 177 tests: 141 core + 36 FFI), no new warnings.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. App launches; affected screens verified visually (English **and** Polish if UI changed).
 4. Round-trip `new → export → open → export` preserves data when project model/codegen changes.

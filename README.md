@@ -65,9 +65,10 @@ no code or assets from that project were copied.
 - **Text** — Text (user defined)
 - **Image** — Image (blue frame fits the picture's natural size and only moves it; double-click turns it red and stretches the PNG while resizing)
 - **Distance** — Step counter, Distance
-- **Goals** — Step target, Calorie target, Stand target, Fat burning target, Sleep target, Sleep target, Sleep target
-- **Health** — Heart rate, Stress, PAI, Skin temperature, Sleep, Calories, SpO₂, Stand hours, Fat burning, PAI (week)
-- **Weather** — condition name, city, high/low, sunrise/sunset and 29 weather icons (Classic)
+- **Goals** — Step target, Calorie target, Stand target, Fat burning target
+- **Health** — Heart rate (current, last valid, min/max/avg from `HEART.today`), Stress, PAI (today, last 7 days, weekly), Skin temperature, Calories, SpO₂ (current, hourly average), Stand hours, Fat burning
+- **Sleep** — Sleep duration, Sleep score, Deep/Light/REM sleep, Time awake (minutes or %), Sleep start/end, Sleep target
+- **Weather** — condition name, city, **current temperature from the watch firmware** (alignment/font/size/colour editable, value is not), high/low, sunrise/sunset, **time to sunrise/sunset** and 29 weather icons (Classic). Forecast-backed fields have a **forecast day** setting: Today / Tomorrow / Day after tomorrow / +3 / +4; missing days show `--`.
 
 Add a widget with **+ Add widget** on the preview bar; the left-hand Widgets tab is a
 read-only catalog of supported types. Weekday numbering defaults to **Monday = 1**
@@ -142,10 +143,12 @@ grid), and the Assets page shows at most three tiles per row.
 
 ### 🌐 Interface and watchface languages
 
-The editor ships **EN** and **PL** catalogs with instant switching. Add another language
+The editor ships **EN** and **PL** catalogs with instant switching. English is the default
+on first launch — the app never inherits the Windows UI language. Add another language
 as `%APPDATA%\RustyWatch\Localization\<code>.json` and click **Reload languages** — no
-rebuild or reinstall. A separate **Watchface preview language** option selects the
-variant shown in the editor; on the watch the language is always detected automatically.
+rebuild or reinstall. A separate **Watchface preview language** option (also English by
+default) selects the variant shown in the editor **and** saved into the generated
+`preview.png`/`preview.gif`; on the watch the language is always detected automatically.
 
 ### 👤 Who is it for?
 
@@ -286,7 +289,7 @@ Name, author and App ID land in `app.json` as `appName`, `appId` (`vender` is al
 
 ### 🧪 Tests and verification
 
-1. `cargo test --workspace` — 130 core + 33 FFI tests.
+1. `cargo test --workspace` — 141 core + 36 FFI tests.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. Launch the app and check affected screens in **EN and PL**.
 4. Round-trip `new → export → open → export` must preserve data.

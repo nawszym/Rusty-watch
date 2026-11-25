@@ -639,6 +639,13 @@
                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                             </StackPanel>
 
+                                            <!-- Bateria i pola pogody czytają czujnik — nie mają wzorca. -->
+                                            <StackPanel x:Name="SensorInfoPanel" Spacing="4" Visibility="Collapsed">
+                                                <TextBlock x:Name="SensorInfoHint" Text=""
+                                                           FontSize="10" TextWrapping="Wrap" Margin="0,4,0,12"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+
                                             <!-- Tylko dla widgetu tekstu wpisanego przez użytkownika. -->
                                             <StackPanel x:Name="UserTextPanel" Spacing="4" Visibility="Collapsed">
                                                 <TextBlock Text="{Binding Strings[UserTextLabel]}" FontSize="11"
@@ -678,31 +685,19 @@
                                             </StackPanel>
 
                                             <!-- Tylko dla widgetów zdrowotnych z jednostką: bpm, °C, kcal, %. -->
+                                            <StackPanel x:Name="SleepStageModePanel" Spacing="4" Visibility="Collapsed">
+                                                <TextBlock Text="{Binding Strings[SleepStageModeLabel]}" FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <ComboBox x:Name="SleepStageModeCombo" HorizontalAlignment="Stretch"
+                                                          DisplayMemberPath="Name"
+                                                          SelectionChanged="SleepStageModeCombo_SelectionChanged" />
+                                            </StackPanel>
+
+                                            <!-- Tylko dla widgetów zdrowotnych z jednostką: bpm, °C, kcal, %. -->
                                             <StackPanel x:Name="ShowUnitPanel" Spacing="4" Visibility="Collapsed">
                                                 <CheckBox x:Name="ShowUnitCheckBox"
                                                           Content="{Binding Strings[ShowUnitLabel]}"
                                                           Click="ShowUnitCheckBox_Click" />
-                                            </StackPanel>
-
-                                            <!-- Krycie każdego widgetu: 0 = niewidoczny, 255 = pełny. -->
-                                            <StackPanel x:Name="OpacityPanel" Spacing="4">
-                                                <TextBlock Text="{Binding Strings[OpacityLabel]}" FontSize="11"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                                <Grid ColumnSpacing="10">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="42" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <Border Grid.Column="0" Height="28" CornerRadius="4"
-                                                            Background="{ThemeResource ControlFillColorDefaultBrush}"
-                                                            BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
-                                                            BorderThickness="1">
-                                                        <TextBlock x:Name="OpacityValue" Text="255" FontSize="11"
-                                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                                    </Border>
-                                                    <Slider x:Name="OpacitySlider" Grid.Column="1" Minimum="0" Maximum="255"
-                                                            Value="255" ValueChanged="OpacitySlider_ValueChanged" />
-                                                </Grid>
                                             </StackPanel>
 
                                             <TextBlock Text="{Binding Strings[FontSize]}" FontSize="11"
@@ -764,6 +759,37 @@
                                                                VerticalAlignment="Center" />
                                                 </StackPanel>
                                             </Button>
+                                    </StackPanel>
+
+                                    <!-- Krycie jest wspólne dla wszystkich widgetów, także dla
+                                         analogu, obrazka, STATUS i ikony pogody. -->
+                                    <StackPanel x:Name="OpacityPanel" Spacing="4">
+                                        <TextBlock Text="{Binding Strings[OpacityLabel]}" FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="42" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" Height="28" CornerRadius="4"
+                                                    Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                                    BorderThickness="1">
+                                                <TextBlock x:Name="OpacityValue" Text="255" FontSize="11"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </Border>
+                                            <Slider x:Name="OpacitySlider" Grid.Column="1" Minimum="0" Maximum="255"
+                                                    Value="255" ValueChanged="OpacitySlider_ValueChanged" />
+                                        </Grid>
+                                    </StackPanel>
+
+                                    <!-- Dzień prognozy dla pogody (również dla ikony). -->
+                                    <StackPanel x:Name="WeatherDayPanel" Spacing="4" Visibility="Collapsed">
+                                        <TextBlock Text="{Binding Strings[WeatherDayLabel]}" FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <ComboBox x:Name="WeatherDayCombo" HorizontalAlignment="Stretch"
+                                                  DisplayMemberPath="Name"
+                                                  SelectionChanged="WeatherDayCombo_SelectionChanged" />
                                     </StackPanel>
 
                                     <!-- Pozycja X i Y obok siebie. Wartość: jedno kliknięcie kopiuje,

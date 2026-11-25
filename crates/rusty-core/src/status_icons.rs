@@ -576,6 +576,8 @@ mod tests {
             status_icon_set: None,
             status_type: Some(StatusType::Dnd),
             weather_icon_set: None,
+        weather_day_offset: 0,
+        sleep_stage_mode: Default::default(),
         });
         project
     }

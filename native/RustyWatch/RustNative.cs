@@ -14,8 +14,9 @@ internal sealed record ImageAssetDto(string File, uint Width, uint Height, ulong
 
 internal sealed record ImageListDto(List<ImageAssetDto> Images);
 
-/// <summary>Pozycja katalogu widgetów z rw_supported_widgets (subcategory dla STATUS).</summary>
-internal sealed record SupportedWidgetDto(string Kind, string Category);
+/// <summary>Pozycja katalogu widgetów z rw_supported_widgets. Flaga `HasPattern`
+/// mówi, czy widget ma edytowalny wzorzec czasu/daty (tylko time i date).</summary>
+internal sealed record SupportedWidgetDto(string Kind, string Category, bool HasPattern = false);
 
 /// <summary>Zestaw wskazówek z magazynu w %APPDATA%\RustyWatch\Hands.</summary>
 internal sealed record HandSetDto(string Id, string Name, bool HasSecond, bool HasCap, uint Size,

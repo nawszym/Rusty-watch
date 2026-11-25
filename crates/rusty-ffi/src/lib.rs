@@ -478,14 +478,15 @@ pub extern "C" fn rw_format_weather_field(
             } else {
                 icon_set.trim()
             };
+            let index = state.resolved_day().map(|day| day.index).unwrap_or(state.index);
             let mut path = rusty_core::weather::pack_dir(Path::new(&app_data_root), set)
-                .join(format!("w{:02}.png", state.index));
+                .join(format!("w{index:02}.png"));
             if !path.is_file() {
                 path = rusty_core::weather::pack_dir(
                     Path::new(&app_data_root),
                     rusty_core::weather::DEFAULT_WEATHER_PACK,
                 )
-                .join(format!("w{:02}.png", state.index));
+                .join(format!("w{index:02}.png"));
             }
             path.to_string_lossy().to_string()
         } else {
@@ -1879,6 +1880,20 @@ mod tests {
     }
 
     #[test]
+    fn only_time_and_date_catalog_entries_have_pattern() {
+        let value = take(rw_supported_widgets());
+        for item in value["data"].as_array().unwrap() {
+            let kind = item["kind"].as_str().unwrap();
+            let expected = kind == "time" || kind == "date";
+            assert_eq!(
+                item["hasPattern"].as_bool().unwrap_or(false),
+                expected,
+                "hasPattern for {kind}"
+            );
+        }
+    }
+
+    #[test]
     fn frame_geometry_scales_text_and_clamps_to_screen() {
         let scale = CString::new(
             r#"{"x":23,"y":183,"w":420,"h":100,"textSize":64,"handle":"se","dx":-210,"dy":0,"autoScale":true}"#,
@@ -2625,6 +2640,193 @@ mod tests {
     }
 
     #[test]
+    fn new_widget_fields_roundtrip_through_ffi() {
+        let root = std::env::temp_dir().join(format!("rw-ffi-newwidgets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let root_arg = CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../native/RustyWatch/Assets");
+        let bundled_fonts = CString::new(bundled.join("Fonts").to_string_lossy().as_bytes()).unwrap();
+        let bundled_hands = CString::new(bundled.join("Hands").to_string_lossy().as_bytes()).unwrap();
+        let bundled_status = CString::new(bundled.join("Status").to_string_lossy().as_bytes()).unwrap();
+        let bundled_weather = CString::new(bundled.join("Weather").to_string_lossy().as_bytes()).unwrap();
+        let seeded = take(rw_ensure_defaults(
+            root_arg.as_ptr(),
+            bundled_fonts.as_ptr(),
+            bundled_hands.as_ptr(),
+            bundled_status.as_ptr(),
+            bundled_weather.as_ptr(),
+        ));
+        assert_eq!(seeded["ok"], true, "error: {}", seeded["error"]);
+        let name = CString::new("NewWidgets").unwrap();
+        let author = CString::new("Dev").unwrap();
+        let created = take(rw_create_project(root_arg.as_ptr(), name.as_ptr(), author.as_ptr(), 95));
+        assert_eq!(created["ok"], true, "error: {}", created["error"]);
+        let file = created["data"]["file"].as_str().unwrap();
+        let project_file = CString::new(file).unwrap();
+
+        for kind in [
+            "sleep-score",
+            "sleep-deep",
+            "heart-min",
+            "heart-max",
+            "heart-avg",
+            "weather-high",
+            "weather-icon",
+        ] {
+            let kind_arg = CString::new(kind).unwrap();
+            let added = take(rw_add_widget(
+                project_file.as_ptr(),
+                kind_arg.as_ptr(),
+                root_arg.as_ptr(),
+                root_arg.as_ptr(),
+                root_arg.as_ptr(),
+            ));
+            assert_eq!(added["ok"], true, "kind={kind} error: {}", added["error"]);
+            assert_eq!(added["data"]["layers"].as_array().unwrap().last().unwrap()["kind"], kind);
+        }
+
+        let stage_settings = CString::new(
+            r#"{"id":"sleep-deep","x":23,"y":150,"w":420,"h":60,"textSize":40,"color":"0xFFFFFFFF","align":"center","sleepStageMode":"percent"}"#,
+        )
+        .unwrap();
+        let updated = take(rw_set_widget(project_file.as_ptr(), stage_settings.as_ptr(), root_arg.as_ptr()));
+        assert_eq!(updated["ok"], true, "error: {}", updated["error"]);
+        let day_settings = CString::new(
+            r#"{"id":"weather-high","x":23,"y":150,"w":420,"h":60,"textSize":40,"color":"0xFFFFFFFF","align":"center","weatherDayOffset":3}"#,
+        )
+        .unwrap();
+        let updated = take(rw_set_widget(project_file.as_ptr(), day_settings.as_ptr(), root_arg.as_ptr()));
+        assert_eq!(updated["ok"], true, "error: {}", updated["error"]);
+
+        let project = rusty_core::load_project(Path::new(file)).unwrap();
+        let deep = project.widgets.iter().find(|w| w.id == "sleep-deep").unwrap();
+        assert_eq!(deep.sleep_stage_mode, rusty_core::model::SleepStageMode::Percent);
+        let high = project.widgets.iter().find(|w| w.id == "weather-high").unwrap();
+        assert_eq!(high.weather_day_offset, 3);
+
+        let layers = take(rw_editor_layers(project_file.as_ptr()));
+        let find_layer = |kind: &str| {
+            layers["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["kind"] == kind)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(find_layer("sleep-deep")["sleepStageMode"], "percent");
+        assert_eq!(find_layer("weather-high")["weatherDayOffset"], 3);
+        let js = rusty_core::codegen::generate_index_js(&project);
+        assert!(js.contains("_sleepStageText(_sModels && _sModels.DEEP_STAGE, true)"));
+        assert!(js.contains("const _wd_"), "day constant missing: {js}");
+        assert!(rusty_core::validate(&project).is_empty());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn package_one_widgets_roundtrip_through_ffi() {
+        let root = std::env::temp_dir().join(format!("rw-ffi-package-one-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let root_arg = CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../native/RustyWatch/Assets");
+        let bundled_fonts = CString::new(bundled.join("Fonts").to_string_lossy().as_bytes()).unwrap();
+        let bundled_hands = CString::new(bundled.join("Hands").to_string_lossy().as_bytes()).unwrap();
+        let bundled_status = CString::new(bundled.join("Status").to_string_lossy().as_bytes()).unwrap();
+        let bundled_weather = CString::new(bundled.join("Weather").to_string_lossy().as_bytes()).unwrap();
+        let seeded = take(rw_ensure_defaults(
+            root_arg.as_ptr(),
+            bundled_fonts.as_ptr(),
+            bundled_hands.as_ptr(),
+            bundled_status.as_ptr(),
+            bundled_weather.as_ptr(),
+        ));
+        assert_eq!(seeded["ok"], true, "error: {}", seeded["error"]);
+
+        let name = CString::new("Package One").unwrap();
+        let author = CString::new("Dev").unwrap();
+        let created = take(rw_create_project(root_arg.as_ptr(), name.as_ptr(), author.as_ptr(), 96));
+        assert_eq!(created["ok"], true, "error: {}", created["error"]);
+        let file = created["data"]["file"].as_str().unwrap();
+        let project_file = CString::new(file).unwrap();
+
+        for kind in [
+            "heart-last",
+            "spo2-hour-avg",
+            "pai-prepai",
+            "sleep-wake",
+            "sun-current",
+            "weather-current",
+        ] {
+            let kind_arg = CString::new(kind).unwrap();
+            let added = take(rw_add_widget(
+                project_file.as_ptr(),
+                kind_arg.as_ptr(),
+                root_arg.as_ptr(),
+                root_arg.as_ptr(),
+                root_arg.as_ptr(),
+            ));
+            assert_eq!(added["ok"], true, "kind={kind} error: {}", added["error"]);
+            assert_eq!(added["data"]["layers"].as_array().unwrap().last().unwrap()["kind"], kind);
+        }
+
+        let temp_settings = CString::new(
+            r#"{"id":"weather-current","x":23,"y":150,"w":420,"h":60,"textSize":40,"color":"0xFFFFFFFF","align":"center","showUnit":false}"#,
+        )
+        .unwrap();
+        let updated = take(rw_set_widget(project_file.as_ptr(), temp_settings.as_ptr(), root_arg.as_ptr()));
+        assert_eq!(updated["ok"], true, "error: {}", updated["error"]);
+        let wake_settings = CString::new(
+            r#"{"id":"sleep-wake","x":23,"y":150,"w":420,"h":60,"textSize":40,"color":"0xFFFFFFFF","align":"center","sleepStageMode":"percent"}"#,
+        )
+        .unwrap();
+        let updated = take(rw_set_widget(project_file.as_ptr(), wake_settings.as_ptr(), root_arg.as_ptr()));
+        assert_eq!(updated["ok"], true, "error: {}", updated["error"]);
+
+        let project = rusty_core::load_project(Path::new(file)).unwrap();
+        let temp = project.widgets.iter().find(|w| w.id == "weather-current").unwrap();
+        assert_eq!(temp.text.as_deref(), Some("22°"), "text content is not editable");
+        assert_eq!(temp.show_unit, false);
+        let wake = project.widgets.iter().find(|w| w.id == "sleep-wake").unwrap();
+        assert_eq!(wake.sleep_stage_mode, rusty_core::model::SleepStageMode::Percent);
+        let js = rusty_core::codegen::generate_index_js(&project);
+        for token in [
+            "_hHeart.last", "_spo2Hour", "prepai0", "WAKE_STAGE", "_sunCurrentText()",
+            "hmUI.widget.TEXT_FONT", "type: hmUI.data_type.WEATHER_CURRENT", "unit_type: 0",
+        ] {
+            assert!(js.contains(token), "generated JS lacks {token}");
+        }
+        assert!(rusty_core::validate(&project).is_empty());
+
+        let kind = CString::new("sun-current").unwrap();
+        let overrides = CString::new(r#"{"dayOffset":0,"nowMinute":1297}"#).unwrap();
+        let locale = CString::new("en").unwrap();
+        let pack = CString::new("Classic").unwrap();
+        let raw = take(rw_format_weather_field(
+            kind.as_ptr(), overrides.as_ptr(), locale.as_ptr(), root_arg.as_ptr(), pack.as_ptr(),
+        ));
+        assert_eq!(raw["ok"], true, "error: {}", raw["error"]);
+        let text = raw["data"]["text"].as_str().unwrap();
+        assert!(text.contains(':'), "unexpected sun-current text: {text}");
+        assert_ne!(text, "--:--");
+
+        let temp_kind = CString::new("weather-current").unwrap();
+        let temp_overrides = CString::new(r#"{"current":18}"#).unwrap();
+        let raw = take(rw_format_weather_field(
+            temp_kind.as_ptr(), temp_overrides.as_ptr(), locale.as_ptr(),
+            root_arg.as_ptr(), pack.as_ptr(),
+        ));
+        assert_eq!(raw["ok"], true, "error: {}", raw["error"]);
+        assert_eq!(raw["data"]["text"], "18°");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn goal_widgets_roundtrip_through_ffi() {
         let value = take(rw_supported_widgets());
         assert_eq!(value["ok"], true);
@@ -2642,7 +2844,6 @@ mod tests {
                 "calories-target",
                 "stand-target",
                 "fat-burning-target",
-                "sleep-target"
             ]
         );
 

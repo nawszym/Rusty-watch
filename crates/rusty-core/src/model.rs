@@ -183,6 +183,37 @@ fn default_alpha() -> u8 {
     255
 }
 
+/// Sposób prezentacji fazy snu: minuty albo udział procentowy całego snu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SleepStageMode {
+    #[default]
+    Duration,
+    Percent,
+}
+
+impl SleepStageMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "duration" | "min" | "minutes" => Some(Self::Duration),
+            "percent" | "percentage" | "%" => Some(Self::Percent),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Duration => "duration",
+            Self::Percent => "percent",
+        }
+    }
+}
+
+/// Domyślny dzień prognozy — starsze projekty nie mają tego pola.
+fn default_weather_day_offset() -> u8 {
+    0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Asset {
@@ -291,6 +322,12 @@ pub struct Widget {
     /// Nazwa paczki ikon pogody z `%APPDATA%\RustyWatch\Weather` (tylko WeatherIcon).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weather_icon_set: Option<String>,
+    /// Dzień prognozy dla widgetów pogodowych: 0 = dziś, 1 = jutro, … 4.
+    #[serde(default = "default_weather_day_offset")]
+    pub weather_day_offset: u8,
+    /// Czas fazy snu w minutach albo jako % całego snu.
+    #[serde(default)]
+    pub sleep_stage_mode: SleepStageMode,
 }
 
 /// Stan systemu wyświetlany przez `hmUI.widget.IMG_STATUS`.
@@ -383,6 +420,14 @@ pub enum WidgetKind {
     DistanceText,
     /// Puls z `hmSensor.id.HEART` (wartość bieżąca).
     HeartRateText,
+    /// Ostatni prawidłowy puls z `hmSensor.id.HEART.last`.
+    HeartRateLastText,
+    /// Najniższy puls z `hmSensor.id.HEART.today`.
+    HeartRateMinText,
+    /// Najwyższy puls z `hmSensor.id.HEART.today`.
+    HeartRateMaxText,
+    /// Średni puls z `hmSensor.id.HEART.today`.
+    HeartRateAvgText,
     /// Poziom stresu z `hmSensor.id.STRESS`.
     StressText,
     /// PAI z `hmSensor.id.PAI` (wynik dzienny).
@@ -391,10 +436,26 @@ pub enum WidgetKind {
     SkinTempText,
     /// Czas snu z `hmSensor.id.SLEEP`.
     SleepText,
+    /// Wynik snu z `SLEEP.getBasicInfo().score`.
+    SleepScoreText,
+    /// Czas fazy DEEP z `SLEEP.getSleepStageData()`.
+    SleepDeepText,
+    /// Czas fazy LIGHT z `SLEEP.getSleepStageData()`.
+    SleepLightText,
+    /// Czas fazy REM z `SLEEP.getSleepStageData()`.
+    SleepRemText,
+    /// Czas czuwania w nocy z fazy `WAKE_STAGE`.
+    SleepWakeText,
+    /// Godzina rozpoczęcia snu z `SLEEP.getBasicInfo().startTime`.
+    SleepStartText,
+    /// Godzina zakończenia snu z `SLEEP.getBasicInfo().endTime`.
+    SleepEndText,
     /// Spalone kalorie z `hmSensor.id.CALORIE`.
     CalorieText,
     /// SpO₂ z `hmSensor.id.SPO2`.
     Spo2Text,
+    /// Średnie SpO₂ z bieżącej godziny (`SPO2.hourAvgofDay`).
+    Spo2HourAvgText,
     /// Poziom baterii z `hmSensor.id.BATTERY` (widget tekstowy).
     BatteryText,
     /// Cel kroków z `hmSensor.id.STEP.target`.
@@ -411,20 +472,26 @@ pub enum WidgetKind {
     FatBurningText,
     /// Skumulowane PAI z `hmSensor.id.PAI.totalpai`.
     PaiWeeklyText,
+    /// Suma PAI z 7 ostatnich dni (`dailypai` + `prepai0…5`).
+    PaiPrepaiText,
     /// Cel snu z `hmSetting.getSleepTarget()` (minuty).
     SleepTargetText,
-    /// Nazwa aktualnej pogody z indeksu `forecastData.data[0].index`.
+    /// Nazwa pogody z `forecastData.data[dayOffset].index`.
     WeatherConditionText,
-    /// Miasto z `weather.getForecastWeather().cityName`.
+    /// Miasto z `weather.getForecastWeather().cityName` (zawsze dzień 0).
     WeatherCityText,
-    /// Dziś najwyższa temperatura z `forecastData.data[0].high`.
+    /// Temperatura bieżąca — zwykły edytowalny tekst, bez wiązania z czujnikiem.
+    WeatherCurrentText,
+    /// Najwyższa temperatura z `forecastData.data[dayOffset].high`.
     WeatherHighText,
-    /// Dziś najniższa temperatura z `forecastData.data[0].low`.
+    /// Najniższa temperatura z `forecastData.data[dayOffset].low`.
     WeatherLowText,
-    /// Wschód słońca z `tideData.data[0].sunrise`.
+    /// Wschód słońca z `tideData.data[dayOffset].sunrise`.
     SunriseText,
-    /// Zachód słońca z `tideData.data[0].sunset`.
+    /// Zachód słońca z `tideData.data[dayOffset].sunset`.
     SunsetText,
+    /// Czas do najbliższego wschodu/zachodu z `tideData` i czujnika TIME.
+    SunCurrentText,
     /// Ikona pogody — jeden z 29 plików wybierany w runtime przez indeks pogody.
     WeatherIcon,
     /// Ikona stanu systemu rysowana przez `hmUI.widget.IMG_STATUS`.
@@ -434,20 +501,31 @@ pub enum WidgetKind {
 }
 
 impl WidgetKind {
+    /// Tylko czas i data mają edytowalny wzorzec. Pozostałe typy (bateria,
+    /// pogoda, czujniki, obrazy) pobierają wartość z czujnika lub z zasobu —
+    /// zapisanie `timeFormat` nadpisałoby ich tekst na `00:00:00`.
+    pub fn uses_pattern(self) -> bool {
+        matches!(self, Self::TimeText | Self::DateText)
+    }
+
     /// Tekst początkowy widgetu zdrowotnego z jednostką lub bez niej.
     /// PC nie ma czujników, więc podgląd i pierwsza klatka tarczy pokazują `--`.
     pub fn health_initial_text(self, show_unit: bool) -> Option<String> {
         let (base, unit) = match self {
-            Self::HeartRateText => ("--", Some(" bpm")),
+            Self::HeartRateText
+            | Self::HeartRateLastText
+            | Self::HeartRateMinText
+            | Self::HeartRateMaxText
+            | Self::HeartRateAvgText => ("--", Some(" bpm")),
             Self::StressText => ("--", None),
             Self::PaiText => ("--", None),
             Self::SkinTempText => ("--", Some(" °C")),
             Self::SleepText => ("--:--", None),
             Self::CalorieText => ("--", Some(" kcal")),
-            Self::Spo2Text => ("--", Some("%")),
+            Self::Spo2Text | Self::Spo2HourAvgText => ("--", Some("%")),
             Self::StandText => ("--", Some(" h")),
             Self::FatBurningText => ("--", Some(" min")),
-            Self::PaiWeeklyText => ("--", None),
+            Self::PaiWeeklyText | Self::PaiPrepaiText => ("--", None),
             _ => return None,
         };
         Some(match (show_unit, unit) {
@@ -474,16 +552,45 @@ impl WidgetKind {
         matches!(
             self,
             Self::HeartRateText
+                | Self::HeartRateLastText
+                | Self::HeartRateMinText
+                | Self::HeartRateMaxText
+                | Self::HeartRateAvgText
                 | Self::StressText
                 | Self::PaiText
                 | Self::SkinTempText
                 | Self::SleepText
                 | Self::CalorieText
                 | Self::Spo2Text
+                | Self::Spo2HourAvgText
                 | Self::StandText
                 | Self::FatBurningText
                 | Self::PaiWeeklyText
+                | Self::PaiPrepaiText
         )
+    }
+
+    /// Widgety z `hmSensor.id.SLEEP` (nowa kategoria SNU w katalogu).
+    pub fn is_sleep(self) -> bool {
+        matches!(
+            self,
+            Self::SleepText
+                | Self::SleepScoreText
+                | Self::SleepDeepText
+                | Self::SleepLightText
+                | Self::SleepRemText
+                | Self::SleepWakeText
+                | Self::SleepStartText
+                | Self::SleepEndText
+        )
+    }
+
+    /// Początkowy tekst fazy snu zależy od wybranego trybu (minuty albo %).
+    pub fn sleep_stage_initial_text(mode: SleepStageMode) -> &'static str {
+        match mode {
+            SleepStageMode::Duration => "-- min",
+            SleepStageMode::Percent => "--%",
+        }
     }
 
     /// Widgety kategorii CELE — czytają pole `.target` czujnika zamiast `.current`.
@@ -504,10 +611,12 @@ impl WidgetKind {
             self,
             Self::WeatherConditionText
                 | Self::WeatherCityText
+                | Self::WeatherCurrentText
                 | Self::WeatherHighText
                 | Self::WeatherLowText
                 | Self::SunriseText
                 | Self::SunsetText
+                | Self::SunCurrentText
                 | Self::WeatherIcon
         )
     }
@@ -545,12 +654,29 @@ pub enum DataSource {
     Step,
     Distance,
     HeartRate,
+    /// Ostatni prawidłowy odczyt z `HEART.last`.
+    HeartRateLast,
+    /// Statystyki z `HEART.today` (tablica wartości z poszczególnych minut).
+    HeartRateMin,
+    HeartRateMax,
+    HeartRateAvg,
     Stress,
     Pai,
     SkinTemp,
     Sleep,
+    /// Pola `hmSensor.id.SLEEP` (wynik, fazy i godziny snu).
+    SleepScore,
+    SleepDeep,
+    SleepLight,
+    SleepRem,
+    /// Czas czuwania w nocy z fazy `WAKE_STAGE`.
+    SleepWake,
+    SleepStart,
+    SleepEnd,
     Calorie,
     Spo2,
+    /// Średnie SpO₂ z bieżącej godziny (`SPO2.hourAvgofDay`).
+    Spo2HourAvg,
     StepTarget,
     CalorieTarget,
     StandTarget,
@@ -558,13 +684,19 @@ pub enum DataSource {
     Stand,
     FatBurning,
     PaiWeekly,
+    /// Suma PAI z dzisiejszego dnia i sześciu poprzednich.
+    PaiPrepai,
     SleepTarget,
     WeatherCondition,
     WeatherCity,
+    /// Edytowalny tekst temperatury bieżącej (bez czujnika).
+    WeatherCurrent,
     WeatherHigh,
     WeatherLow,
     Sunrise,
     Sunset,
+    /// Czas do najbliższego wschodu/zachodu, liczony z tideData i TIME.
+    SunCurrent,
     WeatherIcon,
 }
 
@@ -749,6 +881,8 @@ impl Project {
                     status_icon_set: None,
                     status_type: None,
                     weather_icon_set: None,
+                weather_day_offset: 0,
+                sleep_stage_mode: Default::default(),
                 },
             ],
             custom_code: None,

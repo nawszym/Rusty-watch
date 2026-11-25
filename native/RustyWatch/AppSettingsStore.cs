@@ -49,19 +49,22 @@ internal static class AppSettingsStore
     }
 
     /// <summary>
-    /// Język używany do podglądu tekstów tarczy: `auto` (język Windows), `pl` albo `en`.
-    /// Sama tarcza zawsze wykrywa język zegarka w runtime — to ustawienie dotyczy tylko podglądu.
+    /// Język używany do podglądu tekstów tarczy: `pl` albo `en` (domyślnie `en`).
+    /// Nie zależy od języka Windows ani od języka interfejsu. Sama tarcza zawsze
+    /// wykrywa język zegarka w runtime — to ustawienie dotyczy tylko podglądu
+    /// w edytorze i generowanych plików preview.png/preview.gif.
     /// </summary>
     public static string WatchfacePreviewLanguage
     {
         get
         {
             Load();
-            return string.IsNullOrWhiteSpace(_watchfacePreviewLanguage)
-                ? "auto"
-                : _watchfacePreviewLanguage!;
+            return NormalizeWatchfacePreviewLanguage(_watchfacePreviewLanguage);
         }
     }
+
+    private static string NormalizeWatchfacePreviewLanguage(string? value)
+        => string.Equals(value, "pl", StringComparison.OrdinalIgnoreCase) ? "pl" : "en";
 
     /// <summary>
     /// Domyślny system jednostek dla widgetów dystansu: `watch` (jednostka z zegarka,
@@ -123,7 +126,7 @@ internal static class AppSettingsStore
     public static void SetWatchfacePreviewLanguage(string value)
     {
         Load();
-        var normalized = string.IsNullOrWhiteSpace(value) ? "auto" : value.Trim().ToLowerInvariant();
+        var normalized = NormalizeWatchfacePreviewLanguage(value);
         if (string.Equals(_watchfacePreviewLanguage, normalized, StringComparison.Ordinal)) return;
         _watchfacePreviewLanguage = normalized;
         Save();
@@ -247,8 +250,10 @@ internal static class AppSettingsStore
                 _defaultAuthor = author.GetString();
             if (root.TryGetProperty("projectsDirectory", out var directory))
                 _projectsDirectory = directory.GetString();
+            // Stare zapisy `auto` (język Windows) traktujemy jako angielski —
+            // podgląd nie ma już domyślnego języka systemu.
             if (root.TryGetProperty("watchfacePreviewLanguage", out var previewLanguage))
-                _watchfacePreviewLanguage = previewLanguage.GetString();
+                _watchfacePreviewLanguage = NormalizeWatchfacePreviewLanguage(previewLanguage.GetString());
             if (root.TryGetProperty("measurementSystem", out var measurementSystem))
                 _measurementSystem = measurementSystem.GetString();
             if (root.TryGetProperty("firstDayOfWeek", out var firstDay))

@@ -662,6 +662,8 @@ mod tests {
             status_icon_set: None,
             status_type: None,
             weather_icon_set: None,
+        weather_day_offset: 0,
+        sleep_stage_mode: Default::default(),
         };
         let (x, y, w, h) = default_frame();
         widget.x = x;

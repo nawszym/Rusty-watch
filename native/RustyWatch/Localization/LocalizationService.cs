@@ -84,7 +84,8 @@ public static class LocalizationService
         catalogs.Sort((a, b) => string.CompareOrdinal(a.Code, b.Code));
         _languages.AddRange(catalogs);
 
-        var saved = AppSettingsStore.Language ?? CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+        // Język interfejsu domyślnie angielski — nie zależy od kultury Windows.
+        var saved = AppSettingsStore.Language ?? "en";
         _current = (previousCode is null
                         ? null
                         : _languages.FirstOrDefault(l => l.Code.Equals(previousCode, StringComparison.OrdinalIgnoreCase)))

@@ -98,7 +98,7 @@ throws/propagates `error`.
 `date_format`, `export_paths`, `fonts`, `hands`, `image_fit`, `images`, `layers`,
 `locale`, `model`, `package`, `preview`, `project`, `recent`, `status_icons`,
 `time_format`, `validate`, `weather`, `widgets`). `lib.rs` itself only re-exports
-types and contains the 130 core tests.
+types and contains the 141 core tests.
 
 ### 2.1 Constants and `Project` (`model.rs:5-37`)
 
@@ -132,16 +132,20 @@ Every field has a serde default if optional, so older `project.json` files load:
 | Media | `src`, `image_fit` (`FitMode::Contain` default), `hand_set`, `hour_src`, `minute_src`, `second_src`, `cap_src` |
 | Data | `data_source: Option<DataSource>`, `visible` (default **true**), `measurement_system: Option<MeasurementSystem>` (override), `show_unit` (default **true**) |
 
-`WidgetKind` has 38 variants (`model.rs:359-433`): `Text`, `Image` (legacy, not
+`WidgetKind` has 53 variants (`model.rs`, ~396-500): `Text`, `Image` (legacy, not
 in catalog), `Images`, `TimeText`, `DateText`, `WeekdayNumberText`, `WeekNumberText`,
 `DayOfYearText`, `LunarDateText`, `FestivalText`, `WorldClockText`, `StepText`,
-`DistanceText`, `HeartRateText`, `StressText`, `PaiText`, `SkinTempText`, `SleepText`,
-`CalorieText`, `Spo2Text`, `BatteryText`, `StepTargetText`, `CalorieTargetText`,
+`DistanceText`, `HeartRateText`, `HeartRateLastText`, `HeartRateMinText`,
+`HeartRateMaxText`, `HeartRateAvgText`, `StressText`, `PaiText`, `PaiPrepaiText`,
+`SkinTempText`, `SleepText`, `SleepScoreText`, `SleepDeepText`, `SleepLightText`,
+`SleepRemText`, `SleepWakeText`, `SleepStartText`, `SleepEndText`, `CalorieText`,
+`Spo2Text`, `Spo2HourAvgText`, `BatteryText`, `StepTargetText`, `CalorieTargetText`,
 `StandTargetText`, `FatBurningTargetText`, `StandText`, `FatBurningText`,
 `PaiWeeklyText`, `SleepTargetText`, `WeatherConditionText`, `WeatherCityText`,
-`WeatherHighText`, `WeatherLowText`, `SunriseText`, `SunsetText`, `WeatherIcon`,
-`StatusIcon`, `AnalogTime`. `supported_widgets()` exposes 40 of these (all except
-legacy `Image` and the statuses represented as four separate catalog entries).
+`WeatherCurrentText`, `WeatherHighText`, `WeatherLowText`, `SunriseText`,
+`SunsetText`, `SunCurrentText`, `WeatherIcon`, `StatusIcon`, `AnalogTime`.
+`supported_widgets()` exposes 55 catalog entries (the legacy `Image` is not addable;
+`StatusIcon` is represented by four `status-*` entries).
 
 Enum → generated JS (`model.rs`):
 - `Align::as_js()` (`:415-421`) → `hmUI.align.LEFT|CENTER_H|RIGHT`.
@@ -267,7 +271,7 @@ deliberately falls back to an empty list when the recent store is corrupt — a 
 
 ### 5.1 Catalog (`widgets.rs:12-117`)
 
-`supported_widgets()` returns 40 `{kind,category}` entries in this order:
+`supported_widgets()` returns 55 `{kind,category}` entries in this order:
 
 | Category | Kinds |
 |---|---|
@@ -276,10 +280,20 @@ deliberately falls back to an empty list when the recent store is corrupt — a 
 | `text` | `text` |
 | `images` | `images` |
 | `distance` | `steps`, `distance` |
-| `goals` | `steps-target`, `calories-target`, `stand-target`, `fat-burning-target`, `sleep-target` |
-| `health` | `heart`, `stress`, `pai`, `skin-temp`, `sleep`, `calories`, `spo2`, `stand`, `fat-burning`, `pai-weekly` |
+| `goals` | `steps-target`, `calories-target`, `stand-target`, `fat-burning-target` |
+| `health` | `heart`, `heart-last`, `heart-min`, `heart-max`, `heart-avg`, `stress`, `pai`, `pai-prepai`, `skin-temp`, `calories`, `spo2`, `spo2-hour-avg`, `stand`, `fat-burning`, `pai-weekly` |
+| `sleep` | `sleep`, `sleep-score`, `sleep-deep`, `sleep-light`, `sleep-rem`, `sleep-wake`, `sleep-start`, `sleep-end`, `sleep-target` |
 | `system` | `battery`, `status-alarm`, `status-dnd`, `status-bluetooth`, `status-lock` |
-| `weather` | `weather-condition`, `weather-city`, `weather-high`, `weather-low`, `sunrise`, `sunset`, `weather-icon` |
+| `weather` | `weather-condition`, `weather-city`, `weather-current`, `weather-high`, `weather-low`, `sunrise`, `sunset`, `sun-current`, `weather-icon` |
+
+`heart-last` reads `HEART.last`, `spo2-hour-avg` reads `SPO2.hourAvgofDay[hour]` and
+`pai-prepai` sums `dailypai + prepai0…5`; all three reuse the existing lazy getters,
+so no extra sensor instance or listener is created. `sleep-wake` uses the `WAKE_STAGE`
+model and the same `sleepStageMode` as the other phases. `weather-current` is emitted
+as `hmUI.widget.TEXT_FONT` with `type: hmUI.data_type.WEATHER_CURRENT` and `unit_type`
+driven by `show_unit` — the firmware owns the value, so no JS sensor/timer/listener is
+generated. `sun-current` computes the remaining time to the next sunrise/sunset with
+`_sunCurrentText()` in JS and `sun_current_minutes()` in Rust — both avoid `Date`.
 
 Goals read `hmSensor.id.<X>.target` through a shared `targetTick`, lazy `try/catch`
 getters and CHANGE listeners removed in `onDestroy`; `STAND`/`FAT_BURRING` may be
@@ -751,7 +765,7 @@ own `assets/fonts` copy so the preview uses exactly the exported TTF.
 `Microsoft.Windows.SDK.BuildTools 10.0.26100.4654`. The `BuildRustFfi` target runs
 `cargo build -p rusty-ffi` before build; `CopyRustFfi` copies `rusty_ffi.dll` after
 build with `SkipUnchangedFiles="false"` because `PreserveNewest` can leave a stale DLL.
-Expected result on both toolchains: 0 errors / 0 warnings (163 tests total: 130 core + 33 FFI).
+Expected result on both toolchains: 0 errors / 0 warnings (177 tests total: 141 core + 36 FFI).
 
 ### 11.7 Preview options and Custom Data
 
