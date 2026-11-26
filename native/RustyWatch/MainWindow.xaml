@@ -1683,7 +1683,7 @@
             </StackPanel>
         </muxc:ContentDialog>
 
-        <!-- Okno eksportu nad edytorem — tylko dane projektu i przycisk ZIP. -->
+        <!-- Okno eksportu nad edytorem — podgląd, dane projektu i kod QR. ZIP jest już gotowy. -->
         <muxc:ContentDialog x:Name="ExportDialog"
                             Title="{Binding Strings[ExportDialogTitle]}"
                             CloseButtonText="{Binding Strings[Close]}"
@@ -1728,12 +1728,8 @@
                     </Grid>
                 </StackPanel>
 
-                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
-                    <Button x:Name="DialogExportZipButton" Content="{Binding Strings[ExportZip]}"
-                            Click="DialogExportZip_Click" />
-                    <Button x:Name="DialogQrButton" Content="{Binding Strings[QrCode]}"
-                            Click="DialogQr_Click" />
-                </StackPanel>
+                <Button x:Name="DialogQrButton" Content="{Binding Strings[QrCode]}"
+                        Click="DialogQr_Click" HorizontalAlignment="Center" />
                 <Image x:Name="ExportQrImage" MaxWidth="256" MaxHeight="256"
                        Stretch="Uniform" HorizontalAlignment="Center" Visibility="Collapsed" />
                 <TextBlock x:Name="ExportQrStatus" Text="" FontSize="11" TextWrapping="Wrap"

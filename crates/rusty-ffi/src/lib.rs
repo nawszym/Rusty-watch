@@ -2791,7 +2791,7 @@ mod tests {
         let project_file = CString::new(file).unwrap();
 
         for kind in [
-            "heart-last",
+            "heart",
             "spo2-hour-avg",
             "pai-prepai",
             "sleep-wake",

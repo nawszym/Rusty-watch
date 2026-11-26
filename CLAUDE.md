@@ -20,7 +20,7 @@ dotnet build .\native\RustyWatch\RustyWatch.csproj
 ```
 
 `dotnet build` already runs `cargo build -p rusty-ffi`. Expected result: 0 errors and
-0 warnings on both. Current test count: 168 core + 38 FFI.
+0 warnings on both. Current test count: 170 core + 38 FFI.
 
 ## Repository-specific habits
 

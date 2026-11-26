@@ -3229,7 +3229,6 @@ public sealed partial class MainWindow : Window
         "stand-target" => L("StandTargetWidgetCardTitle"),
         "fat-burning-target" => L("FatBurningTargetWidgetCardTitle"),
         "heart" => L("HeartWidgetCardTitle"),
-        "heart-last" => L("HeartLastWidgetCardTitle"),
         "heart-min" => L("HeartMinWidgetCardTitle"),
         "heart-max" => L("HeartMaxWidgetCardTitle"),
         "heart-avg" => L("HeartAvgWidgetCardTitle"),
@@ -3292,7 +3291,6 @@ public sealed partial class MainWindow : Window
         "stand-target" => L("StandTargetWidgetCardDesc"),
         "fat-burning-target" => L("FatBurningTargetWidgetCardDesc"),
         "heart" => L("HeartWidgetCardDesc"),
-        "heart-last" => L("HeartLastWidgetCardDesc"),
         "heart-min" => L("HeartMinWidgetCardDesc"),
         "heart-max" => L("HeartMaxWidgetCardDesc"),
         "heart-avg" => L("HeartAvgWidgetCardDesc"),
@@ -3347,7 +3345,7 @@ public sealed partial class MainWindow : Window
         "weekday-number" or "week-number" or "day-of-year" or "lunar-date" or "festival" or "world-clock";
 
     private static bool IsHealthKind(string? kind) => kind is
-        "heart" or "heart-last" or "heart-min" or "heart-max" or "heart-avg"
+        "heart" or "heart-min" or "heart-max" or "heart-avg"
         or "stress" or "pai" or "skin-temp" or "sleep" or "calories"
         or "spo2" or "spo2-hour-avg" or "stand" or "fat-burning"
         or "pai-weekly" or "pai-prepai";
@@ -3608,7 +3606,7 @@ public sealed partial class MainWindow : Window
 
     /// <summary>Tylko widgety z jednostką mają w inspektorze przełącznik jej pokazywania.</summary>
     private static bool HasUnitKind(string? kind) => kind is
-        "heart" or "heart-last" or "heart-min" or "heart-max" or "heart-avg"
+        "heart" or "heart-min" or "heart-max" or "heart-avg"
         or "skin-temp" or "calories" or "spo2" or "spo2-hour-avg"
         or "calories-target" or "stand-target" or "fat-burning-target"
         or "stand" or "fat-burning" or "weather-current";
@@ -5632,10 +5630,14 @@ public sealed partial class MainWindow : Window
                 // Active 2 (Round), więc w oknie nie widać kwadratowych rogów.
             }
 
+            // Główny przycisk EXPORT od razu zapisuje paczkę — okno dialogowe
+            // służy tylko do podglądu i pokazania kodu QR.
+            var zipPath = ExportZipNow();
+            ShowStatus(LF("Exported", zipPath));
             ResetQrView();
-            // Świeży ZIP, serwer i kod QR są gotowe jeszcze przed otwarciem okna —
+            // Serwer i kod QR są gotowe jeszcze przed otwarciem okna —
             // kliknięcie przycisku QR tylko pokazuje przygotowany obrazek.
-            await PrepareQrAsync();
+            await PrepareQrAsync(zipPath);
             LoadExportProjectInfo();
             await ExportDialog.ShowAsync();
         }
@@ -5677,22 +5679,21 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>Zapisuje paczkę ZIP do katalogu projektu.</summary>
-    private void DialogExportZip_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Zapisuje paczkę ZIP do katalogu projektu — wywołuje ją główny przycisk EXPORT.
+    /// Okno dialogowe nie ma już osobnego przycisku eksportu.
+    /// </summary>
+    private string ExportZipNow()
     {
-        if (_projectFile is null) return;
+        if (_projectFile is null) throw new InvalidOperationException(L("ExportFirst"));
         var zipPath = Path.Combine(Path.GetDirectoryName(_projectFile) ?? "",
             ExportFileName(_projectName) + ".zip");
         var data = RustNative.ExportZip(_projectFile, zipPath, out var error);
         if (data is null)
-        {
-            ShowStatus(error is null ? L("ErrorExport") : LocalizationService.Error(error),
-                InfoBarSeverity.Error);
-            return;
-        }
+            throw new InvalidOperationException(
+                error is null ? L("ErrorExport") : LocalizationService.Error(error));
         using var document = JsonDocument.Parse(data);
-        ExportDialog.Hide();
-        ShowStatus(LF("Exported", document.RootElement.GetProperty("zip").GetString() ?? zipPath));
+        return document.RootElement.GetProperty("zip").GetString() ?? zipPath;
     }
 
     /// <summary>
@@ -5967,19 +5968,14 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Przygotowuje świeży ZIP, serwer i kod QR w momencie kliknięcia Export —
-    /// przycisk QR w oknie tylko pokazuje gotowy obrazek.
+    /// Serwer i kod QR są przygotowywane od razu po eksporcie ZIP — przycisk QR
+    /// w oknie tylko pokazuje gotowy obrazek.
     /// </summary>
-    private async Task PrepareQrAsync()
+    private async Task PrepareQrAsync(string zipPath)
     {
         if (_projectFile is null) return;
         try
         {
-            var zipPath = Path.Combine(Path.GetDirectoryName(_projectFile) ?? "",
-                ExportFileName(_projectName) + ".zip");
-            var exported = RustNative.ExportZip(_projectFile, zipPath, out var exportError);
-            if (exported is null) throw new Exception(exportError ?? L("ErrorExport"));
-
             var ip = LanIPv4() ?? throw new Exception(L("QrError"));
             var port = FreeTcpPort();
             var fileName = Path.GetFileName(zipPath);
@@ -6012,7 +6008,14 @@ public sealed partial class MainWindow : Window
         {
             ExportQrStatus.Visibility = Visibility.Visible;
             ExportQrStatus.Text = L("QrGenerating");
-            await PrepareQrAsync();
+            try
+            {
+                await PrepareQrAsync(ExportZipNow());
+            }
+            catch (Exception ex)
+            {
+                _qrError = ex.Message;
+            }
         }
         if (_qrBitmap is not null)
         {

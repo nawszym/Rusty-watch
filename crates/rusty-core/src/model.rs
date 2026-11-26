@@ -712,10 +712,8 @@ pub enum WidgetKind {
     StepText,
     /// Dystans z czujnika `hmSensor.id.DISTANCE`, w km lub milach.
     DistanceText,
-    /// Puls z `hmSensor.id.HEART` (wartość bieżąca).
+    /// Ostatni prawidłowy puls z `hmSensor.id.HEART.last` (zdarzenie LAST).
     HeartRateText,
-    /// Ostatni prawidłowy puls z `hmSensor.id.HEART.last`.
-    HeartRateLastText,
     /// Najniższy puls z `hmSensor.id.HEART.today`.
     HeartRateMinText,
     /// Najwyższy puls z `hmSensor.id.HEART.today`.
@@ -813,7 +811,6 @@ impl WidgetKind {
     pub fn health_initial_text(self, show_unit: bool) -> Option<String> {
         let (base, unit) = match self {
             Self::HeartRateText
-            | Self::HeartRateLastText
             | Self::HeartRateMinText
             | Self::HeartRateMaxText
             | Self::HeartRateAvgText => ("--", Some(" bpm")),
@@ -852,7 +849,6 @@ impl WidgetKind {
         matches!(
             self,
             Self::HeartRateText
-                | Self::HeartRateLastText
                 | Self::HeartRateMinText
                 | Self::HeartRateMaxText
                 | Self::HeartRateAvgText
@@ -953,9 +949,8 @@ pub enum DataSource {
     Battery,
     Step,
     Distance,
+    /// Ostatni prawidłowy odczyt z `HEART.last` (zdarzenie LAST).
     HeartRate,
-    /// Ostatni prawidłowy odczyt z `HEART.last`.
-    HeartRateLast,
     /// Statystyki z `HEART.today` (tablica wartości z poszczególnych minut).
     HeartRateMin,
     HeartRateMax,

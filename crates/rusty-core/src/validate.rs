@@ -61,7 +61,6 @@ pub fn validate(project: &Project) -> Vec<String> {
             | WidgetKind::StepText
             | WidgetKind::DistanceText
             | WidgetKind::HeartRateText
-            | WidgetKind::HeartRateLastText
             | WidgetKind::HeartRateMinText
             | WidgetKind::HeartRateMaxText
             | WidgetKind::HeartRateAvgText

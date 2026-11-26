@@ -148,8 +148,8 @@ parity with working reference exports.
 3. **Add assets** in the Assets page. Installed fonts, images, hands, status icons and
    weather icons are shared; project copies make each watchface portable.
 4. **Export** from the bottom bar. The button shows `1/8 … 8/8` while the preview is
-   rendered, then the export dialog opens with a round-cropped animated GIF, the
-   project details and two actions: **Export ZIP** and **QR code**.
+   rendered, then writes the ZIP immediately and opens an export dialog with a
+   round-cropped animated GIF, the project details and a **QR code** button.
 5. **Install** the ZIP in the simulator or on the watch.
 
 `preview.png` is a branded composition: the 21:37:40 frame inside the gear-outlayer
@@ -233,7 +233,7 @@ parses JSON and updates the UI. Each FFI call returns `{"ok":true,"data":…}` o
 
 ## Verification
 
-1. `cargo test --workspace` - 168 core + 38 FFI tests, no warnings.
+1. `cargo test --workspace` - 170 core + 38 FFI tests, no warnings.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. Launch the app and check affected screens in both English and Polish.
 4. Round-trip `new → export → open → export` without data loss.

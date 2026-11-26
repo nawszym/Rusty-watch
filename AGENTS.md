@@ -64,7 +64,7 @@ cargo run -p rusty-cli -- inspect .\test-tarcza\Test.zip
 ```
 
 `dotnet build` already runs `cargo build -p rusty-ffi`. Expect **0 errors / 0 warnings** on
-both toolchains; treat new warnings as regressions. Current suite: **206 tests - 168 core +
+both toolchains; treat new warnings as regressions. Current suite: **208 tests - 170 core +
 38 FFI**. Prerequisites: .NET SDK 10 + Runtime 8, Rust, Windows App SDK via NuGet
 (self-contained app).
 
@@ -254,14 +254,14 @@ both toolchains; treat new warnings as regressions. Current suite: **206 tests -
     cancellation + version counter) and export awaits it. `rw_set_weather_pack` relies on
     `attach_to_project` alone — do not add a second scaling pass. Generated JS caches
     `_lastWeatherIcon` and only calls `setProperty(hmUI.prop.SRC, …)` on change. **Day 0 (today)
-    is different:** the condition text and the icon read the **current** weather from an invisible
-    data-bound `hmUI.widget.IMG_LEVEL` (`type: hmUI.data_type.WEATHER`, with a
-    `WEATHER_CURRENT` fallback) via `_currentWeatherCode()` — exactly like the ZeppOS weather
-    widget and other watchfaces, so night codes 26/27/28 come from firmware. The visible icon
-    stays a plain `IMG` with manual `SRC`; days 1…4 still read `forecastData.data[i].index`.
-    Parsing goes through `_weatherIndex()` (invalid → 25/"Unknown"), never `| 0`. If the firmware
-    code is unreadable (e.g. simulator), `_fallbackTodayCode()` uses today's forecast plus a
-    time-of-day night mapping from `tideData`. The weather icon draws no text
+    is different:** the condition text and the icon read the **current** weather code from the
+    `curAirIconIndex` property of the `hmSensor.id.WEATHER` instance (`_currentWeatherCode()`)
+    — the same source the ZeppOS weather widget and other watchfaces use. Night codes 26/27/28
+    are derived locally from TIME and `tideData` (`_wxNightCode()`). The visible icon stays a
+    plain `IMG` with manual `SRC`; days 1…4 still read `forecastData.data[i].index`.
+    Parsing goes through `_weatherIndex()` (invalid → 25/"Unknown"), never `| 0`. If
+    `curAirIconIndex` is unavailable (e.g. simulator), `_fallbackTodayCode()` uses today's
+    forecast plus the same night mapping. The weather icon draws no text
     (`weather_text("weather-icon")` returns `""`). Conditions come from `rw_weather_conditions`;
     sunrise/sunset use one validated `HH:MM` field each. `weather-current` uses classic
     `hmUI.widget.TEXT_FONT` with `type: hmUI.data_type.WEATHER_CURRENT` and `unit_type: 0/1` —
@@ -283,6 +283,9 @@ both toolchains; treat new warnings as regressions. Current suite: **206 tests -
     The editor draws a `#7DE2D1` diagonal hatch plus `Assets/Icons/click-zone.png`; icon
     (`min(w,h)/2`) and hatch step (`clamp(min(w,h)/4, 6, 24)`) scale with the frame. The
     branded first GIF frame stays clean; the second frame gets `draw_shortcut_overlays()`.
+    **`codegen` creates all shortcuts last** (`creation_order`), after every other visible
+    widget — on the watch the last-created widget receives the touch, so a higher visual layer
+    can never swallow a shortcut tap. Layer order applies only between shortcuts themselves.
 14. **Project and app storage.** One folder per watchface under the projects root:
     `<root>/<sanitized name>/project.json`. Never overwrite an existing folder. `metadata.name`
     is read-only in Project settings (folder and recent list depend on it; use Save as).
@@ -441,9 +444,11 @@ Do not "fix" these by reverting to the obvious approach:
   Save as uses `rw_save_project_as`. Clicking Export renders the branded `preview.png` and
   8-frame `preview.gif` (progress `1/8 … 8/8`, indeterminate while GIF encoding), then opens an
   in-app `ContentDialog` (direct child of `RootGrid`) with the GIF clipped to a
-  `CornerRadius="120"` round border above project details and two buttons: **Export ZIP** and
-  **QR code**. The dialog is a `ScrollViewer` and the QR uses `MaxWidth/MaxHeight` +
-  `Stretch="Uniform"`, so a lower window cannot crop it.
+  `CornerRadius="120"` round border above project details and a single **QR code** button —
+  the ZIP is already written by the Export click itself (`ExportZipNow()`), which also shows the
+  "Exported: …" status. There is no Export ZIP button in the dialog. The dialog is a
+  `ScrollViewer` and the QR uses `MaxWidth/MaxHeight` + `Stretch="Uniform"`, so a lower window
+  cannot crop it.
   Export prepares a **fresh ZIP, a fresh port, the server and the QR image before the dialog
   opens**; the QR button only shows the prepared image, so the code is visible only after that
   click. Each Export resets the QR view. The QR is pure Rust (`rusty-core::qr`, `QrCode`,
@@ -490,7 +495,7 @@ performance-friendly generated JS: fewer widgets, correct AOD, no listener leaks
 
 ## 9. Definition of done for a change
 
-1. `cargo test --workspace` green (206 tests: 168 core + 38 FFI), no new warnings.
+1. `cargo test --workspace` green (208 tests: 170 core + 38 FFI), no new warnings.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. App launches; affected screens verified visually (English **and** Polish if UI changed).
 4. Round-trip `new → export → open → export` preserves data when project model/codegen changes.

@@ -447,16 +447,18 @@ second scaling pass is added. Generated JS caches the last condition index and o
 `forecastData.data[i].index` is the **daily** forecast code and does not track the current
 condition or time of day — that is why a cloudy daily code (`0`) appeared at night while the
 ZeppOS weather widget correctly showed overcast (`4`). Today (`weatherDayOffset = 0`) therefore
-uses a different source: `codegen` emits an invisible `hmUI.widget.IMG_LEVEL` bound to
-`hmUI.data_type.WEATHER` (with a guarded `WEATHER_CURRENT` fallback) and reads its current
-`level` through `getProperty(hmUI.prop.MORE, {})` in `_currentWeatherCode()`. This is the same
-firmware data-bound mechanism other watchfaces use, so night codes `26/27/28` come straight from
-the watch. The visible icon remains a plain `IMG` with manual `SRC`, preserving geometry,
-pack selection and the `_lastWeatherIcon` smudge cache; days 1…4 keep reading
-`forecastData.data[i].index`. All codes pass through `_weatherIndex()` (invalid → `25`/
-"Unknown") — the old `| 0` coercion turned `null` into `0` (`w00`/"Cloudy"). When the firmware
-code is unavailable (notably in the simulator), `_fallbackTodayCode()` uses today's forecast
-index and maps `0→26`, `1→27`, `3→28` outside sunrise/sunset from `tideData` and the TIME sensor.
+uses a different source: `_currentWeatherCode()` reads the `curAirIconIndex` property of the
+`hmSensor.id.WEATHER` instance — the same current-condition index that other watchfaces use for
+their weather icon (the "Air" in the name refers to atmospheric conditions, not AQI). An earlier
+attempt to read a data-bound `IMG_LEVEL`'s `level` via `getProperty()` proved unreliable: other
+watchfaces let the firmware draw from that widget and never read it back, so our readback fell
+through to the forecast fallback and showed `w26` at night. Night codes `26/27/28` are now
+derived locally in `_wxNightCode()` from TIME and `tideData`. The visible icon remains a plain
+`IMG` with manual `SRC`, preserving geometry, pack selection and the `_lastWeatherIcon` smudge
+cache; days 1…4 keep reading `forecastData.data[i].index`. All codes pass through
+`_weatherIndex()` (invalid → `25`/"Unknown") — the old `| 0` coercion turned `null` into `0`
+(`w00`/"Cloudy"). When `curAirIconIndex` is unavailable (notably in the simulator),
+`_fallbackTodayCode()` uses today's forecast index with the same night mapping.
 High/low and sunrise/sunset stay whole-day forecast values for every day, including day 0.
 
 ---
@@ -781,13 +783,14 @@ renders all eight frames through `rw_render_preview_frame` while counting `1/8 �
 switches the bar to indeterminate during `rw_encode_preview_gif`. The GIF is shown in a 240×240
 border with `CornerRadius="120"` so only the round watchface is visible.
 
-Before the dialog opens, `PrepareQrAsync()` re-exports the ZIP, chooses a free port, starts
-the `TcpListener`, performs the loopback self-check and generates the QR bitmap into window
-state (`_qrBitmap`, `_qrUrl`). `ResetQrView()` clears all of that on each Export. The QR button
-only displays the prepared bitmap; the image is therefore invisible until it is clicked. The
-dialog is a `ScrollViewer`, and the QR uses `MaxWidth`/`MaxHeight` with `Stretch="Uniform"` so
-it cannot be clipped in a lower window. `DialogExportZip_Click` calls `rw_export_zip` and
-closes the dialog; `ExportDialog.Closing` and `MainWindow.Closed` stop the server.
+The Export click itself calls `ExportZipNow()` (`rw_export_zip`) and shows the
+"Exported: …" status — the dialog has **no** Export ZIP button. Before the dialog opens,
+`PrepareQrAsync(zipPath)` chooses a free port, starts the `TcpListener`, performs the loopback
+self-check and generates the QR bitmap into window state (`_qrBitmap`, `_qrUrl`).
+`ResetQrView()` clears all of that on each Export. The QR button only displays the prepared
+bitmap; the image is therefore invisible until it is clicked. The dialog is a `ScrollViewer`,
+and the QR uses `MaxWidth`/`MaxHeight` with `Stretch="Uniform"` so it cannot be clipped in a
+lower window. `ExportDialog.Closing` and `MainWindow.Closed` stop the server.
 
 ### 11.6 Simulator integration
 
@@ -850,7 +853,9 @@ These are the rules that were paid for with a broken watchface or a crashed UI. 
   real arcs, not full circles; rounded bars never get a 0 px radius; the editor refreshes the
   track's line caps too.
 - **Shortcut zones have `src: ""`.** A bundled 1×1 transparent PNG was rejected by QR installs
-  and by `zeus install`.
+  and by `zeus install`. `generate_index_js` creates shortcuts **last** (`creation_order`), so a
+  non-clickable widget layered above them cannot swallow a tap; layer order only sorts shortcuts
+  relative to each other.
 - **Do not set `FontWeight` on preview text** — a synthesized bold breaks dot-matrix fonts.
 - **WinUI 3:** no `ApplicationBackgroundThemeBrush`; `Window` has no XAML size/font members;
   `ContentDialog` must be a direct child of the root `Grid` and has no `Opening` event; guard

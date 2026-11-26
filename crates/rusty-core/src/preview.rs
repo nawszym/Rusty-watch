@@ -747,14 +747,6 @@ pub fn text_for_layer(
                 frame.heart_rate.to_string()
             }
         }
-        "heart-last" => {
-            let value = frame.heart_rate.saturating_sub(2).max(1);
-            if unit {
-                format!("{value} bpm")
-            } else {
-                value.to_string()
-            }
-        }
         "heart-min" => {
             let value = frame.heart_rate.saturating_sub(12).max(1);
             if unit {

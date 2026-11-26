@@ -319,19 +319,19 @@ mod tests {
         assert_eq!(entries[3], third, "{array_line}");
         assert!(js.contains(&format!("src: {third}")), "initial src differs");
 
-        // Dzień 0: firmware data-bound IMG_LEVEL jest źródłem bieżącej pogody,
-        // dokładnie jak w widżecie pogody i innych tarczach ZeppOS.
+        // Dzień 0: `curAirIconIndex` z czujnika WEATHER jest źródłem bieżącej
+        // pogody — tak jak w widżecie pogody i innych tarczach ZeppOS.
         for token in [
-            "hmUI.widget.IMG_LEVEL",
-            "hmUI.data_type.WEATHER",
-            "const _wxIcons = [",
+            "weather.curAirIconIndex",
             "function _currentWeatherCode()",
+            "function _wxNightCode(",
             "let _wxToday = _currentWeatherCode()",
             "L.weather[_wxToday]",
-            "_wxInitSource()",
         ] {
             assert!(js.contains(token), "generated JS lacks {token}: {js}");
         }
+        assert!(!js.contains("IMG_LEVEL"), "hidden widget must be gone: {js}");
+        assert!(!js.contains("_wxIcons"), "hidden icon array must be gone: {js}");
         // Regression: `| 0` zamieniało null/string w indeks 0 (w00 / "Cloudy").
         assert!(!js.contains("index | 0"), "unsafe weather coercion: {js}");
         assert!(!js.contains("index !== undefined ?"), "unsafe index guard: {js}");
@@ -1393,7 +1393,7 @@ mod tests {
     #[test]
     fn sensor_fields_package_one_are_in_catalog_and_export() {
         let cases = [
-            ("heart-last", "health", "heart-last", "HEART", "-- bpm"),
+            ("heart", "health", "heart", "HEART", "-- bpm"),
             ("spo2-hour-avg", "health", "spo2-hour-avg", "SPO2", "--%"),
             ("pai-prepai", "health", "pai-prepai", "PAI", "--"),
             ("sleep-wake", "sleep", "sleep-wake", "SLEEP", "-- min"),
@@ -1424,7 +1424,7 @@ mod tests {
 
         let mut project = Project::starter("Sources");
         for kind in [
-            "heart-last",
+            "heart",
             "spo2-hour-avg",
             "pai-prepai",
             "sleep-wake",
@@ -1451,6 +1451,22 @@ mod tests {
         );
         assert_eq!(js.matches("const _hPai = _getHealthPai()").count(), 1);
         assert!(!js.contains("@zos/ui"));
+    }
+
+    #[test]
+    fn heart_last_duplicate_is_not_in_catalog() {
+        assert!(!widgets::supported_widgets()
+            .iter()
+            .any(|entry| entry.kind == "heart-last"));
+        assert!(widgets::add_widget(&mut Project::starter("Heart"), "heart-last").is_err());
+
+        let mut project = Project::starter("Heart");
+        widgets::add_widget(&mut project, "heart").unwrap();
+        let js = codegen::generate_index_js(&project);
+        // Zwykły `heart` czyta HEART.last — nie ma potrzeby drugiego widgetu.
+        assert!(js.contains("_hHeart.last"));
+        assert_eq!(js.matches("event: 'LAST'").count(), 1);
+        assert_eq!(js.matches("event:LAST").count(), 0);
     }
 
     #[test]
@@ -1806,6 +1822,59 @@ mod tests {
         assert!(js.contains("src: \"\""), "JS: {js}");
         assert!(!js.contains("shortcut_hit.png"), "JS: {js}");
         assert!(!js.contains("@zos/ui"));
+    }
+
+    #[test]
+    fn shortcuts_are_created_last_and_keep_their_layer_order() {
+        let mut project = Project::starter("Shortcuts");
+        let bottom = widgets::add_widget(&mut project, "shortcut").unwrap();
+        widgets::add_widget(&mut project, "heart").unwrap();
+        let top = widgets::add_widget(&mut project, "shortcut").unwrap();
+        // Wyższa warstwa nad shortcutem nie może przejąć dotyku — przesuwamy
+        // pierwszą strefę na spód, żeby udowodnić niezależność od kolejności warstw.
+        let pos = layers::order(&project)
+            .iter()
+            .position(|id| id == &bottom.id)
+            .unwrap() as i32;
+        layers::move_layer(&mut project, &bottom.id, -pos).unwrap();
+        assert_eq!(layers::order(&project)[0], bottom.id);
+
+        let js = codegen::generate_index_js(&project);
+        let created: Vec<(String, usize)> = js
+            .lines()
+            .filter_map(|line| {
+                let rest = line.trim().strip_prefix("refs[")?;
+                let index = rest.split(']').next()?.parse().ok()?;
+                let widget = line
+                    .split("hmUI.widget.")
+                    .nth(1)?
+                    .split(|c| c == ',' || c == ' ')
+                    .next()?
+                    .to_string();
+                Some((widget, index))
+            })
+            .collect();
+        let first_click = created.iter().position(|(kind, _)| kind == "IMG_CLICK").unwrap();
+        let last_other = created.iter().rposition(|(kind, _)| kind != "IMG_CLICK").unwrap();
+        assert!(first_click > last_other, "a widget is created above a shortcut: {created:?}");
+
+        let click_refs: Vec<usize> = created
+            .iter()
+            .filter(|(kind, _)| kind == "IMG_CLICK")
+            .map(|(_, index)| *index)
+            .collect();
+        let expected: Vec<usize> = layers::ordered_widgets(&project)
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| w.kind == WidgetKind::Shortcut)
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(click_refs, expected);
+        assert!(click_refs.contains(&0));
+        assert!(click_refs.iter().any(|&index| index != 0));
+        assert!(layers::ordered_widgets(&project)
+            .get(click_refs[1])
+            .is_some_and(|w| w.id == top.id));
     }
 
     #[test]

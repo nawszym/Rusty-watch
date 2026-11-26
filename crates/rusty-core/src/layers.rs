@@ -187,7 +187,6 @@ fn widget_kind(widget: &Widget) -> &'static str {
         Some(DataSource::Step) => "steps",
         Some(DataSource::Distance) => "distance",
         Some(DataSource::HeartRate) => "heart",
-        Some(DataSource::HeartRateLast) => "heart-last",
         Some(DataSource::HeartRateMin) => "heart-min",
         Some(DataSource::HeartRateMax) => "heart-max",
         Some(DataSource::HeartRateAvg) => "heart-avg",
