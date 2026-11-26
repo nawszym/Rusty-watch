@@ -18,6 +18,10 @@ assets and export a ready-to-install **`.zip`** — without writing ZeppOS code 
 
 **[Technical deep-dive](docs/TECHNICAL.md)** · **[Project format](docs/FORMAT.md)** · **[Plan](PLAN.md)** · **[For AI agents](AGENTS.md)**
 
+![Rusty Watch editor with the export dialog](screenshots/editor-export.png)
+
+![Rusty Watch HOME screen](screenshots/home-screen.png)
+
 </div>
 
 ---
