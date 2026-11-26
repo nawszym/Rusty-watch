@@ -104,6 +104,15 @@ a renderer klatek używa `arc_draw_margin()`. Środek linii pozostaje stały, wi
 symetrycznie. Podgląd na żywo czyta odpowiednie pole Custom Data — bateria domyślnie `73%` — ale
 generowane klatki `preview.png/gif` pozostają deterministyczne i nie biorą Custom Data.
 
+Kategoria **Skróty** (`shortcut`) ma jeden widget: `shortcut`. To niewidoczna na zegarku strefa
+dotyku — generator JS tworzy `hmUI.widget.IMG_CLICK` z **`src: ""`** (w pełni przezroczysta nakładka)
+oraz `type: hmUI.data_type.<CEL>` wybranym w inspektorze. **Żaden PNG nie jest dodawany do ZIP-u**
+— wcześniejszy 1×1 przezroczysty zasób był odrzucany przy instalacji przez QR oraz w `zeus install`.
+Nie ma tu czujnika, timera ani nasłuchiwania JS. W edytorze strefa jest rysowana jako przekątne kreskowanie w kolorze
+morskiej bryzy `#7DE2D1` z ikoną dotknięcia z `Assets/Icons/click-zone.png` (ten sam plik używa
+renderer PNG). Oprawiona pierwsza klatka GIF-u (`preview.png`) pozostaje bez narzutu; tę samą
+kreskowaną strefę z ikoną dostaje **druga** klatka GIF-u (pierwsza surowa).
+
 ## Mapowanie przy eksporcie
 
 `.rwf` → pliki w `.zip`:

@@ -79,6 +79,8 @@ public sealed class LayerView
     [JsonPropertyName("sleepStageMode")] public string SleepStageMode { get; set; } = "duration";
     /// <summary>Ustawienia łuku/paska postępu (z Rusta, snake_case).</summary>
     [JsonPropertyName("progress")] public ProgressSettingsView? Progress { get; set; }
+    /// <summary>Cel niewidocznej strefy klikalnej (snake_case z Rusta).</summary>
+    [JsonPropertyName("shortcutTarget")] public string? ShortcutTarget { get; set; }
 }
 
 /// <summary>Lustro `ProgressSettings` z rusty-core — nazwy JSON są snake_case.</summary>
@@ -142,6 +144,7 @@ public sealed class LayerRow
         "status-lock" => L("LayerStatusLock"),
         "arc-progress" => L("LayerArcProgress"),
         "bar-progress" => L("LayerBarProgress"),
+        "shortcut" => L("LayerShortcut"),
         "analog-time" => L("LayerAnalog"),
         "image" => L("LayerImage"),
         "images" => L("LayerImages"),
@@ -465,6 +468,8 @@ public sealed class TimeSettings
     public string SleepStageMode { get; set; } = "duration";
     /// <summary>Ustawienia łuku/paska postępu.</summary>
     public ProgressSettingsView Progress { get; set; } = new();
+    /// <summary>Cel skrótu w niewidocznej strefie klikalnej.</summary>
+    public string ShortcutTarget { get; set; } = "battery";
 }
 
 /// <summary>Ramka tekstowego widgetu w podglądzie wraz z jego blokiem tekstu.</summary>
@@ -479,7 +484,20 @@ public sealed class FrameView
     public Microsoft.UI.Xaml.Controls.Image? Picture { get; set; }
     /// <summary>Elementy rysujące łuk/pasek postępu w edytorze.</summary>
     public ProgressVisual? Progress { get; set; }
+    /// <summary>Kreskowana, morska strefa klikalna w edytorze.</summary>
+    public ShortcutVisual? Shortcut { get; set; }
     public List<Border> Handles { get; } = new();
+}
+
+/// <summary>Wizualna reprezentacja niewidocznej na zegarku strefy klikalnej.</summary>
+public sealed class ShortcutVisual
+{
+    public Canvas Overlay { get; } = new();
+    public List<Microsoft.UI.Xaml.Shapes.Line> Hatch { get; } = new();
+    public Microsoft.UI.Xaml.Controls.Image Icon { get; } = new();
+    /// <summary>Rozmiar, dla którego wygenerowano kreskowanie (żeby nie robić tego co klatkę).</summary>
+    public int BuiltW { get; set; }
+    public int BuiltH { get; set; }
 }
 
 /// <summary>Żywotne elementy widgetu postępu w podglądzie edytora.</summary>
@@ -632,6 +650,7 @@ public sealed partial class MainWindow : Window
     private bool _loadingFirstDay;
     private bool _loadingWidgetOptions;
     private bool _loadingProgress;
+    private bool _loadingShortcut;
     private bool _loadingImages;
     private bool _loadingHands;
     private bool _loadingStatusPacks;
@@ -1169,6 +1188,52 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Kreskowanie i ikona są skalowane wraz z ramką strefy.</summary>
+    private void RebuildShortcutHatch(ShortcutVisual shortcut, int w, int h)
+    {
+        if (shortcut.BuiltW == w && shortcut.BuiltH == h) return;
+        shortcut.BuiltW = w;
+        shortcut.BuiltH = h;
+        shortcut.Hatch.Clear();
+        shortcut.Overlay.Children.Clear();
+        var step = Math.Clamp(Math.Min(w, h) / 4, 6, 24);
+        for (var lineX = -h; lineX < w + h; lineX += step)
+        {
+            var line = new Microsoft.UI.Xaml.Shapes.Line
+            {
+                X1 = lineX, Y1 = 0, X2 = lineX + h, Y2 = h,
+                Stroke = new SolidColorBrush(SeaBreeze),
+                StrokeThickness = 2,
+                Opacity = 0.55,
+            };
+            shortcut.Hatch.Add(line);
+            shortcut.Overlay.Children.Add(line);
+        }
+        shortcut.Overlay.Children.Add(shortcut.Icon);
+    }
+
+    private void UpdateShortcutVisual(FrameView view)
+    {
+        var shortcut = view.Shortcut;
+        if (shortcut is null) return;
+        var layer = view.Layer;
+        shortcut.Overlay.Clip = new RectangleGeometry { Rect = new Rect(0, 0, layer.W, layer.H) };
+        RebuildShortcutHatch(shortcut, layer.W, layer.H);
+        // Ikona zajmuje połowę krótszego boku ramki — ramka wyznacza pole kliknięcia.
+        var shorter = Math.Max(1, Math.Min(layer.W, layer.H));
+        var size = Math.Clamp(shorter / 2, 1, shorter);
+        shortcut.Icon.Width = size;
+        shortcut.Icon.Height = size;
+        Canvas.SetLeft(shortcut.Icon, layer.W / 2.0 - size / 2.0);
+        Canvas.SetTop(shortcut.Icon, layer.H / 2.0 - size / 2.0);
+        var selected = layer.Id == _selectedLayerId;
+        var stroke = selected
+            ? new SolidColorBrush(Color.FromArgb(210, 125, 226, 209))
+            : new SolidColorBrush(Color.FromArgb(110, 125, 226, 209));
+        foreach (var line in shortcut.Hatch) line.Stroke = stroke;
+        shortcut.Icon.Opacity = selected ? 1.0 : 0.65;
+    }
+
     private void ApplyFrameGeometry(FrameView view, int x, int y, int w, int h, uint textSize)
         => ApplyFrameGeometry(view, x, y, w, h, textSize, _analogHands);
 
@@ -1250,6 +1315,7 @@ public sealed partial class MainWindow : Window
         // skalowaniu lub zmianie justowania w inspektorze).
         ApplyTextLayout(view);
         UpdateProgressVisual(view);
+        UpdateShortcutVisual(view);
     }
 
     private static void ApplyTextFit(FrameView view, string? fit) => ApplyTextFit(view.Text, fit);
@@ -1283,7 +1349,9 @@ public sealed partial class MainWindow : Window
         foreach (var view in _frames.Values)
         {
             var selected = view.Layer.Id == _selectedLayerId;
-            var brush = selected ? (view.Layer.AutoScale ? red : accent) : subtle;
+            var brush = view.Layer.Kind == "shortcut"
+                ? new SolidColorBrush(selected ? SeaBreeze : Color.FromArgb(150, 125, 226, 209))
+                : selected ? (view.Layer.AutoScale ? red : accent) : subtle;
             view.Frame.BorderBrush = brush;
             view.Frame.BorderThickness = new Thickness(selected ? 2 : showUnselected ? 1 : 0);
             // Zaznaczona ramka i jej uchwyty są nad pozostałymi — wybrana na liście
@@ -1707,9 +1775,10 @@ public sealed partial class MainWindow : Window
         var isWeather = IsWeatherKind(layer.Kind);
         var isSleep = IsSleepKind(layer.Kind);
         var isProgress = IsProgressKind(layer.Kind);
+        var isShortcut = layer.Kind == "shortcut";
         WidgetInspector.Visibility = Visibility.Visible;
-        DigitalSettingsPanel.Visibility = isAnalog || isImages || isStatus || isWeatherIcon || isProgress ? Visibility.Collapsed : Visibility.Visible;
-        DigitalAlignPanel.Visibility = isAnalog || isImages || isStatus || isWeatherIcon || isProgress ? Visibility.Collapsed : Visibility.Visible;
+        DigitalSettingsPanel.Visibility = isAnalog || isImages || isStatus || isWeatherIcon || isProgress || isShortcut ? Visibility.Collapsed : Visibility.Visible;
+        DigitalAlignPanel.Visibility = isAnalog || isImages || isStatus || isWeatherIcon || isProgress || isShortcut ? Visibility.Collapsed : Visibility.Visible;
         // Wzorzec czasu/daty ma tylko to, co katalog z Rusta oznaczył flagą
         // hasPattern (time i date). Bateria i pola pogody czytają czujnik —
         // pokazywanie im presetu HH:MM:SS było mylące i zapisywało timeFormat.
@@ -1746,6 +1815,7 @@ public sealed partial class MainWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         ProgressSettingsPanel.Visibility = isProgress ? Visibility.Visible : Visibility.Collapsed;
+        ShortcutSettingsPanel.Visibility = isShortcut ? Visibility.Visible : Visibility.Collapsed;
         InspectorTitle.Text = isImages
             ? L("ImagesWidgetCardTitle")
             : isAnalog
@@ -1782,8 +1852,15 @@ public sealed partial class MainWindow : Window
                 ? "duration"
                 : layer.SleepStageMode,
             Progress = layer.Progress ?? new ProgressSettingsView(),
+            ShortcutTarget = layer.ShortcutTarget ?? "battery",
         };
         if (isProgress) LoadProgressSettings();
+        if (isShortcut)
+        {
+            _loadingShortcut = true;
+            SelectChoice(ShortcutTargetCombo, ShortcutTargetChoices(), _settings.ShortcutTarget);
+            _loadingShortcut = false;
+        }
 
         if (isImages)
         {
@@ -2055,6 +2132,23 @@ public sealed partial class MainWindow : Window
                 view.Host.Children.Add(fill);
                 view.Progress = progress;
             }
+            else if (layer.Kind == "shortcut")
+            {
+                var shortcut = new ShortcutVisual();
+                shortcut.Overlay.Clip = new RectangleGeometry { Rect = new Rect(0, 0, layer.W, layer.H) };
+                shortcut.Overlay.IsHitTestVisible = false;
+                RebuildShortcutHatch(shortcut, layer.W, layer.H);
+                var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Icons", "click-zone.png");
+                // WinUI w aplikacji nie spakowanej nie ładuje file:// — zawsze czytaj ze strumienia,
+                // tak jak pozostałe bitmapy w tym projekcie (LoadFreshBitmap).
+                if (File.Exists(iconPath)) shortcut.Icon.Source = CachedBitmap(iconPath);
+                shortcut.Icon.Stretch = Stretch.Uniform;
+                shortcut.Icon.IsHitTestVisible = false;
+                // RebuildShortcutHatch dodaje ikonę do Overlay — ponowne dodanie tego samego
+                // elementu wywala XAML (0xc000027b) przy ładowaniu projektu i dodawaniu strefy.
+                view.Host.Children.Add(shortcut.Overlay);
+                view.Shortcut = shortcut;
+            }
 
             view.Text = new TextBlock
             {
@@ -2136,7 +2230,7 @@ public sealed partial class MainWindow : Window
 
             // Ikona pogody jest czystym obrazem — żaden TextBlock nie trafia do
             // drzewa wizualnego, więc nie może wylądować w nim tekst "--".
-            if (layer.Kind != "images" && !IsWeatherIcon(layer) && view.Progress is null)
+            if (layer.Kind != "images" && !IsWeatherIcon(layer) && view.Progress is null && view.Shortcut is null)
                 view.Host.Children.Add(view.Text);
             view.Host.Opacity = layer.Alpha / 255.0;
             ApplyFrameGeometry(view, layer.X, layer.Y, layer.W, layer.H, layer.TextSize ?? 64, visual.Hands);
@@ -2272,7 +2366,7 @@ public sealed partial class MainWindow : Window
             autoScale = _drag.AutoScale,
             square = view.Layer.Kind is "analog-time" or "arc-progress",
             // Pasek FILL_RECT może mieć 1 px — łuk wciąż potrzebuje promienia.
-            minSize = view.Layer.Kind == "bar-progress" ? 1 : 24,
+            minSize = view.Layer.Kind is "bar-progress" or "shortcut" ? 1 : 24,
             snap = PreviewGridToggle.IsChecked == true,
             alignX,
             alignY,
@@ -3016,6 +3110,7 @@ public sealed partial class MainWindow : Window
                 "analog-time" => "\uE823",
                 "arc-progress" => "\uE823",
                 "bar-progress" => "\uE8B2",
+                "shortcut" => "\uE8A7",
                 "world-clock" => "\uE823",
                 "date" => "\uE787",
                 "text" => "\uE8A5",
@@ -3053,6 +3148,7 @@ public sealed partial class MainWindow : Window
         "system" => L("WidgetCategorySystem"),
         "weather" => L("WidgetCategoryWeather"),
         "progress" => L("WidgetCategoryProgress"),
+        "shortcut" => L("WidgetCategoryShortcut"),
         _ => category,
     };
 
@@ -3110,6 +3206,7 @@ public sealed partial class MainWindow : Window
         "weather-icon" => L("WeatherIconWidgetCardTitle"),
         "arc-progress" => L("ArcProgressWidgetCardTitle"),
         "bar-progress" => L("BarProgressWidgetCardTitle"),
+        "shortcut" => L("ShortcutWidgetCardTitle"),
         "battery" => L("BatteryWidgetCardTitle"),
         "status-alarm" => L("StatusAlarmWidgetCardTitle"),
         "status-dnd" => L("StatusDndWidgetCardTitle"),
@@ -3172,6 +3269,7 @@ public sealed partial class MainWindow : Window
         "weather-icon" => L("WeatherIconWidgetCardDesc"),
         "arc-progress" => L("ArcProgressWidgetCardDesc"),
         "bar-progress" => L("BarProgressWidgetCardDesc"),
+        "shortcut" => L("ShortcutWidgetCardDesc"),
         "battery" => L("BatteryWidgetCardDesc"),
         "status-alarm" => L("StatusAlarmWidgetCardDesc"),
         "status-dnd" => L("StatusDndWidgetCardDesc"),
@@ -3212,7 +3310,6 @@ public sealed partial class MainWindow : Window
     {
         new ChoiceItem { Value = "battery", Name = L("ProgressSourceBattery") },
         new ChoiceItem { Value = "steps", Name = L("ProgressSourceSteps") },
-        new ChoiceItem { Value = "distance", Name = L("ProgressSourceDistance") },
         new ChoiceItem { Value = "heart", Name = L("ProgressSourceHeart") },
         new ChoiceItem { Value = "calories", Name = L("ProgressSourceCalories") },
         new ChoiceItem { Value = "stand", Name = L("ProgressSourceStand") },
@@ -3221,6 +3318,32 @@ public sealed partial class MainWindow : Window
         new ChoiceItem { Value = "spo2", Name = L("ProgressSourceSpo2") },
         new ChoiceItem { Value = "sleep", Name = L("ProgressSourceSleep") },
         new ChoiceItem { Value = "fixed", Name = L("ProgressSourceFixed") },
+    };
+
+    /// <summary>Morska bryza — kolor kreskowania i ikony stref klikalnych.</summary>
+    private static readonly Color SeaBreeze = Color.FromArgb(255, 125, 226, 209);
+
+    private static ChoiceItem[] ShortcutTargetChoices() => new[]
+    {
+        new ChoiceItem { Value = "battery", Name = L("ShortcutBattery") },
+        new ChoiceItem { Value = "steps", Name = L("ShortcutSteps") },
+        new ChoiceItem { Value = "heart", Name = L("ShortcutHeart") },
+        new ChoiceItem { Value = "stress", Name = L("ShortcutStress") },
+        new ChoiceItem { Value = "sleep", Name = L("ShortcutSleep") },
+        new ChoiceItem { Value = "pai", Name = L("ShortcutPai") },
+        new ChoiceItem { Value = "spo2", Name = L("ShortcutSpo2") },
+        new ChoiceItem { Value = "weather", Name = L("ShortcutWeather") },
+        new ChoiceItem { Value = "alarm-clock", Name = L("ShortcutAlarm") },
+        new ChoiceItem { Value = "stopwatch", Name = L("ShortcutStopwatch") },
+        new ChoiceItem { Value = "countdown", Name = L("ShortcutCountdown") },
+        new ChoiceItem { Value = "outdoor-running", Name = L("ShortcutRun") },
+        new ChoiceItem { Value = "walking", Name = L("ShortcutWalk") },
+        new ChoiceItem { Value = "outdoor-cycling", Name = L("ShortcutCycle") },
+        new ChoiceItem { Value = "free-training", Name = L("ShortcutTraining") },
+        new ChoiceItem { Value = "pool-swimming", Name = L("ShortcutPool") },
+        new ChoiceItem { Value = "open-water-swimming", Name = L("ShortcutOpenWater") },
+        new ChoiceItem { Value = "breath-train", Name = L("ShortcutBreath") },
+        new ChoiceItem { Value = "moon", Name = L("ShortcutMoon") },
     };
 
     private static void SelectChoice(ComboBox combo, IEnumerable<ChoiceItem> items, string value)
@@ -3247,6 +3370,8 @@ public sealed partial class MainWindow : Window
         var p = _settings.Progress;
         var kind = _layers.FirstOrDefault(layer => layer.Id == _selectedLayerId)?.Kind;
         _loadingProgress = true;
+        // Skala tętna jest stała — inspektor nie ma pola max.
+        if (p.Source == "heart") p.Max = 165;
         SelectChoice(ProgressSourceCombo, ProgressSourceChoices(), p.Source);
         ProgressThicknessBox.Value = p.Thickness;
         ProgressArcSizeSlider.Value = Math.Clamp(Math.Min(_settings.W, _settings.H), 24, 466);
@@ -3271,6 +3396,7 @@ public sealed partial class MainWindow : Window
         if (_settings is null || _loadingProgress || e.AddedItems.FirstOrDefault() is not ChoiceItem item) return;
         if (sender is not ComboBox combo || combo != ProgressSourceCombo) return;
         _settings.Progress.Source = item.Value;
+        if (item.Value == "heart") _settings.Progress.Max = 165;
         ApplyPreview();
         PersistSettings();
     }
@@ -3283,6 +3409,18 @@ public sealed partial class MainWindow : Window
         else if (box == ProgressStartAngleBox) p.StartAngle = (int)Math.Clamp(box.Value, -360, 360);
         else if (box == ProgressEndAngleBox) p.EndAngle = (int)Math.Clamp(box.Value, -360, 360);
         else return;
+        ApplyPreview();
+        PersistSettings();
+    }
+
+    private void ShortcutTargetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // ComboBox może wywołać SelectionChanged jeszcze w trakcie InitializeComponent()
+        // albo podczas wczytywania warstwy — wtedy nie wolno dotykać inspektora.
+        if (!_initialized || _settings is null || _loadingShortcut
+            || e.AddedItems.FirstOrDefault() is not ChoiceItem item) return;
+        if (sender is not ComboBox combo || combo != ShortcutTargetCombo) return;
+        _settings.ShortcutTarget = item.Value;
         ApplyPreview();
         PersistSettings();
     }
@@ -3555,6 +3693,7 @@ public sealed partial class MainWindow : Window
             imageFit = _settings.ImageFit,
             weatherDayOffset = _settings.WeatherDayOffset,
             sleepStageMode = _settings.SleepStageMode,
+            shortcutTarget = _settings.ShortcutTarget,
             progress = new
             {
                 source = _settings.Progress.Source,
@@ -3732,6 +3871,7 @@ public sealed partial class MainWindow : Window
         target.CapSrc = source.CapSrc;
         target.WeatherDayOffset = source.WeatherDayOffset;
         target.SleepStageMode = source.SleepStageMode;
+        target.ShortcutTarget = source.ShortcutTarget;
         target.Progress = source.Progress;
     }
 
@@ -4648,7 +4788,6 @@ public sealed partial class MainWindow : Window
     private static string ProgressSourceDefaultText(string source) => source switch
     {
         "steps" => "16000",
-        "distance" => "12.3",
         "heart" => "72",
         "calories" => "430",
         "stand" => "8",

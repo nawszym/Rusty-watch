@@ -193,7 +193,6 @@ pub fn export_zip(project_file: &Path, output: &Path) -> Result<PathBuf> {
         &icon_bytes,
         options,
     )?;
-
     for asset in &project.assets {
         if asset.role == AssetRole::Icon && asset.path != "icon.png" {
             bail!("ikona musi mieć ścieżkę 'icon.png' (jest: '{}')", asset.path);
@@ -400,8 +399,7 @@ pub fn export_zip_bytes(project_file: &Path) -> Result<Vec<u8>> {
             &icon_bytes,
             options,
         )?;
-
-    for asset in &project.assets {
+        for asset in &project.assets {
             let bytes = match hands.get(&asset.path) {
                 Some(hand) => hand.bytes.clone(),
                 None if asset.path.starts_with("images/") => {

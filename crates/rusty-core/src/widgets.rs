@@ -31,6 +31,8 @@ pub const CATEGORY_SYSTEM: &str = "system";
 pub const CATEGORY_WEATHER: &str = "weather";
 /// Postęp: łuk i pasek zasilane czujnikami albo wartością stałą.
 pub const CATEGORY_PROGRESS: &str = "progress";
+/// Niewidoczne strefy klikalne (skróty do danych aplikacji).
+pub const CATEGORY_SHORTCUT: &str = "shortcut";
 
 
 /// Pozycja katalogu widgetów czytana przez FFI. `category` pozwala UI grupować
@@ -46,6 +48,7 @@ pub struct SupportedWidget {
 }
 
 
+
 impl SupportedWidget {
     fn new(kind: &'static str, category: &'static str) -> Self {
         Self {
@@ -55,6 +58,7 @@ impl SupportedWidget {
         }
     }
 }
+
 
 
 /// Typy widgetów, które edytor potrafi dodać. UI czyta tę listę przez FFI.
@@ -117,6 +121,7 @@ pub fn supported_widgets() -> Vec<SupportedWidget> {
         SupportedWidget::new("weather-icon", CATEGORY_WEATHER),
         SupportedWidget::new("arc-progress", CATEGORY_PROGRESS),
         SupportedWidget::new("bar-progress", CATEGORY_PROGRESS),
+        SupportedWidget::new("shortcut", CATEGORY_SHORTCUT),
     ]
 }
 
@@ -881,6 +886,74 @@ fn add_progress_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: Some(ProgressSettings::default()),
+    shortcut_target: None,
+    }
+;
+    project.widgets.push(widget.clone());
+    layers::normalize(project);
+    Ok(widget)
+}
+
+/// Dodaje niewidoczną strefę klikalną — na tarczy jest to przezroczysty
+/// `IMG_CLICK`, w edytorze kreskowana ramka z ikoną dotknięcia.
+fn add_shortcut_widget(project: &mut Project) -> Result<Widget> {
+    use crate::model::ShortcutTarget;
+
+    let mut index = 1u32;
+    let id = loop {
+        let candidate = if index == 1 {
+            "shortcut".to_string()
+        } else {
+            format!("shortcut-{index}")
+        };
+        if !project.widgets.iter().any(|w| w.id == candidate) {
+            break candidate;
+        }
+        index += 1;
+    };
+    let suffix = if index == 1 {
+        String::new()
+    } else {
+        format!(" {index}")
+    };
+    let widget = Widget {
+        id,
+        name: format!("Shortcut{suffix}"),
+        kind: WidgetKind::Shortcut,
+        x: 173,
+        y: 203,
+        w: 120,
+        h: 60,
+        z: 0,
+        text: None,
+        text_size: None,
+        font: None,
+        time_format: None,
+        color: None,
+        src: None,
+        image_fit: FitMode::default(),
+        hand_set: None,
+        hour_src: None,
+        minute_src: None,
+        second_src: None,
+        cap_src: None,
+        data_source: None,
+        align: None,
+        v_align: VAlign::Center,
+        show_level: ShowLevel::Normal,
+        auto_scale: false,
+        text_style: TextStyle::Ellipsis,
+        visible: true,
+        measurement_system: None,
+        show_unit: true,
+        alpha: 255,
+        status_icon_set: None,
+        status_type: None,
+        weather_icon_set: None,
+        weather_day_offset: 0,
+        sleep_stage_mode: Default::default(),
+        progress: None,
+        shortcut_target: Some(ShortcutTarget::Battery),
     };
     project.widgets.push(widget.clone());
     layers::normalize(project);
@@ -891,6 +964,9 @@ fn add_progress_widget(project: &mut Project, kind: &str) -> Result<Widget> {
 /// `date`, `text` (stały tekst), `steps`, `distance`, widgety zdrowotne
 /// z kategorii `health`, bateria oraz ikony statusu z kategorii `system`.
 pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
+    if kind == "shortcut" {
+        return add_shortcut_widget(project);
+    }
     if matches!(kind, "arc-progress" | "bar-progress") {
         return add_progress_widget(project, kind);
     }
@@ -1013,7 +1089,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else if images {
         // Statyczny obrazek — plik PNG jest przygotowywany do rozmiaru ramki
@@ -1055,7 +1133,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else if date {
         // Data to widget tekstowy z danymi `Date`. `time_format` przechowuje tu
@@ -1098,7 +1178,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else if user_text {
         // Zwykły tekst wpisany w inspektorze. Bez `dataSource` i bez wzorca —
@@ -1140,7 +1222,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else if steps {
         // Licznik kroków czyta wartość z czujnika Zegarka — w podglądzie edytora
@@ -1182,7 +1266,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else if distance {
         // Dystans czyta czujnik ZeppOS w metrach. Jednostka domyślna pochodzi
@@ -1224,7 +1310,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else if let Some((kind, source, _, name, initial, size)) = date_field {
         // Pole daty — wartość jest generowana przez czujnik TIME / WORLD_CLOCK
@@ -1266,7 +1354,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else if let Some((target_kind, target_source, _, target_name, initial, size)) = target {
         // Pole celu — wartość czyta czujnik na zegarku (pole `.target`). Na PC
@@ -1308,7 +1398,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else if let Some((sleep_kind, sleep_source, _, sleep_name, sleep_text, sleep_size)) = sleep {
         // Widget snu — dane z `hmSensor.id.SLEEP`, na PC tekst predefiniowany.
@@ -1349,7 +1441,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
             weather_day_offset: 0,
             sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else if let Some((health_kind, health_source, _, health_name, _, health_size)) = health {
         // Widget zdrowotny — wartość czyta czujnik na zegarku. Na PC podgląd
@@ -1391,7 +1485,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else if battery {
         // Poziom baterii — tekst zasilany `hmSensor.id.BATTERY`. Na PC pokazujemy
@@ -1434,7 +1530,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else if let Some(status) = status_icon {
         // Ikona statusu systemu. Pakiety są przypisywane w FFI zaraz po dodaniu
@@ -1485,7 +1583,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else if let Some((weather_kind, weather_source, _, weather_name, initial, size)) = weather {
         // Widget pogody — wartości czyta `hmSensor.id.WEATHER` na zegarku.
@@ -1537,7 +1637,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     } else {
         Widget {
@@ -1577,7 +1679,9 @@ pub fn add_widget(project: &mut Project, kind: &str) -> Result<Widget> {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 
     };
     project.widgets.push(widget.clone());
@@ -1693,8 +1797,50 @@ fn update_progress_widget(project: &mut Project, settings: &Value) -> Result<Opt
     Ok(Some(widget.clone()))
 }
 
+/// Zapisuje cel klikalnej strefy (reszta geometryczna jest wspólna).
+fn update_shortcut_widget(project: &mut Project, settings: &Value) -> Result<Option<Widget>> {
+    use crate::model::ShortcutTarget;
+
+    let id = string_field(settings, "id")?;
+    let is_shortcut = project
+        .widgets
+        .iter()
+        .find(|w| w.id == id)
+        .is_some_and(|w| w.kind == WidgetKind::Shortcut);
+    if !is_shortcut {
+        return Ok(None);
+    }
+    let x = i64_field(settings, "x")?;
+    let y = i64_field(settings, "y")?;
+    let w = i64_field(settings, "w")?;
+    let h = i64_field(settings, "h")?;
+    if w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > SCREEN_SIZE as i64 || y + h > SCREEN_SIZE as i64 {
+        bail!("Widget musi mieścić się w ekranie 466×466");
+    }
+    let widget = project.widgets.iter_mut().find(|w| w.id == id).unwrap();
+    widget.x = x as i32;
+    widget.y = y as i32;
+    widget.w = w as i32;
+    widget.h = h as i32;
+    if let Some(value) = settings.get("shortcutTarget").and_then(Value::as_str) {
+        widget.shortcut_target = Some(
+            ShortcutTarget::parse(value)
+                .with_context(|| format!("Nieprawidłowy cel skrótu: {value}"))?,
+        );
+    }
+    widget.alpha = settings
+        .get("alpha")
+        .and_then(Value::as_u64)
+        .map(|v| v.clamp(0, 255) as u8)
+        .unwrap_or(widget.alpha);
+    Ok(Some(widget.clone()))
+}
+
 pub fn update_widget(project: &mut Project, settings: &Value) -> Result<Widget> {
     let id = string_field(settings, "id")?;
+    if let Some(widget) = update_shortcut_widget(project, settings)? {
+        return Ok(widget);
+    }
     if let Some(widget) = update_progress_widget(project, settings)? {
         return Ok(widget);
     }

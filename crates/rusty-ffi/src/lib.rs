@@ -1293,6 +1293,7 @@ pub extern "C" fn rw_encode_preview_gif(
         }
         let gif_path = dir.join("preview.gif");
         let png_path = dir.join("preview.png");
+        let model = rusty_core::load_project(Path::new(&project))?;
 
         // Statyczny PNG korzysta z ostatniej klatki (dokładna kopia 21:37:40),
         // ale zamiast surowej klatki zapisujemy oprawiony podgląd: tarcza
@@ -1310,6 +1311,11 @@ pub extern "C" fn rw_encode_preview_gif(
         // preview.png. GIF ma nadal 8 klatek.
         frames.pop();
         frames.insert(0, branded);
+        // Widoczne strefy klikania idą na KOLEJNĄ klatkę (pierwszą surową),
+        // nie na oprawiony podgląd, który jest klatką pierwszą.
+        if let Some(frame) = frames.get_mut(1) {
+            rusty_core::preview::draw_shortcut_overlays(frame, &model);
+        }
         string_result(rusty_core::preview::write_gif(&frames, &gif_path))?;
         let _ = fs::remove_dir_all(&cache);
         Ok(json!({

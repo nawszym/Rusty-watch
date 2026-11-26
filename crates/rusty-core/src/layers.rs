@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
-use crate::model::{Align, DataSource, ProgressSettings, Project, Widget, WidgetKind};
+use crate::model::{Align, DataSource, ProgressSettings, Project, ShortcutTarget, Widget, WidgetKind};
 
 /// Kolejność rysowania od spodu do góry (stabilne sortowanie zachowuje
 /// kolejność z pliku przy równym `z`). Tło nie jest warstwą — jest stałym
@@ -148,6 +148,9 @@ pub struct LayerView {
     /// Ustawienia łuku/paska postępu (serializowane do inspektora).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress: Option<ProgressSettings>,
+    /// Cel niewidocznej strefy klikalnej.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shortcut_target: Option<ShortcutTarget>,
 }
 
 fn widget_kind(widget: &Widget) -> &'static str {
@@ -159,6 +162,9 @@ fn widget_kind(widget: &Widget) -> &'static str {
     }
     if widget.kind == WidgetKind::BarProgress {
         return "bar-progress";
+    }
+    if widget.kind == WidgetKind::Shortcut {
+        return "shortcut";
     }
     if widget.kind == WidgetKind::StatusIcon {
         return match widget.status_type {
@@ -273,6 +279,7 @@ pub fn describe(project: &Project) -> Vec<LayerView> {
                 weather_day_offset: w.weather_day_offset,
                 sleep_stage_mode: w.sleep_stage_mode.as_str().to_string(),
                 progress: w.progress.clone(),
+                shortcut_target: w.shortcut_target,
             })
         })
         .collect()

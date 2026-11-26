@@ -191,6 +191,8 @@ pub enum ProgressSource {
     #[default]
     Battery,
     Steps,
+    /// Zachowany tylko dla kompatybilności starych projektów — nie jest już
+    /// oferowany jako źródło łuku/paska w inspektorze.
     Distance,
     Heart,
     Calories,
@@ -512,6 +514,9 @@ pub struct Widget {
     /// Ustawienia widgetu postępu (łuk/pasek). Starsze projekty ich nie mają.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<ProgressSettings>,
+    /// Cel niewidocznej strefy klikalnej (`shortcut`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shortcut_target: Option<ShortcutTarget>,
 }
 
 /// Stan systemu wyświetlany przez `hmUI.widget.IMG_STATUS`.
@@ -571,6 +576,109 @@ impl StatusType {
             Self::Dnd => 2,
             Self::Bluetooth => 4,
             Self::Lock => 8,
+        }
+    }
+}
+
+/// Cel klikalnej, niewidocznej strefy (`hmUI.widget.IMG_CLICK`).
+/// Wartości odpowiadają stałym `hmUI.data_type.*` w klasycznym API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShortcutTarget {
+    #[default]
+    Battery,
+    Steps,
+    Heart,
+    Stress,
+    Sleep,
+    Pai,
+    Spo2,
+    Weather,
+    AlarmClock,
+    StopWatch,
+    Countdown,
+    OutdoorRunning,
+    Walking,
+    OutdoorCycling,
+    FreeTraining,
+    PoolSwimming,
+    OpenWaterSwimming,
+    BreathTrain,
+    Moon,
+}
+
+impl ShortcutTarget {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Battery => "battery",
+            Self::Steps => "steps",
+            Self::Heart => "heart",
+            Self::Stress => "stress",
+            Self::Sleep => "sleep",
+            Self::Pai => "pai",
+            Self::Spo2 => "spo2",
+            Self::Weather => "weather",
+            Self::AlarmClock => "alarm-clock",
+            Self::StopWatch => "stopwatch",
+            Self::Countdown => "countdown",
+            Self::OutdoorRunning => "outdoor-running",
+            Self::Walking => "walking",
+            Self::OutdoorCycling => "outdoor-cycling",
+            Self::FreeTraining => "free-training",
+            Self::PoolSwimming => "pool-swimming",
+            Self::OpenWaterSwimming => "open-water-swimming",
+            Self::BreathTrain => "breath-train",
+            Self::Moon => "moon",
+        }
+    }
+
+    /// Dokładna nazwa stałej w `hmUI.data_type`.
+    pub fn js_constant(self) -> &'static str {
+        match self {
+            Self::Battery => "BATTERY",
+            Self::Steps => "STEP",
+            Self::Heart => "HEART",
+            Self::Stress => "STRESS",
+            Self::Sleep => "SLEEP",
+            Self::Pai => "PAI_DAILY",
+            Self::Spo2 => "SPO2",
+            Self::Weather => "WEATHER_CURRENT",
+            Self::AlarmClock => "ALARM_CLOCK",
+            Self::StopWatch => "STOP_WATCH",
+            Self::Countdown => "COUNT_DOWN",
+            Self::OutdoorRunning => "OUTDOOR_RUNNING",
+            Self::Walking => "WALKING",
+            Self::OutdoorCycling => "OUTDOOR_CYCLING",
+            Self::FreeTraining => "FREE_TRAINING",
+            Self::PoolSwimming => "POOL_SWIMMING",
+            Self::OpenWaterSwimming => "OPEN_WATER_SWIMMING",
+            Self::BreathTrain => "BREATH_TRAIN",
+            Self::Moon => "MOON",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "battery" => Some(Self::Battery),
+            "steps" => Some(Self::Steps),
+            "heart" => Some(Self::Heart),
+            "stress" => Some(Self::Stress),
+            "sleep" => Some(Self::Sleep),
+            "pai" => Some(Self::Pai),
+            "spo2" => Some(Self::Spo2),
+            "weather" => Some(Self::Weather),
+            "alarm-clock" => Some(Self::AlarmClock),
+            "stopwatch" => Some(Self::StopWatch),
+            "countdown" => Some(Self::Countdown),
+            "outdoor-running" => Some(Self::OutdoorRunning),
+            "walking" => Some(Self::Walking),
+            "outdoor-cycling" => Some(Self::OutdoorCycling),
+            "free-training" => Some(Self::FreeTraining),
+            "pool-swimming" => Some(Self::PoolSwimming),
+            "open-water-swimming" => Some(Self::OpenWaterSwimming),
+            "breath-train" => Some(Self::BreathTrain),
+            "moon" => Some(Self::Moon),
+            _ => None,
         }
     }
 }
@@ -686,6 +794,8 @@ pub enum WidgetKind {
     ArcProgress,
     /// Pasek postępu: `hmUI.widget.FILL_RECT` z zaokrąglonymi rogami.
     BarProgress,
+    /// Niewidoczna strefa klikalna: `hmUI.widget.IMG_CLICK` z pustym `src`.
+    Shortcut,
 }
 
 impl WidgetKind {
@@ -1072,7 +1182,9 @@ impl Project {
                 weather_day_offset: 0,
                 sleep_stage_mode: Default::default(),
                 progress: None,
+                shortcut_target: None,
                 }
+
 ,
             ],
             custom_code: None,

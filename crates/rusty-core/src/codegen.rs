@@ -31,9 +31,11 @@ static HEALTH_SENSORS: &[HealthSensor] = &[
         var: "healthHeartSensor",
         id: "HEART",
         getter: "_getHealthHeart",
-        event: "CURRENT",
+        event: "LAST",
         read_var: "_hHeart",
-        value: "_hHeart.current ? String(_hHeart.current) : '--'",
+        // `current` wymaga ciągłego pomiaru (onCurrentChange) — zjadłoby baterię.
+        // `last` to ostatni zarejestrowany pomiar i ma własne zdarzenie LAST.
+        value: "_hHeart.last ? String(_hHeart.last) : '--'",
         unit: Some("bpm"),
     },
     HealthSensor {
@@ -41,7 +43,7 @@ static HEALTH_SENSORS: &[HealthSensor] = &[
         var: "healthHeartSensor",
         id: "HEART",
         getter: "_getHealthHeart",
-        event: "CURRENT",
+        event: "LAST",
         read_var: "_hHeart",
         value: "_hHeart.last ? String(_hHeart.last) : '--'",
         unit: Some("bpm"),
@@ -51,7 +53,7 @@ static HEALTH_SENSORS: &[HealthSensor] = &[
         var: "healthHeartSensor",
         id: "HEART",
         getter: "_getHealthHeart",
-        event: "CURRENT",
+        event: "LAST",
         read_var: "_hHeart",
         value: "_hrStats.min",
         unit: Some("bpm"),
@@ -61,7 +63,7 @@ static HEALTH_SENSORS: &[HealthSensor] = &[
         var: "healthHeartSensor",
         id: "HEART",
         getter: "_getHealthHeart",
-        event: "CURRENT",
+        event: "LAST",
         read_var: "_hHeart",
         value: "_hrStats.max",
         unit: Some("bpm"),
@@ -71,7 +73,7 @@ static HEALTH_SENSORS: &[HealthSensor] = &[
         var: "healthHeartSensor",
         id: "HEART",
         getter: "_getHealthHeart",
-        event: "CURRENT",
+        event: "LAST",
         read_var: "_hHeart",
         value: "_hrStats.avg",
         unit: Some("bpm"),
@@ -517,10 +519,24 @@ fn progress_sensor_id(source: ProgressSource) -> Option<&'static str> {
     }
 }
 
+/// Zdarzenie czujnika, które odświeża postęp — tak samo jak w pozostałych
+/// widgetach (HEART używa CURRENT, reszta CHANGE).
+fn progress_sensor_event(source: ProgressSource) -> Option<&'static str> {
+    match source {
+        ProgressSource::Fixed => None,
+        ProgressSource::Heart => Some("LAST"),
+        _ => Some("CHANGE"),
+    }
+}
+
 /// Funkcja zwracająca postęp 0…1 dla jednego widgetu.
 fn progress_value_fn(index: usize, w: &Widget) -> String {
     let p = progress_of(w);
-    let mut out = format!("let _progSensor_{index} = null\nfunction _progValue_{index}() {{\n");
+    let mut out = format!("let _progSensor_{index} = null\n");
+    if p.source == ProgressSource::Sleep {
+        out.push_str(&format!("let _progSleepMinute_{index} = -1\n"));
+    }
+    out.push_str(&format!("function _progValue_{index}() {{\n"));
     match p.source {
         ProgressSource::Fixed => {
             out.push_str(&format!("  return {}\n", (p.value / 100.0).clamp(0.0, 1.0)));
@@ -528,6 +544,11 @@ fn progress_value_fn(index: usize, w: &Widget) -> String {
         ProgressSource::Sleep => {
             out.push_str(&format!(
                 "  const s = _progSensor_{index} || (_progSensor_{index} = _createProgSensor('SLEEP'))\n"
+            ));
+            // Na zegarku `getTotalTime()` zwraca 0 dopóki czujnik nie pobierze danych —
+            // text widget snu robi to samo w sleepTick.
+            out.push_str(&format!(
+                "  if (s && s.updateInfo) {{\n    const _pt = _getTime()\n    const _pm = _pt ? (_pt.hour * 60 + _pt.minute) : -1\n    if (_progSleepMinute_{index} !== _pm) {{ _progSleepMinute_{index} = _pm\n      try {{ s.updateInfo() }} catch (e) {{}}\n    }}\n  }}\n"
             ));
             out.push_str("  let raw = 0\n  if (s && s.getTotalTime) { try { raw = s.getTotalTime() || 0 } catch (e) { raw = 0 } }\n");
             out.push_str("  let hi = 100\n  try { if (typeof hmSetting !== 'undefined' && hmSetting.getSleepTarget) hi = hmSetting.getSleepTarget() || 100 } catch (e) { hi = 100 }\n");
@@ -537,22 +558,28 @@ fn progress_value_fn(index: usize, w: &Widget) -> String {
             let id = progress_sensor_id(source).unwrap();
             let field = match source {
                 ProgressSource::Pai => "dailypai",
+                // Ostatni pomiar — bez uruchamiania ciągłego monitoringu.
+                ProgressSource::Heart => "last",
                 _ => "current",
             };
             out.push_str(&format!(
                 "  const s = _progSensor_{index} || (_progSensor_{index} = _createProgSensor('{id}'))\n"
             ));
             out.push_str(&format!("  const raw = s ? (s.{field} || 0) : 0\n"));
-            let hi = if p.max > p.min {
-                p.max.to_string()
-            } else if matches!(
+            let hi = if matches!(
                 source,
                 ProgressSource::Steps
                     | ProgressSource::Calories
                     | ProgressSource::Stand
                     | ProgressSource::FatBurning
             ) {
+                // Cel ustawiony w aplikacji Zepp ma zawsze pierwszeństwo przed
+                // zapisanym max — inaczej 2500/5000 kroków dawało 25%, nie 50%.
                 "(s && s.target ? s.target : 100)".to_string()
+            } else if source == ProgressSource::Heart {
+                "165".to_string()
+            } else if p.max > p.min {
+                p.max.to_string()
             } else {
                 "100".to_string()
             };
@@ -901,7 +928,7 @@ pub fn generate_index_js_with_hands(
         ));
     }
     if !progress_widgets.is_empty() {
-        prelude.push_str("let progressTick = null\n");
+        prelude.push_str("let progressTick = null\nlet progressTickEvent = null\nlet progressSensors = null\n");
         prelude.push_str("function _createProgSensor(id) {\n");
         prelude.push_str("  if (!hmSensor || !hmSensor.createSensor || !hmSensor.id || !hmSensor.id[id]) return null\n");
         prelude.push_str("  try { return hmSensor.createSensor(hmSensor.id[id]) } catch (e) { return null }\n}\n");
@@ -960,7 +987,7 @@ pub fn generate_index_js_with_hands(
         prelude.push_str(&format!("  }}\n  return {}\n}}\n", sensor.var));
     }
     if !health_widgets.is_empty() {
-        prelude.push_str("let healthTick = null\nlet healthSensors = null\n");
+        prelude.push_str("let healthTick = null\nlet healthTickEvent = null\nlet healthSensors = null\n");
         if used_health
             .iter()
             .any(|sensor| sensor.id == "SLEEP")
@@ -1142,15 +1169,24 @@ pub fn generate_index_js_with_hands(
     if !health_widgets.is_empty() {
         // Jeden wspólny tick dla wszystkich widgetów zdrowotnych — aktualizuje
         // je raz na zmianie czujnika oraz przy każdym tyknięciu zegara.
-        out.push_str("      healthTick = () => {\n");
+        out.push_str("      healthTick = (fromTick) => {\n");
         // Jeden getter na czujnik — kilka widgetów może czytać ten sam `HEART`.
+        // Przy odświeżeniu z timera nie czytamy tętna: aktualizuje je wyłącznie
+        // zdarzenie LAST, więc tarcza nie potrzebuje ciągłego pomiaru.
         let mut emitted_getters = std::collections::HashSet::new();
         for (_, sensor, _) in &health_widgets {
             if emitted_getters.insert(sensor.getter) {
-                out.push_str(&format!(
-                    "        const {} = {}()\n",
-                    sensor.read_var, sensor.getter
-                ));
+                if sensor.id == "HEART" {
+                    out.push_str(&format!(
+                        "        const {} = fromTick ? null : {}()\n",
+                        sensor.read_var, sensor.getter
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "        const {} = {}()\n",
+                        sensor.read_var, sensor.getter
+                    ));
+                }
             }
         }
         if health_widgets
@@ -1181,6 +1217,7 @@ pub fn generate_index_js_with_hands(
             ));
         }
         out.push_str("      }\n");
+        out.push_str("      healthTickEvent = () => healthTick()\n");
         out.push_str("      healthSensors = [\n");
         for sensor in &used_health {
             out.push_str(&format!(
@@ -1191,7 +1228,7 @@ pub fn generate_index_js_with_hands(
         out.push_str("      ]\n");
         out.push_str("      healthSensors.forEach((entry) => {\n");
         out.push_str("        const sensor = entry.get()\n");
-        out.push_str("        if (sensor && sensor.addEventListener && sensor.event && sensor.event[entry.event]) sensor.addEventListener(sensor.event[entry.event], healthTick)\n");
+        out.push_str("        if (sensor && sensor.addEventListener && sensor.event && sensor.event[entry.event]) sensor.addEventListener(sensor.event[entry.event], healthTickEvent)\n");
         out.push_str("      })\n");
         out.push_str("      healthTick()\n");
     }
@@ -1297,12 +1334,53 @@ pub fn generate_index_js_with_hands(
     if !progress_widgets.is_empty() {
         let calls: Vec<String> = progress_widgets
             .iter()
-            .map(|(index, _)| format!("_progApply_{index}()"))
+            .map(|(index, w)| {
+                if progress_of(w).source == ProgressSource::Heart {
+                    // Tylko zdarzenie LAST odświeża tętno — nie każdy tick timera.
+                    format!("if (!fromTick) _progApply_{index}()")
+                } else {
+                    format!("_progApply_{index}()")
+                }
+            })
             .collect();
         out.push_str(&format!(
-            "      progressTick = () => {{ {} }}\n      progressTick()\n",
+            "      progressTick = (fromTick) => {{ {} }}\n",
             calls.join("; ")
         ));
+        // Jeden listener na unikalny czujnik — kilka łuków/pasków może czytać
+        // ten sam HEART. Bez tego na zegarku poziom zostawał 0 z build() i nigdy
+        // się nie odświeżał (symulator miał dane od razu, więc bug był niewidoczny).
+        let mut seen = std::collections::HashSet::new();
+        let mut entries = Vec::new();
+        for (index, w) in &progress_widgets {
+            let source = progress_of(w).source;
+            let (Some(id), Some(event)) = (
+                progress_sensor_id(source),
+                progress_sensor_event(source),
+            ) else {
+                continue;
+            };
+            if seen.insert((id, event)) {
+                entries.push(format!(
+                    "        {{ get: () => _progSensor_{index}, event: '{event}' }},\n"
+                ));
+            }
+        }
+        if entries.is_empty() {
+            out.push_str("      progressTick()\n");
+        } else {
+            out.push_str("      progressSensors = [\n");
+            for entry in entries {
+                out.push_str(&entry);
+            }
+            out.push_str("      ]\n");
+            out.push_str("      progressTickEvent = () => progressTick()\n");
+            out.push_str("      progressSensors.forEach((entry) => {\n");
+            out.push_str("        const sensor = entry.get()\n");
+            out.push_str("        if (sensor && sensor.addEventListener && sensor.event && sensor.event[entry.event]) sensor.addEventListener(sensor.event[entry.event], progressTickEvent)\n");
+            out.push_str("      })\n");
+            out.push_str("      progressTick()\n");
+        }
     }
 
     out.push_str("      tick = () => {\n");
@@ -1330,7 +1408,10 @@ pub fn generate_index_js_with_hands(
         out.push_str("        if (batteryTick) batteryTick()\n");
     }
     if !health_widgets.is_empty() {
-        out.push_str("        if (healthTick) healthTick()\n");
+        out.push_str("        if (healthTick) healthTick(true)\n");
+    }
+    if !progress_widgets.is_empty() {
+        out.push_str("        if (progressTick) progressTick(true)\n");
     }
     if !sleep_widgets.is_empty() {
         out.push_str("        if (sleepTick) sleepTick()\n");
@@ -1401,11 +1482,18 @@ pub fn generate_index_js_with_hands(
         out.push_str("      worldClockSensor = null\n");
     }
     if !health_widgets.is_empty() {
-        out.push_str("      if (healthSensors && healthTick) healthSensors.forEach((entry) => {\n");
+        out.push_str("      if (healthSensors && healthTickEvent) healthSensors.forEach((entry) => {\n");
         out.push_str("        const sensor = entry.get()\n");
-        out.push_str("        if (sensor && sensor.removeEventListener && sensor.event && sensor.event[entry.event]) sensor.removeEventListener(sensor.event[entry.event], healthTick)\n");
+        out.push_str("        if (sensor && sensor.removeEventListener && sensor.event && sensor.event[entry.event]) sensor.removeEventListener(sensor.event[entry.event], healthTickEvent)\n");
         out.push_str("      })\n");
-        out.push_str("      healthSensors = null\n      healthTick = null\n");
+        out.push_str("      healthSensors = null\n      healthTickEvent = null\n      healthTick = null\n");
+    }
+    if !progress_widgets.is_empty() {
+        out.push_str("      if (progressSensors && progressTickEvent) progressSensors.forEach((entry) => {\n");
+        out.push_str("        const sensor = entry.get()\n");
+        out.push_str("        if (sensor && sensor.removeEventListener && sensor.event && sensor.event[entry.event]) sensor.removeEventListener(sensor.event[entry.event], progressTickEvent)\n");
+        out.push_str("      })\n");
+        out.push_str("      progressSensors = null\n      progressTickEvent = null\n      progressTick = null\n");
     }
     if !sleep_widgets.is_empty() {
         out.push_str("      sleepSensor = null\n      sleepTick = null\n");
@@ -1597,6 +1685,28 @@ fn analog_widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -
 }
 
 fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> String {
+    if w.kind == WidgetKind::Shortcut {
+        let target = w
+            .shortcut_target
+            .unwrap_or(crate::model::ShortcutTarget::Battery);
+        let alpha = if w.alpha < 255 {
+            format!("alpha: {}, ", w.alpha)
+        } else {
+            String::new()
+        };
+        // Pusty `src` to w pełni przezroczysta nakładka — wzorzec używany przez
+        // działające tarcze w amazfitwatchfaces. Nie dodajemy żadnego zasobu do ZIP-u:
+        // 1×1 przezroczysty PNG był odrzucany przy instalacji przez QR i w zeus.
+        return format!(
+            "hmUI.createWidget(hmUI.widget.IMG_CLICK, {{ {alpha}x: {}, y: {}, w: {}, h: {}, src: \"\", type: hmUI.data_type.{}, show_level: {} }})",
+            w.x,
+            w.y,
+            w.w,
+            w.h,
+            target.js_constant(),
+            JS_SHOW_LEVEL
+        );
+    }
     if w.kind == WidgetKind::AnalogTime {
         return analog_widget_call(w, placements);
     }
@@ -1737,6 +1847,7 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
         WidgetKind::ArcProgress | WidgetKind::BarProgress => {
             unreachable!("progress widgets are handled above")
         }
+        WidgetKind::Shortcut => unreachable!("shortcut widgets are handled above"),
     }
 
     if w.alpha < 255 {
@@ -1808,6 +1919,7 @@ fn widget_call(w: &Widget, placements: &HashMap<String, HandPlacement>) -> Strin
             WidgetKind::ArcProgress | WidgetKind::BarProgress => {
                 unreachable!("progress widgets are handled above")
             }
+            WidgetKind::Shortcut => unreachable!("shortcut widgets are handled above"),
         },
         props
     )

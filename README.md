@@ -91,6 +91,7 @@ no code or assets from that project were copied.
 - **Health** — Heart rate (current, last valid, min/max/avg from `HEART.today`), Stress, PAI (today, last 7 days, weekly), Skin temperature, Calories, SpO₂ (current, hourly average), Stand hours, Fat burning
 - **Sleep** — Sleep duration, Sleep score, Deep/Light/REM sleep, Time awake (minutes or %), Sleep start/end, Sleep target
 - **Progress** — arc (square, one SIZE slider, line-weight handle) and bar (width/height editable down to 1 px, no line weight) with source selection (battery, steps, distance, heart, calories, stand, fat burning, PAI, SpO₂, sleep, fixed), roundness on/off (a square bar becomes a circle), optional track and editable angles (arc only)
+- **Shortcuts** — invisible tap zones opening watch apps/data screens (battery, heart, stress, sleep, PAI, SpO₂, weather, alarm, stopwatch, countdown, sports, breathing, moon); shown as sea-breeze hatch in the editor
 - **Weather** — condition name, city, **current temperature from the watch firmware** (alignment/font/size/colour editable, value is not), high/low, sunrise/sunset, **time to sunrise/sunset** and 29 weather icons (Classic). Forecast-backed fields have a **forecast day** setting: Today / Tomorrow / Day after tomorrow / +3 / +4; missing days show `--`.
 
 Add a widget with **+ Add widget** on the preview bar; the left-hand Widgets tab is a
@@ -312,7 +313,7 @@ Name, author and App ID land in `app.json` as `appName`, `appId` (`vender` is al
 
 ### 🧪 Tests and verification
 
-1. `cargo test --workspace` — 150 core + 37 FFI tests.
+1. `cargo test --workspace` — 160 core + 37 FFI tests.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. Launch the app and check affected screens in **EN and PL**.
 4. Round-trip `new → export → open → export` must preserve data.

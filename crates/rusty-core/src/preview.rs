@@ -1478,16 +1478,16 @@ fn progress_frame_value(layer: &LayerView, frame: &PreviewFrameData) -> f64 {
         ProgressSource::Fixed => progress.value as f64,
     };
     let lo = progress.min as f64;
-    let hi = if progress.max > progress.min {
-        progress.max as f64
-    } else {
-        match progress.source {
-            ProgressSource::Steps => frame.steps_target as f64,
-            ProgressSource::Calories => frame.calories_target as f64,
-            ProgressSource::Stand => frame.stand_target.max(1) as f64,
-            ProgressSource::FatBurning => frame.fat_burning_target.max(1) as f64,
-            _ => 100.0,
-        }
+    let hi = match progress.source {
+        // Cel z aplikacji Zepp ma pierwszeństwo przed zapisanym max — tak samo
+        // jak w wygenerowanym JS (2500/5000 kroków = połowa paska).
+        ProgressSource::Steps => frame.steps_target as f64,
+        ProgressSource::Calories => frame.calories_target as f64,
+        ProgressSource::Stand => frame.stand_target.max(1) as f64,
+        ProgressSource::FatBurning => frame.fat_burning_target.max(1) as f64,
+        ProgressSource::Heart => 165.0,
+        _ if progress.max > progress.min => progress.max as f64,
+        _ => 100.0,
     };
     let mut value = if hi > lo { (raw - lo) / (hi - lo) } else { 0.0 };
     if progress.invert {
@@ -1652,6 +1652,69 @@ pub fn compose_branded_preview(frame: &RgbaImage, size: u32) -> RgbaImage {
     out
 }
 
+/// Kolor „morskiej bryzy" używany do oznaczania stref klikalnych w edytorze
+/// i na następnej klatce GIF-u (tej po oprawionym podglądzie).
+const SHORTCUT_HATCH_COLOR: Rgba<u8> = Rgba([125, 226, 209, 255]);
+const SHORTCUT_ICON_PNG: &[u8] =
+    include_bytes!("../../../native/RustyWatch/Assets/Icons/click-zone.png");
+
+/// Dorysowuje widoczne pola klikania na surowej klatce 466×466.
+/// Na zegarku strefy są niewidoczne — ten narzut jest tylko informacyjny.
+pub fn draw_shortcut_overlays(canvas: &mut RgbaImage, project: &crate::model::Project) {
+    let icon_source = match image::load_from_memory(SHORTCUT_ICON_PNG) {
+        Ok(image) => image.to_rgba8(),
+        Err(_) => return,
+    };
+    let alpha = |layer: &LayerView| layer.alpha as f64 / 255.0;
+
+    for layer in describe(project) {
+        if layer.kind != "shortcut" || !layer.visible {
+            continue;
+        }
+        let x0 = layer.x.max(0);
+        let x1 = (layer.x + layer.w).min(SCREEN_SIZE as i32);
+        let y0 = layer.y.max(0);
+        let y1 = (layer.y + layer.h).min(SCREEN_SIZE as i32);
+        if x0 >= x1 || y0 >= y1 {
+            continue;
+        }
+        // Ramka wyznacza pole kliknięcia — ikona i gęstość kresek rosną z jej rozmiarem.
+        let shorter = layer.w.min(layer.h).max(1);
+        let icon_size = (shorter / 2).clamp(1, shorter) as u32;
+        let hatch_step = (shorter / 4).clamp(6, 24) as i32;
+        let icon = image::imageops::resize(
+            &icon_source,
+            icon_size,
+            icon_size,
+            FilterType::Lanczos3,
+        );
+        let icon_x = layer.x + layer.w / 2 - icon_size as i32 / 2;
+        let icon_y = layer.y + layer.h / 2 - icon_size as i32 / 2;
+        let center = SCREEN_SIZE as f64 / 2.0;
+
+        for py in y0..y1 {
+            for px in x0..x1 {
+                // Nie rysujemy poza okręgiem tarczy.
+                let dx = px as f64 - center;
+                let dy = py as f64 - center;
+                if (dx * dx + dy * dy).sqrt() > 233.0 {
+                    continue;
+                }
+                let pixel = canvas.get_pixel_mut(px as u32, py as u32);
+                if (px + py).rem_euclid(hatch_step) < 2 {
+                    paint_over(pixel, SHORTCUT_HATCH_COLOR, 0.45 * alpha(&layer));
+                }
+                let ix = px - icon_x;
+                let iy = py - icon_y;
+                if ix >= 0 && iy >= 0 && (ix as u32) < icon_size && (iy as u32) < icon_size {
+                    let sample = *icon.get_pixel(ix as u32, iy as u32);
+                    paint_over(pixel, sample, alpha(&layer));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1747,6 +1810,93 @@ mod tests {
             1,
             "detached arc caps / broken ring: {components:?}"
         );
+    }
+
+    #[test]
+    fn shortcut_overlay_scales_with_the_frame() {
+        let changed_for = |size: i32| {
+            let mut project = crate::model::Project::starter("ShortcutScale");
+            let widget = crate::widgets::add_widget(&mut project, "shortcut").unwrap();
+            let settings = serde_json::json!({
+                "id": widget.id,
+                "x": 233 - size / 2, "y": 233 - size / 2,
+                "w": size, "h": size,
+                "shortcutTarget": "battery",
+            });
+            crate::widgets::update_widget(&mut project, &settings).unwrap();
+            let series = random_series(1234, "en");
+            let frame = frame_data(0, &series).unwrap();
+            let mut image = render_frame(Path::new("."), &project, &frame, &series);
+            let before = image.clone();
+            draw_shortcut_overlays(&mut image, &project);
+            before.pixels().zip(image.pixels()).filter(|(a, b)| a.0 != b.0).count()
+        };
+        let small = changed_for(40);
+        let large = changed_for(120);
+        assert!(small > 0 && large > small, "overlay must grow with the frame: {small} vs {large}");
+    }
+
+    #[test]
+    fn shortcut_overlay_goes_on_second_gif_frame() {
+        let mut project = crate::model::Project::starter("GifShortcut");
+        crate::widgets::add_widget(&mut project, "shortcut").unwrap();
+        let series = random_series(1234, "en");
+        let mut frames: Vec<_> = (0..FRAME_COUNT)
+            .map(|index| {
+                let frame = frame_data(index, &series).unwrap();
+                render_frame(Path::new("."), &project, &frame, &series)
+            })
+            .collect();
+        let branded = compose_branded_preview(&frames[PREVIEW_FRAME_INDEX], SCREEN_SIZE);
+        frames.pop();
+        frames.insert(0, branded.clone());
+        assert_eq!(frames[0], branded, "first frame must stay the branded preview");
+
+        let original = frames[1].clone();
+        draw_shortcut_overlays(&mut frames[1], &project);
+        let changed = original
+            .pixels()
+            .zip(frames[1].pixels())
+            .filter(|(a, b)| a.0 != b.0)
+            .count();
+        assert!(changed > 0, "second frame must show the click zone");
+    }
+
+    #[test]
+    fn progress_preview_uses_watch_goal_and_bpm_scale() {
+        use crate::model::ProgressSource;
+
+        let mut project = crate::model::Project::starter("PreviewGoals");
+        let widget = crate::widgets::add_widget(&mut project, "bar-progress").unwrap();
+        crate::widgets::update_widget(
+            &mut project,
+            &serde_json::json!({
+                "id": widget.id,
+                "x": 23, "y": 203, "w": 420, "h": 60,
+                "progress": { "source": "steps", "max": 100 },
+            }),
+        )
+        .unwrap();
+        let layer = describe(&project)
+            .into_iter()
+            .find(|view| view.id == widget.id)
+            .unwrap();
+        let mut frame = frame_data(0, &random_series(1234, "en")).unwrap();
+        frame.steps = 2500;
+        frame.steps_target = 5000;
+        let value = progress_frame_value(&layer, &frame);
+        assert!((value - 0.5).abs() < 0.001, "2500/5000 must be half: {value}");
+
+        let mut settings = layer.progress.clone().unwrap();
+        settings.source = ProgressSource::Heart;
+        let layer = LayerView { progress: Some(settings), ..layer };
+        frame.heart_rate = 165;
+        assert!(
+            (progress_frame_value(&layer, &frame) - 1.0).abs() < 0.001,
+            "165 bpm must fill the arc"
+        );
+        frame.heart_rate = 82;
+        assert!((progress_frame_value(&layer, &frame) - 82.0 / 165.0).abs() < 0.001);
     }
 
     #[test]

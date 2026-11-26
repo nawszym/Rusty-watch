@@ -103,6 +103,9 @@ desktop.ini
 .DS_Store
 ._*
 Icon?
+# `Icon?` ignoruje też katalog `Icons` — ikona strefy klikalnej jest częścią kodu.
+!native/RustyWatch/Assets/Icons/
+!native/RustyWatch/Assets/Icons/click-zone.png
 @eaDir/
 $RECYCLE.BIN/
 System Volume Information/

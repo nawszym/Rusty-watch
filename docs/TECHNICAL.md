@@ -98,7 +98,7 @@ throws/propagates `error`.
 `date_format`, `export_paths`, `fonts`, `hands`, `image_fit`, `images`, `layers`,
 `locale`, `model`, `package`, `preview`, `project`, `recent`, `status_icons`,
 `time_format`, `validate`, `weather`, `widgets`). `lib.rs` itself only re-exports
-types and contains the 150 core tests.
+types and contains the 160 core tests.
 
 ### 2.1 Constants and `Project` (`model.rs:5-37`)
 
@@ -132,7 +132,7 @@ Every field has a serde default if optional, so older `project.json` files load:
 | Media | `src`, `image_fit` (`FitMode::Contain` default), `hand_set`, `hour_src`, `minute_src`, `second_src`, `cap_src` |
 | Data | `data_source: Option<DataSource>`, `visible` (default **true**), `measurement_system: Option<MeasurementSystem>` (override), `show_unit` (default **true**) |
 
-`WidgetKind` has 55 variants (`model.rs`, ~396-570): `Text`, `Image` (legacy, not
+`WidgetKind` has 56 variants (`model.rs`, ~396-570): `Text`, `Image` (legacy, not
 in catalog), `Images`, `TimeText`, `DateText`, `WeekdayNumberText`, `WeekNumberText`,
 `DayOfYearText`, `LunarDateText`, `FestivalText`, `WorldClockText`, `StepText`,
 `DistanceText`, `HeartRateText`, `HeartRateLastText`, `HeartRateMinText`,
@@ -144,7 +144,7 @@ in catalog), `Images`, `TimeText`, `DateText`, `WeekdayNumberText`, `WeekNumberT
 `PaiWeeklyText`, `SleepTargetText`, `WeatherConditionText`, `WeatherCityText`,
 `WeatherCurrentText`, `WeatherHighText`, `WeatherLowText`, `SunriseText`,
 `SunsetText`, `SunCurrentText`, `WeatherIcon`, `StatusIcon`, `AnalogTime`,
-`ArcProgress`, `BarProgress`.
+`ArcProgress`, `BarProgress`, `Shortcut`.
 `supported_widgets()` exposes 57 catalog entries (the legacy `Image` is not addable;
 `StatusIcon` is represented by four `status-*` entries).
 
@@ -272,7 +272,7 @@ deliberately falls back to an empty list when the recent store is corrupt — a 
 
 ### 5.1 Catalog (`widgets.rs:12-117`)
 
-`supported_widgets()` returns 57 `{kind,category}` entries in this order:
+`supported_widgets()` returns 58 `{kind,category}` entries in this order:
 
 | Category | Kinds |
 |---|---|
@@ -287,13 +287,30 @@ deliberately falls back to an empty list when the recent store is corrupt — a 
 | `system` | `battery`, `status-alarm`, `status-dnd`, `status-bluetooth`, `status-lock` |
 | `weather` | `weather-condition`, `weather-city`, `weather-current`, `weather-high`, `weather-low`, `sunrise`, `sunset`, `sun-current`, `weather-icon` |
 | `progress` | `arc-progress`, `bar-progress` |
+| `shortcut` | `shortcut` |
 
 `arc-progress` and `bar-progress` share one `ProgressSettings` field on `Widget` (source, min/max,
 colours, thickness, radius, round/flat ends, track and arc-only angles; fill is always continuous).
 Codegen emits classic `ARC_PROGRESS` / `FILL_RECT` widgets (with `corner_flag` and `radius` for
 rounded ends) and refreshes them through `setProperty(hmUI.prop.MORE, …)`; all JS dimensions are
 frame literals (bare `w`/`h`/`y` identifiers caused a `ReferenceError` and left the bar unfilled).
+`progressTick` is called from the main `tick` **and** registered on the source sensor
+(deduplicated per sensor, with matching cleanup in `onDestroy`) — a build-only refresh left the arc
+invisible on the real watch while the simulator still showed it. `HEART` reads `heart.last` on the
+`LAST` event only (no `CURRENT`, no per-tick polling) and uses a fixed 165 BPM scale; text BPM
+widgets do the same. Goal sources (`steps`, `calories`, `stand`, `fat-burning`) always divide by the
+watch's `.target`, and the Rust preview uses the same target, so 2500 of 5000 steps draws half.
+`distance` is no longer offered as a progress source (the enum variant remains for old projects).
+The `sleep` source calls `updateInfo()` once per minute before `getTotalTime()`.
 The WinUI and Rust previews use the same values. No assets, no `@zos`, no `Date`.
+
+`shortcut` is an invisible tap zone: codegen emits `hmUI.widget.IMG_CLICK` with **`src: ""`** and
+`type: hmUI.data_type.<TARGET>` (battery, heart, stress, sleep, PAI, SpO₂, weather, alarm, stopwatch,
+countdown, sports, breathing, moon). No PNG asset is zipped — the earlier 1×1 transparent PNG broke
+QR installs and `zeus install`. No sensor, timer or listener is generated. In
+the editor it is drawn as a sea-breeze (`#7DE2D1`) diagonal hatch with a tap icon; the first GIF frame
+(the branded preview) stays untouched, while the **second** frame (first raw one) gets the same hatch
+and icon via `preview::draw_shortcut_overlays()`.
 
 `heart-last` reads `HEART.last`, `spo2-hour-avg` reads `SPO2.hourAvgofDay[hour]` and
 `pai-prepai` sums `dailypai + prepai0…5`; all three reuse the existing lazy getters,
@@ -774,7 +791,7 @@ own `assets/fonts` copy so the preview uses exactly the exported TTF.
 `Microsoft.Windows.SDK.BuildTools 10.0.26100.4654`. The `BuildRustFfi` target runs
 `cargo build -p rusty-ffi` before build; `CopyRustFfi` copies `rusty_ffi.dll` after
 build with `SkipUnchangedFiles="false"` because `PreserveNewest` can leave a stale DLL.
-Expected result on both toolchains: 0 errors / 0 warnings (187 tests total: 150 core + 37 FFI).
+Expected result on both toolchains: 0 errors / 0 warnings (197 tests total: 160 core + 37 FFI).
 
 ### 11.7 Preview options and Custom Data
 

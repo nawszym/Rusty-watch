@@ -144,6 +144,11 @@ pub fn validate(project: &Project) -> Vec<String> {
                     }
                 }
             }
+            WidgetKind::Shortcut => {
+                if widget.shortcut_target.is_none() {
+                    errors.push(format!("Strefa klikalna '{}' nie ma celu", widget.id));
+                }
+            }
             WidgetKind::StatusIcon => {
                 if widget.status_icon_set.is_none() || widget.status_type.is_none() {
                     errors.push(format!(

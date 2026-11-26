@@ -918,6 +918,16 @@
                                                   Click="ProgressCheck_Click" />
                                     </StackPanel>
 
+                                    <!-- Niewidoczna strefa klikalna — tylko cel skrótu. Panel jest
+                                         rodzeństwem ProgressSettingsPanel, nie jego dzieckiem. -->
+                                    <StackPanel x:Name="ShortcutSettingsPanel" Spacing="4" Visibility="Collapsed">
+                                        <TextBlock Text="{Binding Strings[ShortcutTargetLabel]}" FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <ComboBox x:Name="ShortcutTargetCombo" HorizontalAlignment="Stretch"
+                                                  DisplayMemberPath="Name"
+                                                  SelectionChanged="ShortcutTargetCombo_SelectionChanged" />
+                                    </StackPanel>
+
                                     <!-- Pozycja X i Y obok siebie. Wartość: jedno kliknięcie kopiuje,
                                          podwójne włącza edycję liczby. -->
                                     <Grid ColumnSpacing="12" Margin="0,12,0,0">

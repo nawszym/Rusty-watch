@@ -579,7 +579,9 @@ mod tests {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 );
         project
     }

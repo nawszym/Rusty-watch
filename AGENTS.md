@@ -432,7 +432,16 @@ Do not "fix" these by reverting to the obvious approach:
   one arc/bar. The live editor preview reads the matching Custom Data field (`battery` defaults to
   **73%**); generated preview files remain deterministic and ignore Custom Data. Codegen emits native `hmUI.widget.ARC_PROGRESS` /
   `FILL_RECT` (rounded ends via the undocumented `corner_flag`, rounded bar corners via
-  `FILL_RECT.radius`) and refreshes `level`/geometry from `progressTick`. The arc has an extra
+  `FILL_RECT.radius`) and refreshes `level`/geometry from `progressTick`, which is called from the
+  main `tick` and from a deduplicated sensor listener and removed in `onDestroy` — a build-only
+  refresh left the arc invisible on the real watch while the simulator showed it. `HEART` reads
+  `heart.last` (the last registered measurement) on the `LAST` event only — never on `CURRENT`
+  (continuous measurement drains the battery) and never from `tick`; its scale is a fixed **165 BPM**.
+  Text BPM widgets use the same `last`/`LAST` path. `steps`/`calories`/`stand`/`fat-burning` always
+  use the watch/Zepp goal (`.target`) as the high bound, so 2500 of 5000 steps draws half the arc;
+  the Rust preview uses the same goal. `distance` is no longer offered as a progress source (the
+  enum variant stays only for old projects). The `sleep` source calls `updateInfo()` before
+  `getTotalTime()`. The arc has an extra
   draggable point at 0° that changes **only** `Progress.Thickness` (never text/size/other settings;
   `arc_center_radius()` keeps the ring's centre radius fixed so thickness grows symmetrically inward
   and outward — "center stays"); the frame is **not** expanded — the editor gives the arc `Path` a
@@ -459,6 +468,16 @@ Do not "fix" these by reverting to the obvious approach:
   literals from the frame** — never bare `x`/`y`/`w`/`h` identifiers (that caused a `ReferenceError`
   and left the bar unfilled). The same values drive the WinUI `Path`/`Rectangle` preview and the
   Rust renderer. No image assets and no `@zos`/`Date`.
+  The **Shortcut** category (`CATEGORY_SHORTCUT`) has one `shortcut` kind: an invisible tap zone
+  exported as `hmUI.widget.IMG_CLICK` with **`src: ""`** (a fully transparent overlay — the pattern
+  used by working amazfitwatchfaces exports) and `type: hmUI.data_type.<TARGET>` selected in the
+  inspector. **No PNG asset is generated or zipped** — a bundled 1×1 transparent PNG was rejected by
+  QR installs and by `zeus install`, and it was missing from the emulator's `assets/<target>/` copy.
+  No sensor/timer/listener is generated.
+  The editor draws it as a `#7DE2D1` (sea breeze) diagonal hatch with a shared tap icon
+  (`Assets/Icons/click-zone.png`, also used in Rust). Both the icon (`min(w,h)/2`) and the hatch step
+  (`clamp(min(w,h)/4, 6, 24)`) scale with the frame — the frame defines the tap area. The branded first GIF frame stays clean; the
+  **second** frame (first raw one) gets the same hatch + icon via `draw_shortcut_overlays()`.
   More widget types will be added to the catalog only when explicitly requested.
 - **Project settings** page is real: the watchface **name is shown greyed-out (read-only)** — the project
   folder and recent list depend on it, so it must never be renamed here (use Save as for a copy).
@@ -557,7 +576,7 @@ and no listener leaks.
 
 ## 9. Definition of done for a change
 
-1. `cargo test --workspace` green (currently 187 tests: 150 core + 37 FFI), no new warnings.
+1. `cargo test --workspace` green (currently 197 tests: 160 core + 37 FFI), no new warnings.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. App launches; affected screens verified visually (English **and** Polish if UI changed).
 4. Round-trip `new → export → open → export` preserves data when project model/codegen changes.

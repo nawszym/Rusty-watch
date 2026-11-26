@@ -665,7 +665,9 @@ mod tests {
         weather_day_offset: 0,
         sleep_stage_mode: Default::default(),
         progress: None,
+        shortcut_target: None,
         }
+
 ;
         let (x, y, w, h) = default_frame();
         widget.x = x;

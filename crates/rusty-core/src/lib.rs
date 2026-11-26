@@ -1304,7 +1304,9 @@ mod tests {
         ] {
             assert!(js.contains(token), "generated JS lacks {token}");
         }
-        let declarations = js.matches("const _hHeart = _getHealthHeart()").count();
+        let declarations = js
+            .matches("const _hHeart = fromTick ? null : _getHealthHeart()")
+            .count();
         assert_eq!(declarations, 1, "getter must be emitted once: {js}");
         assert!(!js.contains("new Date"));
     }
@@ -1387,7 +1389,11 @@ mod tests {
             assert!(js.contains(token), "generated JS lacks {token}");
         }
         // Kilka widgetów czyta ten sam czujnik — getter może być wyemitowany tylko raz.
-        assert_eq!(js.matches("const _hHeart = _getHealthHeart()").count(), 1);
+        assert_eq!(
+            js.matches("const _hHeart = fromTick ? null : _getHealthHeart()")
+                .count(),
+            1
+        );
         assert_eq!(js.matches("const _hPai = _getHealthPai()").count(), 1);
         assert!(!js.contains("@zos/ui"));
     }
@@ -1575,6 +1581,121 @@ mod tests {
     }
 
     #[test]
+    fn progress_sensors_are_listened_and_ticked() {
+        let mut project = Project::starter("ProgressRefresh");
+        let arc = widgets::add_widget(&mut project, "arc-progress").unwrap();
+        let settings = serde_json::json!({
+            "id": arc.id,
+            "x": 33, "y": 33, "w": 400, "h": 400,
+            "progress": { "source": "heart", "min": 0, "max": 180 },
+        });
+        widgets::update_widget(&mut project, &settings).unwrap();
+        let js = codegen::generate_index_js(&project);
+        // HEART czyta ostatni pomiar i odświeża się wyłącznie zdarzeniem LAST —
+        // nie uruchamiamy ciągłego pomiaru (CURRENT) ani odczytu co tick.
+        assert!(js.contains("_createProgSensor('HEART')"), "JS: {js}");
+        assert!(js.contains("s.last || 0"), "JS: {js}");
+        assert!(js.contains("const lo = 0, hi = 165"), "JS: {js}");
+        assert!(js.contains("event: 'LAST'"), "JS: {js}");
+        assert!(!js.contains("event: 'CURRENT'"), "JS: {js}");
+        assert!(
+            js.contains("sensor.addEventListener(sensor.event[entry.event], progressTickEvent)"),
+            "JS: {js}"
+        );
+        assert!(js.contains("if (progressTick) progressTick(true)"), "JS: {js}");
+        assert!(
+            js.contains("sensor.removeEventListener(sensor.event[entry.event], progressTickEvent)"),
+            "JS: {js}"
+        );
+        assert!(!js.contains("event: 'CHANGE'"), "JS: {js}");
+    }
+
+    #[test]
+    fn progress_change_sources_and_fixed_source() {
+        let mut project = Project::starter("ProgressEvents");
+        let bar = widgets::add_widget(&mut project, "bar-progress").unwrap();
+        let fixed = widgets::add_widget(&mut project, "arc-progress").unwrap();
+        widgets::update_widget(
+            &mut project,
+            &serde_json::json!({
+                "id": bar.id,
+                "x": 23, "y": 203, "w": 420, "h": 60,
+                "progress": { "source": "steps" },
+            }),
+        )
+        .unwrap();
+        widgets::update_widget(
+            &mut project,
+            &serde_json::json!({
+                "id": fixed.id,
+                "x": 33, "y": 33, "w": 400, "h": 400,
+                "progress": { "source": "fixed", "value": 42 },
+            }),
+        )
+        .unwrap();
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("_createProgSensor('STEP')"), "JS: {js}");
+        assert!(js.contains("event: 'CHANGE'"), "JS: {js}");
+        // Fixed nie tworzy czujnika ani listenera.
+        assert_eq!(js.matches("_createProgSensor('").count(), 1, "JS: {js}");
+        assert_eq!(js.matches("get: () => _progSensor_").count(), 1, "JS: {js}");
+    }
+
+    #[test]
+    fn heart_text_uses_last_measurement_without_tick_polling() {
+        let mut project = Project::starter("HeartLast");
+        widgets::add_widget(&mut project, "heart").unwrap();
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("_hHeart.last ? String(_hHeart.last)"), "JS: {js}");
+        assert!(!js.contains("_hHeart.current ? String(_hHeart.current)"), "JS: {js}");
+        assert!(js.contains("event: 'LAST'"), "JS: {js}");
+        assert!(!js.contains("event: 'CURRENT'"), "JS: {js}");
+        assert!(
+            js.contains("const _hHeart = fromTick ? null : _getHealthHeart()"),
+            "JS: {js}"
+        );
+        assert!(js.contains("healthTick(true)"), "JS: {js}");
+    }
+
+    #[test]
+    fn progress_goal_sources_follow_watch_target() {
+        let mut project = Project::starter("Goals");
+        let bar = widgets::add_widget(&mut project, "bar-progress").unwrap();
+        widgets::update_widget(
+            &mut project,
+            &serde_json::json!({
+                "id": bar.id,
+                "x": 23, "y": 203, "w": 420, "h": 60,
+                "progress": { "source": "steps", "max": 100 },
+            }),
+        )
+        .unwrap();
+        let js = codegen::generate_index_js(&project);
+        assert!(
+            js.contains("const lo = 0, hi = (s && s.target ? s.target : 100)"),
+            "goal from watch must win over stored max: {js}"
+        );
+    }
+
+    #[test]
+    fn progress_sleep_source_reads_fresh_data() {
+        let mut project = Project::starter("ProgressSleep");
+        let arc = widgets::add_widget(&mut project, "arc-progress").unwrap();
+        widgets::update_widget(
+            &mut project,
+            &serde_json::json!({
+                "id": arc.id,
+                "x": 33, "y": 33, "w": 400, "h": 400,
+                "progress": { "source": "sleep" },
+            }),
+        )
+        .unwrap();
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("_createProgSensor('SLEEP')"), "JS: {js}");
+        assert!(js.contains("s.updateInfo()"), "JS: {js}");
+    }
+
+    #[test]
     fn arc_thickness_keeps_center_radius_fixed() {
         let mut project = Project::starter("Thickness");
         let widget = widgets::add_widget(&mut project, "arc-progress").unwrap();
@@ -1600,6 +1721,53 @@ mod tests {
         assert!(js.contains("radius: 190"), "center must stay fixed: {js}");
         assert!(js.contains("line_width: 40"));
         assert!(validate(&project).is_empty());
+    }
+
+    #[test]
+    fn shortcut_exports_transparent_click_zone_without_asset() {
+        let entry = widgets::supported_widgets()
+            .into_iter()
+            .find(|item| item.kind == "shortcut")
+            .unwrap();
+        assert_eq!(entry.category, widgets::CATEGORY_SHORTCUT);
+
+        let mut project = Project::starter("Shortcut");
+        let widget = widgets::add_widget(&mut project, "shortcut").unwrap();
+        assert_eq!(widget.shortcut_target, Some(crate::model::ShortcutTarget::Battery));
+        assert!(validate(&project).is_empty());
+
+        let settings = serde_json::json!({
+            "id": widget.id,
+            "x": 173, "y": 203, "w": 120, "h": 60,
+            "shortcutTarget": "heart",
+        });
+        let updated = widgets::update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.shortcut_target, Some(crate::model::ShortcutTarget::Heart));
+        let js = codegen::generate_index_js(&project);
+        assert!(js.contains("hmUI.widget.IMG_CLICK"), "JS: {js}");
+        assert!(js.contains("type: hmUI.data_type.HEART"), "JS: {js}");
+        // Pusty src = w pełni przezroczysta nakładka; żaden zasób nie trafia do ZIP-u
+        // (popuprawny 1×1 PNG był odrzucany przy instalacji przez QR i w zeus).
+        assert!(js.contains("src: \"\""), "JS: {js}");
+        assert!(!js.contains("shortcut_hit.png"), "JS: {js}");
+        assert!(!js.contains("@zos/ui"));
+    }
+
+    #[test]
+    fn shortcut_overlay_marks_click_zones_in_preview_frame() {
+        let mut project = Project::starter("ShortcutOverlay");
+        widgets::add_widget(&mut project, "shortcut").unwrap();
+        let series = preview::random_series(1234, "en");
+        let frame = preview::frame_data(0, &series).unwrap();
+        let mut image = preview::render_frame(std::path::Path::new("."), &project, &frame, &series);
+        let before_image = image.clone();
+        preview::draw_shortcut_overlays(&mut image, &project);
+        let changed = before_image
+            .pixels()
+            .zip(image.pixels())
+            .filter(|(a, b)| a.0 != b.0)
+            .count();
+        assert!(changed > 0, "click zone overlay was not drawn");
     }
 
     #[test]
