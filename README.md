@@ -233,7 +233,7 @@ parses JSON and updates the UI. Each FFI call returns `{"ok":true,"data":…}` o
 
 ## Verification
 
-1. `cargo test --workspace` — 167 core + 38 FFI tests, no warnings.
+1. `cargo test --workspace` - 168 core + 38 FFI tests, no warnings.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. Launch the app and check affected screens in both English and Polish.
 4. Round-trip `new → export → open → export` without data loss.

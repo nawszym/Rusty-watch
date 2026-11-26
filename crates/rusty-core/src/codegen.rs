@@ -265,7 +265,7 @@ struct WeatherField {
 static WEATHER_FIELDS: &[WeatherField] = &[
     WeatherField {
         source: DataSource::WeatherCondition,
-        value: "L.weather[Math.max(0, Math.min(28, (_wForecast.data[$D] ? _wForecast.data[$D].index : 25) | 0))] || L.weather[25]",
+        value: "L.weather[_weatherIndex(_wForecast.data[$D] ? _wForecast.data[$D].index : 25)] || L.weather[25]",
     },
     WeatherField {
         source: DataSource::WeatherCity,
@@ -299,6 +299,97 @@ fn weather_field(source: Option<DataSource>) -> Option<&'static WeatherField> {
     let source = source?;
     WEATHER_FIELDS.iter().find(|field| field.source == source)
 }
+
+/// Dzień 0 (dziś) czyta **bieżącą** pogodę z firmware'u przez widget
+/// `IMG_LEVEL` z wiązaniem `hmUI.data_type.WEATHER` — dokładnie tak, jak
+/// robią inne tarcze i widżet pogody w ZeppOS. Klasyczny czujnik WEATHER
+/// udostępnia tylko prognozę dzienną (`forecastData.data[i].index`), która
+/// nie odzwierciedla ani aktualnego stanu, ani pory dnia. Widget jest
+/// niewidoczny (poza ekranem) i służy wyłącznie jako źródło kodu pogody;
+/// widoczna ikona pozostaje zwykłym `IMG`, żeby zachować geometrię, paczkę
+/// i cache `SRC`. Pozostałe dni (1…4) nadal czytają prognozę.
+const JS_WEATHER_INDEX: &str = r#"function _weatherIndex(value) {
+  let n = value
+  if (typeof n === 'string' && n.trim() !== '') n = Number(n)
+  if (typeof n !== 'number' || !isFinite(n)) return 25
+  return Math.max(0, Math.min(28, Math.round(n)))
+}
+"#;
+
+const JS_WEATHER_CURRENT: &str = r#"let _wxSources = []
+let _wxBase = 0
+function _wxInitSource() {
+  const types = []
+  try {
+    if (hmUI.data_type && hmUI.data_type.WEATHER !== undefined) types.push(hmUI.data_type.WEATHER)
+    if (hmUI.data_type && hmUI.data_type.WEATHER_CURRENT !== undefined) types.push(hmUI.data_type.WEATHER_CURRENT)
+  } catch (e) {}
+  for (let i = 0; i < types.length; i++) {
+    try {
+      const w = hmUI.createWidget(hmUI.widget.IMG_LEVEL, {
+        x: -200, y: -200, w: 1, h: 1,
+        image_array: _wxIcons,
+        image_length: _wxIcons.length,
+        type: types[i],
+        show_level: hmUI.show_level.ONLY_NORMAL
+      })
+      if (w) _wxSources.push(w)
+    } catch (e) {}
+  }
+}
+function _wxNoteBase(more) {
+  if (!more || typeof more.src !== 'string' || more.level === undefined || more.level === null) return
+  for (let i = 0; i < _wxIcons.length; i++) {
+    if (_wxIcons[i] === more.src) {
+      const n = Number(more.level)
+      if (isFinite(n)) _wxBase = (n - i) >= 0.5 ? 1 : 0
+      return
+    }
+  }
+}
+function _wxReadLevel() {
+  for (let i = 0; i < _wxSources.length; i++) {
+    try {
+      const w = _wxSources[i]
+      const more = w.getProperty(hmUI.prop.MORE, {})
+      _wxNoteBase(more)
+      if (more && more.level !== undefined && more.level !== null) {
+        const n = Number(more.level)
+        if (isFinite(n)) return n
+      }
+      const lvl = w.getProperty(hmUI.prop.LEVEL)
+      if (lvl !== undefined && lvl !== null) {
+        const n = Number(lvl)
+        if (isFinite(n)) return n
+      }
+    } catch (e) {}
+  }
+  return null
+}
+function _currentWeatherCode() {
+  const level = _wxReadLevel()
+  return level === null ? null : _weatherIndex(level - _wxBase)
+}
+function _fallbackTodayCode() {
+  const raw = _wForecast.data[0] ? _wForecast.data[0].index : 25
+  const code = _weatherIndex(raw)
+  try {
+    const t = _getTime()
+    const day = _wTide.data[0]
+    if (t && day && day.sunrise && day.sunset) {
+      const now = ((t.hour | 0) * 60) + (t.minute | 0)
+      const rise = (day.sunrise.hour | 0) * 60 + (day.sunrise.minute | 0)
+      const set = (day.sunset.hour | 0) * 60 + (day.sunset.minute | 0)
+      if (rise < set && (now < rise || now >= set)) {
+        if (code === 0) return 26
+        if (code === 1) return 27
+        if (code === 3) return 28
+      }
+    }
+  } catch (e) {}
+  return code
+}
+"#;
 
 /// Wyrażenie JS dla pola snu. Fazy mogą być pokazane w minutach albo jako
 /// udział procentowy całego snu — wybór zapisujemy w ustawieniach widgetu.
@@ -778,6 +869,28 @@ pub fn generate_index_js_with_hands(
             Some((index, names.join(", "), w.weather_day_offset.min(4)))
         })
         .collect();
+    // Tylko dzień 0 potrzebuje bieżącej pogody z firmware'u. Pozostałe dni
+    // pozostają przy prognozie dziennej z `forecastData`.
+    let needs_current = weather_widgets
+        .iter()
+        .any(|(_, field, day)| *day == 0 && field.source == DataSource::WeatherCondition)
+        || weather_icons.iter().any(|(_, _, day)| *day == 0);
+    // Tablica dla ukrytego widgeta `IMG_LEVEL` — tylko po to, żeby firmware
+    // miał z czego wybrać ikonę; sam odczytujemy `level`, nie rysujemy jej.
+    let wx_source_icons = weather_icons
+        .iter()
+        .find(|(_, _, day)| *day == 0)
+        .map(|(_, names, _)| names.clone())
+        .or_else(|| {
+            needs_current.then(|| {
+                (0..crate::weather::ICON_COUNT)
+                    .map(|i| js_string(&crate::export_paths::exported_asset_name(
+                        &crate::weather::js_icon_path(crate::weather::DEFAULT_WEATHER_PACK, i),
+                    )))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+        });
     let progress_widgets: Vec<(usize, &Widget)> = widgets
         .iter()
         .enumerate()
@@ -875,6 +988,14 @@ pub fn generate_index_js_with_hands(
             prelude.push_str(&format!(
                 "const weatherIcons_{index} = [{names}]\n"
             ));
+        }
+        // Strict parser jest potrzebny także dla dni 1…4 (prognoza dzienna).
+        prelude.push_str(JS_WEATHER_INDEX);
+        if needs_current {
+            if let Some(names) = &wx_source_icons {
+                prelude.push_str(&format!("const _wxIcons = [{names}]\n"));
+            }
+            prelude.push_str(JS_WEATHER_CURRENT);
         }
     }
     if !sleep_target_indexes.is_empty() {
@@ -1105,6 +1226,10 @@ pub fn generate_index_js_with_hands(
     if needs_auto_mileage {
         out.push_str("      _initMileageUnit()\n");
     }
+    if needs_current {
+        // Ukryte źródło bieżącej pogody — firmware wiąże je z data_type.WEATHER.
+        out.push_str("      _wxInitSource()\n");
+    }
 
     for (index, w) in widgets.iter().enumerate() {
         out.push_str(&format!(
@@ -1297,18 +1422,28 @@ pub fn generate_index_js_with_hands(
     if !weather_widgets.is_empty() || !weather_icons.is_empty() {
         out.push_str("      weatherTick = () => {\n");
         out.push_str("        const _weather = _getWeather()\n");
-        out.push_str("        if (!_weather || !_weather.getForecastWeather) return\n");
-        out.push_str("        try { _wData = _weather.getForecastWeather() || null } catch (e) { _wData = null }\n");
-        out.push_str("        if (!_wData) return\n");
-        out.push_str("        _wForecast = (_wData.forecastData && _wData.forecastData.data && _wData.forecastData.data.length) ? _wData.forecastData : { data: [] }\n");
-        out.push_str("        _wTide = (_wData.tideData && _wData.tideData.data && _wData.tideData.data.length) ? _wData.tideData : { data: [] }\n");
+        out.push_str("        if (_weather && _weather.getForecastWeather) {\n");
+        out.push_str("          try { _wData = _weather.getForecastWeather() || null } catch (e) { _wData = null }\n");
+        out.push_str("          if (_wData) {\n");
+        out.push_str("            _wForecast = (_wData.forecastData && _wData.forecastData.data && _wData.forecastData.data.length) ? _wData.forecastData : { data: [] }\n");
+        out.push_str("            _wTide = (_wData.tideData && _wData.tideData.data && _wData.tideData.data.length) ? _wData.tideData : { data: [] }\n");
+        out.push_str("          }\n        }\n");
+        if needs_current {
+            // Dziś: firmware (IMG_LEVEL) albo awaryjnie prognoza + pora dnia.
+            out.push_str("        let _wxToday = _currentWeatherCode()\n");
+            out.push_str("        if (_wxToday === null) _wxToday = _fallbackTodayCode()\n");
+        }
         for (index, field, day) in &weather_widgets {
             // Dzień prognozy jest stały dla widgetu — basic Arrays have no Date API
             // na tarczy, więc indeks dnia wstawiamy już w codegenie.
             out.push_str(&format!("        const _wd_{index} = {day}\n"));
-            out.push_str(&format!(
-                "        refs[{index}].setProperty(hmUI.prop.TEXT, {})\n",
+            let expression = if *day == 0 && field.source == DataSource::WeatherCondition {
+                "L.weather[_wxToday] || L.weather[25]".to_string()
+            } else {
                 field.value.replace("$D", &format!("_wd_{index}"))
+            };
+            out.push_str(&format!(
+                "        refs[{index}].setProperty(hmUI.prop.TEXT, {expression})\n"
             ));
         }
         for (index, _, day) in &weather_icons {
@@ -1316,10 +1451,15 @@ pub fn generate_index_js_with_hands(
             // Real firmware smears partially transparent edges when SRC is set
             // again and again (the clock tick calls weatherTick every second).
             // Cache the last index so the icon is replaced only on a real change.
-            // Brakujący dzień prognozy nie zmienia ikony — zostaje poprzednia.
-            out.push_str(&format!(
-                "        if (_wForecast.data[_wd_{index}]) {{\n          const _wi_{index} = Math.max(0, Math.min(28, (_wForecast.data[_wd_{index}].index !== undefined ? _wForecast.data[_wd_{index}].index : 25) | 0))\n          if (_wi_{index} !== _lastWeatherIcon[{index}] && weatherIcons_{index}[_wi_{index}]) {{\n            refs[{index}].setProperty(hmUI.prop.SRC, weatherIcons_{index}[_wi_{index}])\n            _lastWeatherIcon[{index}] = _wi_{index}\n          }}\n        }}\n"
-            ));
+            if *day == 0 {
+                out.push_str(&format!(
+                    "        if (_wxToday !== _lastWeatherIcon[{index}] && weatherIcons_{index}[_wxToday]) {{\n          refs[{index}].setProperty(hmUI.prop.SRC, weatherIcons_{index}[_wxToday])\n          _lastWeatherIcon[{index}] = _wxToday\n        }}\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "        if (_wForecast.data[_wd_{index}]) {{\n          const _wi_{index} = _weatherIndex(_wForecast.data[_wd_{index}].index)\n          if (_wi_{index} !== _lastWeatherIcon[{index}] && weatherIcons_{index}[_wi_{index}]) {{\n            refs[{index}].setProperty(hmUI.prop.SRC, weatherIcons_{index}[_wi_{index}])\n            _lastWeatherIcon[{index}] = _wi_{index}\n          }}\n        }}\n"
+                ));
+            }
         }
         out.push_str("      }\n");
         out.push_str("      weatherTick()\n");

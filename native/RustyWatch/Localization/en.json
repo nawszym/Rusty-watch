@@ -461,7 +461,7 @@
     "SleepTargetWidgetCardTitle": "Sleep target",
     "SleepTargetWidgetCardDesc": "Text widget showing the user's sleep target from hmSetting.getSleepTarget(). Shows -- h when no target is configured.",
     "WeatherConditionWidgetCardTitle": "Weather condition",
-    "WeatherConditionWidgetCardDesc": "Current weather condition name from the watch's WEATHER sensor, in the watch language (PL/EN).",
+    "WeatherConditionWidgetCardDesc": "Today (day 0): current condition from the watch firmware, including night variants. Days 1-4: daily forecast from the WEATHER sensor. Watch language (PL/EN).",
     "WeatherCityWidgetCardTitle": "City",
     "WeatherCityWidgetCardDesc": "City name from the watch's WEATHER sensor. Polish watch language shows Warszawa, English shows Warsaw.",
     "WeatherHighWidgetCardTitle": "High temperature",

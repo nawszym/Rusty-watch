@@ -319,19 +319,73 @@ mod tests {
         assert_eq!(entries[3], third, "{array_line}");
         assert!(js.contains(&format!("src: {third}")), "initial src differs");
 
+        // Dzień 0: firmware data-bound IMG_LEVEL jest źródłem bieżącej pogody,
+        // dokładnie jak w widżecie pogody i innych tarczach ZeppOS.
+        for token in [
+            "hmUI.widget.IMG_LEVEL",
+            "hmUI.data_type.WEATHER",
+            "const _wxIcons = [",
+            "function _currentWeatherCode()",
+            "let _wxToday = _currentWeatherCode()",
+            "L.weather[_wxToday]",
+            "_wxInitSource()",
+        ] {
+            assert!(js.contains(token), "generated JS lacks {token}: {js}");
+        }
+        // Regression: `| 0` zamieniało null/string w indeks 0 (w00 / "Cloudy").
+        assert!(!js.contains("index | 0"), "unsafe weather coercion: {js}");
+        assert!(!js.contains("index !== undefined ?"), "unsafe index guard: {js}");
+
         // Regression: a seconds widget calls weatherTick() every second. Setting
         // SRC unconditionally made the real firmware smudge the semi-transparent
         // white edges into a jagged white halo; only replace the icon on change.
         assert!(js.contains("let _lastWeatherIcon = {}"), "icon cache missing");
         assert!(
-            js.contains("if (_wi_"),
-            "weather icon update is not guarded: {js}"
+            js.lines().any(|line| line.trim() == "if (_wxToday !== _lastWeatherIcon[8] && weatherIcons_8[_wxToday]) {"),
+            "day-0 icon must use the current weather code: {js}"
         );
-        assert!(
-            js.lines().any(|line| line.trim() == "if (_wi_8 !== _lastWeatherIcon[8] && weatherIcons_8[_wi_8]) {"),
-            "wrong guard for the icon widget"
-        );
-        assert!(js.contains("_lastWeatherIcon[8] = _wi_8"), "cache not updated");
+        assert!(js.contains("_lastWeatherIcon[8] = _wxToday"), "cache not updated");
+    }
+
+    #[test]
+    fn weather_day_zero_uses_current_code_other_days_use_forecast() {
+        let mut project = Project::starter("Pogoda");
+        for kind in ["weather-condition", "weather-icon", "weather-icon"] {
+            widgets::add_widget(&mut project, kind).unwrap();
+        }
+        for (i, icon) in project
+            .widgets
+            .iter_mut()
+            .filter(|w| w.kind == WidgetKind::WeatherIcon)
+            .enumerate()
+        {
+            icon.weather_icon_set = Some(weather::DEFAULT_WEATHER_PACK.to_string());
+            icon.weather_day_offset = if i == 0 { 0 } else { 2 };
+            icon.src = Some(weather::js_icon_path(weather::DEFAULT_WEATHER_PACK, 3));
+        }
+        let js = codegen::generate_index_js(&project);
+        let cond = project
+            .widgets
+            .iter()
+            .position(|w| w.kind == WidgetKind::WeatherConditionText)
+            .unwrap();
+        assert!(js.contains(&format!("refs[{cond}].setProperty(hmUI.prop.TEXT, L.weather[_wxToday] || L.weather[25])")));
+        // Pierwsza ikona (dziś) używa kodu z firmware'u; druga (dzień 2) prognozy.
+        assert!(js.contains("if (_wxToday !== _lastWeatherIcon["));
+        assert!(js.contains("const _wi_"));
+        assert!(js.contains("_weatherIndex(_wForecast.data[_wd_"));
+
+        // Tylko dni 1…4: parser nadal musi istnieć, ale źródło firmware'u nie.
+        let mut forecast_only = Project::starter("Pogoda");
+        widgets::add_widget(&mut forecast_only, "weather-icon").unwrap();
+        let icon = forecast_only.widgets.iter_mut().find(|w| w.kind == WidgetKind::WeatherIcon).unwrap();
+        icon.weather_icon_set = Some(weather::DEFAULT_WEATHER_PACK.to_string());
+        icon.weather_day_offset = 2;
+        let js = codegen::generate_index_js(&forecast_only);
+        assert!(js.contains("function _weatherIndex(value)"));
+        assert!(!js.contains("function _currentWeatherCode()"));
+        assert!(!js.contains("const _wxIcons"));
+        assert!(js.contains("_weatherIndex(_wForecast.data[_wd_"));
     }
 
     #[test]

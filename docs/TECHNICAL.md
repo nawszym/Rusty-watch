@@ -442,6 +442,23 @@ gate, cancellation and a version counter. `attach_to_project` already scales all
 second scaling pass is added. Generated JS caches the last condition index and only sets
 `SRC` when it changes — otherwise a per-second tick smudged the soft edges.
 
+### 7.7 Current weather vs. daily forecast
+
+`forecastData.data[i].index` is the **daily** forecast code and does not track the current
+condition or time of day — that is why a cloudy daily code (`0`) appeared at night while the
+ZeppOS weather widget correctly showed overcast (`4`). Today (`weatherDayOffset = 0`) therefore
+uses a different source: `codegen` emits an invisible `hmUI.widget.IMG_LEVEL` bound to
+`hmUI.data_type.WEATHER` (with a guarded `WEATHER_CURRENT` fallback) and reads its current
+`level` through `getProperty(hmUI.prop.MORE, {})` in `_currentWeatherCode()`. This is the same
+firmware data-bound mechanism other watchfaces use, so night codes `26/27/28` come straight from
+the watch. The visible icon remains a plain `IMG` with manual `SRC`, preserving geometry,
+pack selection and the `_lastWeatherIcon` smudge cache; days 1…4 keep reading
+`forecastData.data[i].index`. All codes pass through `_weatherIndex()` (invalid → `25`/
+"Unknown") — the old `| 0` coercion turned `null` into `0` (`w00`/"Cloudy"). When the firmware
+code is unavailable (notably in the simulator), `_fallbackTodayCode()` uses today's forecast
+index and maps `0→26`, `1→27`, `3→28` outside sunrise/sunset from `tideData` and the TIME sensor.
+High/low and sunrise/sunset stay whole-day forecast values for every day, including day 0.
+
 ---
 
 ## 8. Time, date and language engine

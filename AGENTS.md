@@ -64,7 +64,7 @@ cargo run -p rusty-cli -- inspect .\test-tarcza\Test.zip
 ```
 
 `dotnet build` already runs `cargo build -p rusty-ffi`. Expect **0 errors / 0 warnings** on
-both toolchains; treat new warnings as regressions. Current suite: **205 tests — 167 core +
+both toolchains; treat new warnings as regressions. Current suite: **206 tests - 168 core +
 38 FFI**. Prerequisites: .NET SDK 10 + Runtime 8, Rust, Windows App SDK via NuGet
 (self-contained app).
 
@@ -253,12 +253,21 @@ both toolchains; treat new warnings as regressions. Current suite: **205 tests �
     runs in `rw_set_weather_pack` on the background queue behind `_assetGate` (120 ms debounce,
     cancellation + version counter) and export awaits it. `rw_set_weather_pack` relies on
     `attach_to_project` alone — do not add a second scaling pass. Generated JS caches
-    `_lastWeatherIcon` and only calls `setProperty(hmUI.prop.SRC, …)` on change. The weather
-    icon draws no text (`weather_text("weather-icon")` returns `""`). Conditions come from
-    `rw_weather_conditions`; sunrise/sunset use one validated `HH:MM` field each. `weather-current`
-    uses classic `hmUI.widget.TEXT_FONT` with `type: hmUI.data_type.WEATHER_CURRENT` and
-    `unit_type: 0/1` — no sensor/timer/listener, no static `text:`. Every weather widget has
-    `weatherDayOffset` (0…4); missing forecast days show `--`/`--°`/`--:--`.
+    `_lastWeatherIcon` and only calls `setProperty(hmUI.prop.SRC, …)` on change. **Day 0 (today)
+    is different:** the condition text and the icon read the **current** weather from an invisible
+    data-bound `hmUI.widget.IMG_LEVEL` (`type: hmUI.data_type.WEATHER`, with a
+    `WEATHER_CURRENT` fallback) via `_currentWeatherCode()` — exactly like the ZeppOS weather
+    widget and other watchfaces, so night codes 26/27/28 come from firmware. The visible icon
+    stays a plain `IMG` with manual `SRC`; days 1…4 still read `forecastData.data[i].index`.
+    Parsing goes through `_weatherIndex()` (invalid → 25/"Unknown"), never `| 0`. If the firmware
+    code is unreadable (e.g. simulator), `_fallbackTodayCode()` uses today's forecast plus a
+    time-of-day night mapping from `tideData`. The weather icon draws no text
+    (`weather_text("weather-icon")` returns `""`). Conditions come from `rw_weather_conditions`;
+    sunrise/sunset use one validated `HH:MM` field each. `weather-current` uses classic
+    `hmUI.widget.TEXT_FONT` with `type: hmUI.data_type.WEATHER_CURRENT` and `unit_type: 0/1` —
+    no sensor/timer/listener, no static `text:`. Every weather widget has `weatherDayOffset`
+    (0…4); missing forecast days show `--`/`--°`/`--:--`. High/low and sunrise/sunset remain
+    whole-day forecast values even for day 0.
     The weather-icon inspector has a **24…256 px SIZE slider** that keeps a square frame
     centred on the watch; dragging a corner of the red frame updates the slider and its px
     label live. Changing it persists geometry and re-scales all 29 icons of the
@@ -481,7 +490,7 @@ performance-friendly generated JS: fewer widgets, correct AOD, no listener leaks
 
 ## 9. Definition of done for a change
 
-1. `cargo test --workspace` green (205 tests: 167 core + 38 FFI), no new warnings.
+1. `cargo test --workspace` green (206 tests: 168 core + 38 FFI), no new warnings.
 2. `dotnet build .\native\RustyWatch\RustyWatch.csproj` — 0 errors, 0 warnings.
 3. App launches; affected screens verified visually (English **and** Polish if UI changed).
 4. Round-trip `new → export → open → export` preserves data when project model/codegen changes.

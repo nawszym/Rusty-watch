@@ -461,7 +461,7 @@
     "SleepTargetWidgetCardTitle": "Cel snu",
     "SleepTargetWidgetCardDesc": "Widget tekstowy pokazuj?cy cel snu z hmSetting.getSleepTarget(). Gdy cel nie jest ustawiony, pokazuje -- h.",
     "WeatherConditionWidgetCardTitle": "Pogoda",
-    "WeatherConditionWidgetCardDesc": "Aktualna nazwa pogody z czujnika WEATHER zegarka, w j?zyku zegarka (PL/EN).",
+    "WeatherConditionWidgetCardDesc": "Dziś (dzień 0): bieżący stan z firmware'u zegarka, także warianty nocne. Dni 1-4: prognoza dzienna z czujnika WEATHER. Język zegarka (PL/EN).",
     "WeatherCityWidgetCardTitle": "Miasto",
     "WeatherCityWidgetCardDesc": "Nazwa miasta z czujnika WEATHER. Po polsku Warszawa, po angielsku Warsaw.",
     "WeatherHighWidgetCardTitle": "Temperatura max",
