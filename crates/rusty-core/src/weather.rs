@@ -4,14 +4,14 @@
 //! 29 przezroczystych plików `w00.png` … `w28.png`, odpowiadających kodom
 //! pogody z dokumentacji ZeppOS v1.0 (`forecastData.data[0].index`).
 //! Wzorzec katalogów i cykl życia są takie same jak w `status_icons.rs`:
-//! wbudowany zestaw `Classic` jest seedowany przy starcie,
+//! wbudowany zestaw `system-like` jest seedowany przy starcie i jest domyślny,
 //! wybrany zestaw jest kopiowany do `<projekt>/assets/weather/<id>/`,
 //! a ZIP jest samowystarczalny.
 //!
-//! Ikony powstają z fontu Weather Icons (SIL OFL 1.1, Erik Flowers / Lukas
-//! Bischoff). `Classic` to białe glify na przezroczystym tle. Pod przezroczystością
-//! RGB jest zawsze zerowane — realny
-//! firmware rysuje takie piksele jako białe prostokąty przy obrocie `IMG`.
+//! Domyślne ikony `system-like` są rekonstrukcją 29 ikon systemowych ZeppOS
+//! z prymitywów wektorowych (patrz `Assets/Weather/CREDITS.md`). Pod
+//! przezroczystością RGB jest zawsze zerowane — realny firmware rysuje takie
+//! piksele jako białe prostokąty przy obrocie `IMG`.
 
 use image::imageops::FilterType;
 use image::{GenericImageView, ImageEncoder, Rgba, RgbaImage};
@@ -23,8 +23,10 @@ use crate::asset_cache;
 use crate::model::{Asset, AssetRole, Project, Widget, WidgetKind, SCREEN_SIZE};
 
 pub const WEATHER_DIR: &str = "Weather";
-pub const DEFAULT_WEATHER_PACK: &str = "Classic";
-pub const BUILTIN_PACKS: [&str; 1] = [DEFAULT_WEATHER_PACK];
+pub const DEFAULT_WEATHER_PACK: &str = "system-like";
+/// Drugi wbudowany zestaw — wierna rekonstrukcja 29 ikon z kółek (512×512).
+pub const NOT_SOMETHING_WEATHER_PACK: &str = "Not Something";
+pub const BUILTIN_PACKS: [&str; 2] = [DEFAULT_WEATHER_PACK, NOT_SOMETHING_WEATHER_PACK];
 pub const JS_WEATHER_PREFIX: &str = "weather/";
 /// Liczba kodów pogody w dokumentacji ZeppOS v1.0 (indeksy 0..=28).
 pub const ICON_COUNT: usize = 29;
@@ -221,11 +223,8 @@ pub fn list(app_data_root: &Path) -> Result<Vec<WeatherPack>, String> {
     for entry in entries {
         let entry = entry.map_err(|e| format!("Nie można odczytać paczki ikon: {e}"))?;
         let id = entry.file_name().to_string_lossy().to_string();
-        // Dawną paczkę Reversed zostawiamy na dysku użytkownika, ale nie jest
-        // już widoczna ani wybieralna w edytorze.
-        if id == "Reversed" {
-            continue;
-        }
+        // Każdy poprawny katalog jest widoczny i wybieralny — także paczki
+        // przygotowane przez użytkownika.
         if let Some(pack) = describe_pack(&entry.path(), &id) {
             result.push(pack);
         }
@@ -559,12 +558,85 @@ mod tests {
     }
 
     #[test]
+    fn bundled_weather_packs_seed_and_are_valid() {
+        // Wbudowane paczki muszą mieć poprawne nazwy w00.png…w28.png i przezroczyste
+        // piksele z RGB=(0,0,0) — inaczej firmware rysuje białe prostokąty.
+        let bundled_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../native/RustyWatch/Assets/Weather");
+        for id in BUILTIN_PACKS {
+            let dir = bundled_root.join(id);
+            assert!(describe_pack(&dir, id).is_some(), "invalid bundled pack {id}");
+            for name in icon_names() {
+                let image = image::open(dir.join(name)).unwrap().to_rgba8();
+                // Ikona musi być wyśrodkowana w pliku (nie tylko w edytorze) —
+                // inaczej w małej ramce 64×64 glyph wyraźnie ucieka w bok.
+                let mut min_x = image.width();
+                let mut min_y = image.height();
+                let mut max_x = 0u32;
+                let mut max_y = 0u32;
+                for (x, y, pixel) in image.enumerate_pixels() {
+                    if pixel.0[3] == 0 {
+                        assert_eq!(
+                            (pixel.0[0], pixel.0[1], pixel.0[2]),
+                            (0, 0, 0),
+                            "{id}/{name}: transparent pixel has non-zero RGB"
+                        );
+                    } else {
+                        min_x = min_x.min(x);
+                        min_y = min_y.min(y);
+                        max_x = max_x.max(x);
+                        max_y = max_y.max(y);
+                    }
+                }
+                let cx = (min_x + max_x) as f32 / 2.0;
+                let cy = (min_y + max_y) as f32 / 2.0;
+                assert!(
+                    (cx - 255.5).abs() <= 1.0 && (cy - 255.5).abs() <= 1.0,
+                    "{id}/{name}: icon bbox centre ({cx}, {cy}) is not centred"
+                );
+            }
+        }
+
+        // `ensure_default` instaluje każdą wbudowaną paczkę, nie tylko domyślną.
+        let (app, _, _) = roots("bundled-packs");
+        ensure_default(&app, &bundled_root).unwrap();
+        let ids: Vec<String> = list(&app).unwrap().into_iter().map(|p| p.id).collect();
+        assert!(ids.contains(&"system-like".to_string()));
+        assert!(ids.contains(&"Not Something".to_string()));
+
+        // Paczka przygotowana przez użytkownika musi być widoczna i wybieralna.
+        let source = bundled_root.join("system-like");
+        let custom = app.join("Weather").join("UserPack");
+        fs::create_dir_all(&custom).unwrap();
+        for name in icon_names() {
+            fs::copy(source.join(name), custom.join(name)).unwrap();
+        }
+        let ids: Vec<String> = list(&app).unwrap().into_iter().map(|p| p.id).collect();
+        assert!(ids.contains(&"UserPack".to_string()));
+
+        // Paczka z brakującym plikiem nie jest gotowa do użycia ani listowana.
+        let broken = app.join("Weather").join("Broken");
+        fs::create_dir_all(&broken).unwrap();
+        for name in icon_names().into_iter().take(28) {
+            fs::copy(source.join(name), broken.join(name)).unwrap();
+        }
+        assert!(describe_pack(&broken, "Broken").is_none());
+        let ids: Vec<String> = list(&app).unwrap().into_iter().map(|p| p.id).collect();
+        assert!(!ids.contains(&"Broken".to_string()));
+
+        // Poprawna paczka dodana ręcznie musi dostać wygenerowaną miniaturkę.
+        fs::remove_file(custom.join("preview.png")).ok();
+        ensure_previews(&app).unwrap();
+        assert!(custom.join("preview.png").is_file());
+    }
+
+    #[test]
     fn maps_all_29_weather_codes() {
         let names = icon_names();
         assert_eq!(names.len(), ICON_COUNT);
         assert_eq!(names[0], "w00.png");
         assert_eq!(names[28], "w28.png");
-        assert_eq!(js_icon_path("Classic", 28), "weather/Classic/w28.png");
+        assert_eq!(js_icon_path("system-like", 28), "weather/system-like/w28.png");
     }
 
     #[test]
@@ -618,13 +690,13 @@ mod tests {
     }
 
     #[test]
-    fn ensure_default_seeds_classic_and_resizes_all_icons() {
+    fn ensure_default_seeds_system_like_and_resizes_all_icons() {
         let (app, bundles, project) = roots("resize");
         let base = app.parent().unwrap().to_path_buf();
-        bundled(&bundles, "Classic", 96);
+        bundled(&bundles, "system-like", 96);
         ensure_default(&app, &bundles).unwrap();
         let packs: Vec<_> = list(&app).unwrap().into_iter().map(|p| p.id).collect();
-        assert_eq!(packs, vec!["Classic"]);
+        assert_eq!(packs, vec!["system-like"]);
 
         let mut project_model = crate::Project::starter_with("Weather", "Dev", 1);
         project_model.widgets.clear();
@@ -675,14 +747,14 @@ mod tests {
         widget.w = w;
         widget.h = h;
         project_model.widgets.push(widget);
-        attach_to_project(&mut project_model, &project, &app, "weather-icon", "Classic").unwrap();
+        attach_to_project(&mut project_model, &project, &app, "weather-icon", "system-like").unwrap();
 
         // Czerwona ramka: zmieniamy rozmiar i skalujemy WSZYSTKIE ikony.
         project_model.widgets[0].w = 120;
         project_model.widgets[0].h = 120;
         scale_project_icons(&project_model, &project, &app, "weather-icon").unwrap();
         for name in icon_names() {
-            let path = project.join("assets").join(JS_WEATHER_PREFIX).join("Classic").join(name);
+            let path = project.join("assets").join(JS_WEATHER_PREFIX).join("system-like").join(name);
             let image = image::open(&path).unwrap();
             assert_eq!(image.dimensions(), (120, 120), "{path:?}");
         }

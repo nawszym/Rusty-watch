@@ -48,6 +48,24 @@ pub extern "C" fn rw_version() -> *mut c_char {
     })))
 }
 
+/// Generuje kod QR (PNG jako base64) dla lokalnego URL-a instalacji tarczy.
+#[no_mangle]
+pub extern "C" fn rw_generate_qr(text: *const c_char, size: u32) -> *mut c_char {
+    use base64::Engine;
+
+    let result = (|| -> Result<Value> {
+        let text = unsafe { read_input(text) };
+        if text.trim().is_empty() {
+            anyhow::bail!("pusty tekst QR");
+        }
+        let png = rusty_core::qr::qr_png_bytes(&text, size)?;
+        Ok(json!({
+            "png": base64::engine::general_purpose::STANDARD.encode(png)
+        }))
+    })();
+    respond(result)
+}
+
 #[no_mangle]
 pub extern "C" fn rw_create_project(
     path: *const c_char,
@@ -479,16 +497,15 @@ pub extern "C" fn rw_format_weather_field(
                 icon_set.trim()
             };
             let index = state.resolved_day().map(|day| day.index).unwrap_or(state.index);
-            let mut path = rusty_core::weather::pack_dir(Path::new(&app_data_root), set)
+            let path = rusty_core::weather::pack_dir(Path::new(&app_data_root), set)
                 .join(format!("w{index:02}.png"));
-            if !path.is_file() {
-                path = rusty_core::weather::pack_dir(
-                    Path::new(&app_data_root),
-                    rusty_core::weather::DEFAULT_WEATHER_PACK,
-                )
-                .join(format!("w{index:02}.png"));
+            // Nigdy nie podmieniamy ikony na ikonę innej paczki — edytor pokazałby
+            // niepasujący wzór pod wybraną nazwą. Brak pliku = pusty `iconPath`.
+            if path.is_file() {
+                path.to_string_lossy().to_string()
+            } else {
+                String::new()
             }
-            path.to_string_lossy().to_string()
         } else {
             String::new()
         };
@@ -1031,7 +1048,7 @@ pub extern "C" fn rw_set_status_pack(
     respond(result)
 }
 
-/// Lista zainstalowanych paczek ikon pogody (Classic i paczki użytkownika).
+/// Lista zainstalowanych paczek ikon pogody (system-like, Not Something i paczki użytkownika).
 #[no_mangle]
 pub extern "C" fn rw_weather_packs_list(
     app_data_root: *const c_char,
@@ -1652,6 +1669,19 @@ mod tests {
         let json = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
         rw_free_string(ptr);
         serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn generate_qr_returns_png_base64() {
+        use base64::Engine;
+
+        let text = CString::new("zpkd1://192.168.1.10:8123/Test.zip").unwrap();
+        let value = take(rw_generate_qr(text.as_ptr(), 256));
+        assert_eq!(value["ok"], true, "{value}");
+        let png = base64::engine::general_purpose::STANDARD
+            .decode(value["data"]["png"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
     }
 
     #[test]
@@ -2811,7 +2841,7 @@ mod tests {
         let kind = CString::new("sun-current").unwrap();
         let overrides = CString::new(r#"{"dayOffset":0,"nowMinute":1297}"#).unwrap();
         let locale = CString::new("en").unwrap();
-        let pack = CString::new("Classic").unwrap();
+        let pack = CString::new("system-like").unwrap();
         let raw = take(rw_format_weather_field(
             kind.as_ptr(), overrides.as_ptr(), locale.as_ptr(), root_arg.as_ptr(), pack.as_ptr(),
         ));
@@ -3079,7 +3109,7 @@ mod tests {
         let (_fx, _fy, default_w, default_h) = rusty_core::weather::default_frame();
         for index in 0..29 {
             let path = project_dir
-                .join("assets/weather/Classic")
+                .join("assets/weather/system-like")
                 .join(format!("w{index:02}.png"));
             let image = image::open(&path).unwrap();
             assert_eq!(
@@ -3097,10 +3127,30 @@ mod tests {
 
         for index in 0..29 {
             let path = project_dir
-                .join("assets/weather/Classic")
+                .join("assets/weather/system-like")
                 .join(format!("w{index:02}.png"));
             let image = image::open(&path).unwrap();
             assert_eq!(image.dimensions(), (120, 120), "{path:?}");
+        }
+
+        // Zmiana rozmiaru zachowuje wybraną paczkę i skaluje wszystkie ikony.
+        let resized = CString::new(
+            r#"{"id":"weather-icon","x":36,"y":36,"w":128,"h":128,"autoScale":false}"#,
+        )
+        .unwrap();
+        assert_eq!(take(rw_set_widget(file_arg.as_ptr(), resized.as_ptr(), root_arg.as_ptr()))["ok"], true);
+        let project = rusty_core::load_project(Path::new(&file)).unwrap();
+        let icon_widget = project.widgets.iter()
+            .find(|w| w.kind == rusty_core::model::WidgetKind::WeatherIcon)
+            .unwrap();
+        assert_eq!(icon_widget.weather_icon_set.as_deref(),
+            Some(rusty_core::weather::DEFAULT_WEATHER_PACK));
+        for index in 0..29 {
+            let path = project_dir
+                .join("assets/weather/system-like")
+                .join(format!("w{index:02}.png"));
+            let image = image::open(&path).unwrap();
+            assert_eq!(image.dimensions(), (128, 128), "{path:?}");
         }
 
         let project = rusty_core::load_project(Path::new(&file)).unwrap();
@@ -3123,7 +3173,12 @@ mod tests {
         let overrides = CString::new("{}").unwrap();
         let pl = CString::new("pl").unwrap();
         let en = CString::new("en").unwrap();
-        let classic = CString::new("Classic").unwrap();
+        let classic = CString::new("system-like").unwrap();
+        let bundled_icon = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../native/RustyWatch/Assets/Weather/system-like/w00.png");
+        let pack_dir = root.join("Weather").join("system-like");
+        std::fs::create_dir_all(&pack_dir).unwrap();
+        std::fs::copy(bundled_icon, pack_dir.join("w00.png")).unwrap();
 
         let city = CString::new("weather-city").unwrap();
         let pl_result = take(rw_format_weather_field(
@@ -3150,6 +3205,14 @@ mod tests {
         assert!(path.ends_with("w00.png"), "unexpected icon path: {path}");
         // Ikona nie może rysować "--" w podglądzie edytora.
         assert_eq!(icon_result["data"]["text"], "");
+
+        // Brak pliku wybranej paczki nie może spaść do ikony domyślnej.
+        let missing = CString::new("NoSuchPack").unwrap();
+        let missing_result = take(rw_format_weather_field(
+            icon.as_ptr(), overrides.as_ptr(), pl.as_ptr(), root_arg.as_ptr(), missing.as_ptr(),
+        ));
+        assert_eq!(missing_result["ok"], true, "error: {}", missing_result["error"]);
+        assert_eq!(missing_result["data"]["iconPath"], "");
     }
 
     #[test]

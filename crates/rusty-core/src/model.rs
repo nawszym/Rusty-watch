@@ -310,8 +310,10 @@ pub fn arc_center_radius(w: i32, h: i32) -> i32 {
 }
 
 /// O ile pikseli wykracza łuk poza ramkę widgetu przy danej grubości.
+/// Ta sama formuła co `ArcStrokeMargin` w edytorze WinUI — inaczej gruby łuk
+/// w klatkach PNG/GIF miałby uciętą zewnętrzną krawędź.
 pub fn arc_draw_margin(thickness: u32) -> i32 {
-    (thickness as i32 - 16).max(0) / 2 + 3
+    (thickness as i32 / 2 - 8).max(0) + 6
 }
 
 /// Wszystkie ustawienia wizualne i źródło danych widgetu postępu.

@@ -16,4 +16,6 @@ gif = "0.14"
 ab_glyph = "0.2"
 fastrand = "2"
 anyhow = "1"
+qrcode = { version = "0.15", default-features = false, features = ["image"] }
+base64 = "0.22"
 clap = { version = "4", features = ["derive"] }

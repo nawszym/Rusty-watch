@@ -470,6 +470,10 @@ pub const MIN_FRAME_SIZE: i32 = 24;
 fn default_min_frame_size() -> i32 {
     MIN_FRAME_SIZE
 }
+
+fn default_max_frame_size() -> i32 {
+    SCREEN_SIZE as i32
+}
 pub const MIN_TEXT_SIZE: u32 = 8;
 pub const MAX_TEXT_SIZE: u32 = 160;
 /// Rozmiar kratki przyciągania w pikselach ekranu (466 × 466).
@@ -559,6 +563,10 @@ pub struct FrameInput {
     /// nie ma w ZeppOS praktycznego minimum (poza w/h > 0).
     #[serde(default = "default_min_frame_size")]
     pub min_size: i32,
+    /// Maksymalny wymiar ramki (domyślnie cały ekran). Ikona pogody dostaje 256 px,
+    /// żeby przeciąganie rogu i suwak SIZE miały dokładnie to samo ograniczenie.
+    #[serde(default = "default_max_frame_size")]
+    pub max_size: i32,
 }
 
 /// Geometria zwracana podglądowi. `text_size` to ta sama wartość, która trafia
@@ -582,10 +590,13 @@ pub struct FrameGeometry {
 pub fn frame_geometry(input: &FrameInput) -> FrameGeometry {
     let screen = SCREEN_SIZE as i32;
     let min_size = input.min_size.max(1);
+    let max_size = input.max_size.clamp(min_size, screen);
     let mut x = input.x.clamp(0, screen - min_size);
     let mut y = input.y.clamp(0, screen - min_size);
-    let mut w = input.w.clamp(min_size, screen - x);
-    let mut h = input.h.clamp(min_size, screen - y);
+    let mut w = input.w.clamp(min_size, (screen - x).min(max_size));
+    let mut h = input.h.clamp(min_size, (screen - y).min(max_size));
+    x = x.min(screen - w);
+    y = y.min(screen - h);
     let start_w = w;
     let mut guide_x = None;
     let mut guide_y = None;
@@ -618,8 +629,8 @@ pub fn frame_geometry(input: &FrameInput) -> FrameGeometry {
 
         let max_x = if west { right } else { screen - x };
         let max_y = if north { bottom } else { screen - y };
-        let max_size = max_x.min(max_y).min(screen);
-        size = size.clamp(min_size, max_size);
+        let limit_size = max_x.min(max_y).min(max_size);
+        size = size.clamp(min_size, limit_size);
 
         // Jak przy przesuwaniu: prowadnica przed siatką, żeby środek wskazówek
         // mógł trafić w środek tarczy albo innego widgetu.
@@ -661,7 +672,7 @@ pub fn frame_geometry(input: &FrameInput) -> FrameGeometry {
             } else {
                 snapped - x
             };
-            size = from_snap.clamp(min_size, max_size);
+            size = from_snap.clamp(min_size, limit_size);
         }
 
         if guide_x.is_some() || guide_y.is_some() {
@@ -683,30 +694,32 @@ pub fn frame_geometry(input: &FrameInput) -> FrameGeometry {
         if west {
             // Lewa krawędź się przesuwa, prawa zostaje na miejscu.
             let right = x + w;
-            x = (x + input.dx).clamp(0, right - min_size);
+            let left_limit = (right - max_size).max(0);
+            x = (x + input.dx).clamp(left_limit, right - min_size);
             if input.snap {
-                x = snap_to_grid(x).clamp(0, right - min_size);
+                x = snap_to_grid(x).clamp(left_limit, right - min_size);
             }
             w = right - x;
         } else {
             // Prawa krawędź się przesuwa, lewa zostaje na miejscu.
-            w = (w + input.dx).clamp(min_size, screen - x);
+            w = (w + input.dx).clamp(min_size, (screen - x).min(max_size));
             if input.snap {
-                let right = snap_to_grid(x + w).clamp(x + min_size, screen);
+                let right = snap_to_grid(x + w).clamp(x + min_size, (x + max_size).min(screen));
                 w = right - x;
             }
         }
         if north {
             let bottom = y + h;
-            y = (y + input.dy).clamp(0, bottom - min_size);
+            let top_limit = (bottom - max_size).max(0);
+            y = (y + input.dy).clamp(top_limit, bottom - min_size);
             if input.snap {
-                y = snap_to_grid(y).clamp(0, bottom - min_size);
+                y = snap_to_grid(y).clamp(top_limit, bottom - min_size);
             }
             h = bottom - y;
         } else {
-            h = (h + input.dy).clamp(min_size, screen - y);
+            h = (h + input.dy).clamp(min_size, (screen - y).min(max_size));
             if input.snap {
-                let bottom = snap_to_grid(y + h).clamp(y + min_size, screen);
+                let bottom = snap_to_grid(y + h).clamp(y + min_size, (y + max_size).min(screen));
                 h = bottom - y;
             }
         }
@@ -2074,9 +2087,11 @@ pub fn update_widget(project: &mut Project, settings: &Value) -> Result<Widget> 
         .and_then(Value::as_str)
         .and_then(VAlign::parse)
         .unwrap_or(existing_v_align);
-    // Pusty string = czcionka systemowa; brak klucza = zachowaj poprzedni wybór.
+    // Pusty string = świadomy wybór "System font" (zegarek używa Noto Sans, JS
+    // pomija `font:`). Brak klucza = zachowaj poprzedni wybór.
     let font = match settings.get("font").and_then(Value::as_str) {
-        Some("") | None => existing_font,
+        Some("") => None,
+        None => existing_font,
         Some(value) => Some(value.to_string()),
     };
 
@@ -2230,6 +2245,32 @@ mod tests {
     }
 
     #[test]
+    fn empty_font_selects_watch_system_font() {
+        let mut project = crate::model::Project::starter("Test");
+        let mut settings = json!({
+            "id": "time",
+            "x": 23, "y": 183, "w": 420, "h": 100,
+            "textSize": 64,
+            "color": "0xFFFFFFFF",
+            "align": "center",
+            "font": "Inter-Regular.ttf",
+        });
+        let updated = update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.font.as_deref(), Some("Inter-Regular.ttf"));
+
+        // Wybór "System font" w inspektorze musi naprawdę czyścić przypisaną czcionkę,
+        // inaczej podgląd i eksport nadal używają Inter zamiast Noto Sans.
+        settings["font"] = json!("");
+        let updated = update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.font, None);
+
+        // Brak klucza natomiast zachowuje wybór.
+        settings.as_object_mut().unwrap().remove("font");
+        let updated = update_widget(&mut project, &settings).unwrap();
+        assert_eq!(updated.font, None);
+    }
+
+    #[test]
     fn status_widget_persists_auto_scale() {
         let mut project = crate::model::Project::starter("Test");
         let widget = add_widget(&mut project, "status-dnd").unwrap();
@@ -2258,6 +2299,7 @@ mod tests {
             align_y: vec![],
             square: true,
             min_size: MIN_FRAME_SIZE,
+            max_size: SCREEN_SIZE as i32,
         }
     }
 
@@ -2282,6 +2324,13 @@ mod tests {
 
         let huge = frame_geometry(&frame("se", 1000, 1000, false));
         assert_eq!((huge.x, huge.y, huge.w, huge.h), (83, 83, 383, 383));
+
+        // Ikona pogody ma wspólne z suwakiem SIZE maksimum 256 px.
+        let mut capped_input = frame("se", 1000, 1000, false);
+        capped_input.max_size = 256;
+        let capped = frame_geometry(&capped_input);
+        assert_eq!((capped.w, capped.h), (256, 256));
+        assert!(capped.x + capped.w <= 466 && capped.y + capped.h <= 466);
     }
 
     #[test]

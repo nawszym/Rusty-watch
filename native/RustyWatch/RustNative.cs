@@ -177,18 +177,6 @@ internal static class RustNative
         [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string file);
 
-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_apply_default_font")]
-    private static extern IntPtr ApplyDefaultFont(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledDir);
-
-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_apply_default_font_to_missing")]
-    private static extern IntPtr ApplyDefaultFontToMissing(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string appDataRoot,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string bundledDir);
-
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_set_widget_image")]
     private static extern IntPtr SetWidgetImage(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string projectFile,
@@ -322,6 +310,10 @@ internal static class RustNative
     private static extern IntPtr EncodePreviewGif(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string project,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string seriesJson);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_generate_qr")]
+    private static extern IntPtr GenerateQr(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string text, uint size);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "rw_recent_list")]
     private static extern IntPtr RecentList([MarshalAs(UnmanagedType.LPUTF8Str)] string store);
@@ -531,16 +523,6 @@ internal static class RustNative
         Call(() => FontsRemove(AppPaths.DataDirectory, file), out error);
     }
 
-    public static string? ApplyDefaultFont(string projectFile, out string? error)
-        => Call(
-            () => ApplyDefaultFont(projectFile, AppPaths.DataDirectory, AppPaths.BundledFontsDirectory),
-            out error);
-
-    public static string? ApplyDefaultFontToMissing(string projectFile, out string? error)
-        => Call(
-            () => ApplyDefaultFontToMissing(projectFile, AppPaths.DataDirectory, AppPaths.BundledFontsDirectory),
-            out error);
-
     public static string? SetWidgetImage(string projectFile, string widgetId, string file,
         string fit, out string? error)
         => Call(
@@ -701,6 +683,10 @@ internal static class RustNative
 
     public static string? ExportZip(string project, string output, out string? error)
         => Call(() => ExportZip(project, output), out error);
+
+    /// <summary>Generuje PNG kodu QR (base64) z lokalnego URL-a instalacji.</summary>
+    public static string? GenerateQr(string text, uint size, out string? error)
+        => Call(() => GenerateQr(text, size), out error);
 
     public static string? PrepareEmulatorWorkspace(string project, string root, out string? error)
         => Call(() => PrepareEmulatorWorkspace(project, root), out error);

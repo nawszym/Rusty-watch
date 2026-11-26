@@ -16,6 +16,20 @@ internal static class PreviewFonts
     private static readonly Dictionary<string, FontFamily> Loaded =
         new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Domyślny font systemowy ZeppOS (Noto Sans). Dokumentacja Zeppa podaje Noto Sans
+    /// jako domyślną czcionkę systemową; kiedy widget nie ma `font`, wygenerowany JS
+    /// pomija tę właściwość i zegarek używa właśnie jej.
+    /// </summary>
+    private const string SystemFontFile = "NotoSans-Regular.ttf";
+    private const string SystemFontFamily = "Noto Sans-Regular";
+
+    public static FontFamily SystemFont()
+    {
+        Families[SystemFontFile] = SystemFontFamily;
+        return Get(SystemFontFile, AppPaths.BundledFontsDirectory);
+    }
+
     /// <summary>Nazwy rodzin z katalogu czcionek (zwracane przez rusty-core).</summary>
     public static void RefreshCatalog(IEnumerable<FontAssetDto> fonts)
     {
@@ -38,8 +52,8 @@ internal static class PreviewFonts
     {
         if (string.IsNullOrWhiteSpace(file))
         {
-            // Starsze projekty bez czcionki używają czcionki systemowej.
-            return new FontFamily("Segoe UI");
+            // Brak czcionki = systemowy Noto Sans zegarka, nie Windowsowy Segoe UI.
+            return SystemFont();
         }
 
         var key = file.ToLowerInvariant();

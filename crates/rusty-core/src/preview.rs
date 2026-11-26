@@ -41,9 +41,10 @@ pub const PREVIEW_FRAME_INDEX: usize = 7;
 const GIF_FRAME_DELAY: u16 = 170;
 /// Promień okręgu tarczy Active 2 (Round).
 const SCREEN_RADIUS: f64 = 233.0;
-/// Wbudowany Inter używany, gdy projekt nie ma jeszcze przypisanej czcionki.
-const DEFAULT_FONT_BYTES: &[u8] =
-    include_bytes!("../../../native/RustyWatch/Assets/Fonts/Inter-Regular.ttf");
+/// Font systemowy ZeppOS (Noto Sans) używany, gdy widget nie ma przypisanej czcionki —
+/// dokładnie tak jak wygenerowany JS, który w tym przypadku pomija `font:`.
+const SYSTEM_FONT_BYTES: &[u8] =
+    include_bytes!("../../../native/RustyWatch/Assets/Fonts/NotoSans-Regular.ttf");
 
 const HOURS: [u8; FRAME_COUNT] = [6, 9, 12, 15, 18, 20, 21, 21];
 const MINUTES: [u8; FRAME_COUNT] = [5, 11, 17, 23, 29, 33, 37, 37];
@@ -1065,12 +1066,21 @@ fn layout_lines(
     vec![line]
 }
 
+/// `ab_glyph::PxScale` jest wysokością komórki fontu, a `text_size`/WinUI `FontSize`
+/// to rozmiar em. Przeliczamy skalę tak, żeby klatki PNG/GIF miały identyczne
+/// metryki tekstu co podgląd w edytorze.
+fn px_scale_for(font: &FontRef<'_>, text_size: f32) -> PxScale {
+    let units_per_em = font.units_per_em().unwrap_or(1000.0);
+    PxScale::from(text_size.max(1.0) * font.height_unscaled() / units_per_em)
+}
+
 fn draw_text(canvas: &mut RgbaImage, project_dir: &Path, layer: &LayerView, text: &str) {
     if text.is_empty() || layer.w <= 0 || layer.h <= 0 {
         return;
     }
-    // Widget zawsze niesie nazwę pliku TTF — podgląd i eksport używają tego
-    // samego fontu. Brak pliku (stare projekty) wraca do wbudowanego Inter.
+    // Widget z przypisanym TTF używa dokładnie tego samego pliku w podglądzie i
+    // eksporcie. Brak fontu = czcionka systemowa ZeppOS (Noto Sans) — JS też wtedy
+    // pomija `font:`, więc klatki PNG/GIF muszą używać tego samego fontu.
     let project_font = layer
         .font
         .as_deref()
@@ -1079,12 +1089,12 @@ fn draw_text(canvas: &mut RgbaImage, project_dir: &Path, layer: &LayerView, text
     let font_bytes = project_font
         .as_ref()
         .and_then(|path| std::fs::read(path).ok())
-        .unwrap_or_else(|| DEFAULT_FONT_BYTES.to_vec());
+        .unwrap_or_else(|| SYSTEM_FONT_BYTES.to_vec());
     let font = match FontRef::try_from_slice(&font_bytes) {
         Ok(font) => font,
         Err(_) => return,
     };
-    let scale = PxScale::from((layer.text_size.unwrap_or(64) as f32).max(1.0));
+    let scale = px_scale_for(&font, layer.text_size.unwrap_or(64) as f32);
     let scaled = font.as_scaled(scale);
     let line_height = (scaled.ascent() - scaled.descent() + scaled.line_gap()).max(1.0);
     let lines = layout_lines(&font, &scaled, text, layer.w as f32, &layer.text_style);
@@ -1430,11 +1440,12 @@ fn arc_coverage(
     if ring <= 0.0 {
         return 0.0;
     }
-    let span = {
-        let raw = (end - start) as f64;
-        if raw <= 0.0 || raw >= 360.0 { 360.0 } else { raw }
-    };
-    if span >= 360.0 {
+    let sweep = (end - start) as f64;
+    // Tak samo jak `ArcGeometry` w edytorze: |sweep| >= 359.999 to pełne koło,
+    // a ujemny sweep to łuk rysowany przeciwnie do ruchu wskazówek zegara.
+    let full = sweep.abs() >= 359.999;
+    let span = if full { 360.0 } else { sweep.abs() };
+    if full {
         // Zamknięty okrąg nie ma końców do zaokrąglenia.
         return ring;
     }
@@ -1442,7 +1453,11 @@ fn arc_coverage(
     // `atan2(-dy, dx)` dawał inny układ niż kapki i odrywał je od łuku.
     let angle = dx.atan2(-dy).to_degrees().rem_euclid(360.0);
     let from = (start as f64).rem_euclid(360.0);
-    let delta = (angle - from).rem_euclid(360.0);
+    let delta = if sweep >= 0.0 {
+        (angle - from).rem_euclid(360.0)
+    } else {
+        (from - angle).rem_euclid(360.0)
+    };
     let angular = if delta <= span { ring } else { 0.0 };
     if !rounded {
         return angular;
@@ -1518,8 +1533,9 @@ fn draw_progress(canvas: &mut RgbaImage, layer: &LayerView, frame: &PreviewFrame
     let bar_radius = if progress.corner.as_str() == "flat" {
         0
     } else {
-        // Włączone zaokrąglenia = połowa krótszego boku (kwadrat to koło).
-        layer.w.min(layer.h).max(0) as u32 / 2
+        // Włączone zaokrąglenia = połowa krótszego boku (kwadrat to koło),
+        // ale nigdy 0 — tak jak `Math.Max(1, …)` w `UpdateProgressVisual`.
+        (layer.w.min(layer.h) / 2).max(1) as u32
     };
     let (cx, cy, radius) = (
         layer.x + layer.w / 2,
@@ -1725,6 +1741,17 @@ mod tests {
     }
 
     #[test]
+    fn text_scale_matches_editor_font_size() {
+        // `ab_glyph` bierze PxScale jako wysokość komórki; edytor i ZeppOS
+        // podają rozmiar em. 64 px musi dać dokładnie 64 px w klatce PNG/GIF.
+        let font = FontRef::try_from_slice(SYSTEM_FONT_BYTES).unwrap();
+        let scale = px_scale_for(&font, 64.0);
+        let upm = font.units_per_em().unwrap_or(1000.0);
+        let effective_em = scale.x * upm / font.height_unscaled();
+        assert!((effective_em - 64.0).abs() < 0.01, "effective em = {effective_em}");
+    }
+
+    #[test]
     fn arc_round_caps_extend_past_flat_ends() {
         // Łuk 0→90° zakończony w punkcie (333,233); punkt tuż za końcem
         // powinien być pusty przy płaskich końcach, ale pokryty przez okrągłą kapkę.
@@ -1739,6 +1766,34 @@ mod tests {
         let full_flat = arc_coverage(233, 233, 100, 20, 0, 360, false, 233, 133);
         let full_round = arc_coverage(233, 233, 100, 20, 0, 360, true, 233, 133);
         assert_eq!(full_flat, full_round);
+    }
+
+    #[test]
+    fn arc_draw_margin_matches_editor() {
+        // `ArcStrokeMargin` w WinUI: max(0, thickness/2 - 8) + 6.
+        assert_eq!(crate::model::arc_draw_margin(8), 6);
+        assert_eq!(crate::model::arc_draw_margin(16), 6);
+        assert_eq!(crate::model::arc_draw_margin(32), 14);
+    }
+
+    #[test]
+    fn reversed_arc_sweep_is_not_a_full_circle() {
+        let (cx, cy, radius, thickness) = (233, 233, 100, 16);
+        // 135° → -135° to łuk 270° przeciwnie do ruchu wskazówek — edytor
+        // rysuje go przez SweepDirection.Counterclockwise, nie pełne koło.
+        assert!(
+            arc_coverage(cx, cy, radius, thickness, 135, -135, false, cx, cy - radius) > 0.0,
+            "top (0°) must be covered by the reversed arc"
+        );
+        assert_eq!(
+            arc_coverage(cx, cy, radius, thickness, 135, -135, false, cx, cy + radius),
+            0.0,
+            "bottom (180°) must stay empty"
+        );
+        // Pełny obrót wstecz nadal daje zamknięty pierścień.
+        assert!(
+            arc_coverage(cx, cy, radius, thickness, 135, -225, false, cx, cy + radius) > 0.0
+        );
     }
 
     #[test]

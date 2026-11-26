@@ -2,6 +2,9 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Text.Json;
@@ -349,7 +352,10 @@ public sealed class WeatherPackItem : AssetItemBase
     public string Fingerprint { get; set; } = "";
     public string Stamp { get; set; } = "";
     public string Details => $"{Size} × {Size}";
-    public bool IsDefault => Id == "Classic";
+    /// <summary>Badge „default" dostaje tylko domyślna paczka, nie każda wbudowana.</summary>
+    public bool IsDefault => Id == "system-like";
+    /// <summary>Wbudowanych paczek nie można usunąć z magazynu (Rust też ich chroni).</summary>
+    public bool CanRemove => Id is not ("system-like" or "Not Something");
     public string Badge => IsDefault ? L("AssetsDefaultBadge") : "";
 
     public BitmapImage? Preview
@@ -460,8 +466,8 @@ public sealed class TimeSettings
     public byte Alpha { get; set; } = 255;
     /// <summary>Tryb dopasowania obrazka widgetu IMAGES: cover, contain, stretch.</summary>
     public string ImageFit { get; set; } = "contain";
-    /// <summary>Wybrana paczka ikon pogody (Classic albo paczka użytkownika).</summary>
-    public string WeatherIconSet { get; set; } = "Classic";
+    /// <summary>Wybrana paczka ikon pogody (system-like, Not Something albo paczka użytkownika).</summary>
+    public string WeatherIconSet { get; set; } = "system-like";
     /// <summary>Dzień prognozy: 0 = dziś, 4 = +4 dni.</summary>
     public byte WeatherDayOffset { get; set; }
     /// <summary>Faza snu: duration (minuty) albo percent (%).</summary>
@@ -528,10 +534,16 @@ public sealed class FontItem
 {
     public string File { get; set; } = "";
     public string Family { get; set; } = "";
-    public bool IsDefault { get; set; }
-    public string Badge => IsDefault ? L("AssetsDefaultBadge") : "";
+    /// <summary>Wirtualny kafelek czcionki systemowej ZeppOS — nie jest plikiem w magazynie.</summary>
+    public bool IsSystem { get; set; }
+    /// <summary>Inter pozostaje chronionym plikiem zapasowym, ale nie jest już domyślny.</summary>
+    public bool CanRemove { get; set; }
+    /// <summary>Domyślny jest font zegarka, nie żaden z plików TTF.</summary>
+    public string Badge => IsSystem ? L("AssetsDefaultBadge") : "";
     /// <summary>Podgląd próbki rysowany tą samą czcionką, której użyje tarcza.</summary>
-    public FontFamily PreviewFontFamily => PreviewFonts.FromStore(File);
+    public FontFamily PreviewFontFamily => IsSystem
+        ? PreviewFonts.SystemFont()
+        : PreviewFonts.FromStore(File);
 
     private static string L(string key) => LocalizationService.Get(key);
 }
@@ -659,6 +671,12 @@ public sealed partial class MainWindow : Window
     // w tle z debounce — żadny ruch myszy ani suwaka nie blokuje wątku UI.
     private CancellationTokenSource? _assetJobCts;
     private Task _assetJob = Task.CompletedTask;
+    // Lokalny serwer ZIP-u dla QR w trybie deweloperskim Zeppa (bez chmury).
+    private TcpListener? _qrServer;
+    private CancellationTokenSource? _qrCts;
+    private BitmapImage? _qrBitmap;
+    private string? _qrUrl;
+    private string? _qrError;
     // Przełączanie paczki pogody: podgląd zmieniamy natychmiast (jedna ikona z
     // magazynu), a kopiowanie 29 plików do projektu idzie w tle. Bramka daje
     // "ostatni wybór wygrywa" — szybkie przełączania nie kolejkują starych paczek.
@@ -874,7 +892,6 @@ public sealed partial class MainWindow : Window
         // Ustawienia aplikacji obowiązują w każdym otwartym projekcie (wpływają na JS).
         ApplyAppMeasurementSystemToProject();
         ApplyAppFirstDayOfWeekToProject();
-        ApplyDefaultFontToMissing();
         LoadImages();
         LoadHandSets(); LoadStatusPacks(); LoadWeatherPacks();
         LoadProjectSettings();
@@ -928,9 +945,9 @@ public sealed partial class MainWindow : Window
 
     private void ApplyFont(TextBlock text, string? font)
     {
-        text.FontFamily = string.IsNullOrWhiteSpace(font)
-            ? new FontFamily("Segoe UI")
-            : PreviewFonts.Get(font, ProjectFontsDirectory);
+        // Pusty font to wybór "System font" — podgląd używa Noto Sans, czyli tego
+        // samego fontu, którego użyje zegarek, gdy JS nie emituje właściwości `font`.
+        text.FontFamily = PreviewFonts.Get(font, ProjectFontsDirectory);
     }
 
     private static TextAlignment AlignOf(string? align) => align switch
@@ -1143,6 +1160,10 @@ public sealed partial class MainWindow : Window
                 trackPath.Data = ArcGeometry(cx, cy, radius, p.StartAngle, p.EndAngle);
                 trackPath.Stroke = new SolidColorBrush(ParseArgb(p.TrackColor));
                 trackPath.StrokeThickness = p.Thickness;
+                // Kapki podkładu też muszą podążać za przełącznikiem zaokrągleń —
+                // inaczej edytor pokazuje stare końce, a GIF i eksport nowe.
+                trackPath.StrokeStartLineCap = ProgressLineCap(p);
+                trackPath.StrokeEndLineCap = ProgressLineCap(p);
             }
             else if (!arc && visual.Track is Microsoft.UI.Xaml.Shapes.Rectangle trackRect)
             {
@@ -1384,7 +1405,25 @@ public sealed partial class MainWindow : Window
         _settings.Y = Math.Clamp(_settings.Y, 0, (int)YSlider.Maximum);
         YSlider.Value = _settings.Y;
         UpdatePositionValues();
+        SyncWeatherIconSizeUI();
         _loadingSettings = false;
+    }
+
+    /// <summary>
+    /// Suwak SIZE i liczba obok niego podążają za ramką w trakcie przeciągania rogu.
+    /// Zmiana wartości suwaka jest wyciszona, żeby nie zapisywać projektu w każdym ruchu.
+    /// </summary>
+    private void SyncWeatherIconSizeUI()
+    {
+        if (_selectedLayerId is null || _settings is null) return;
+        if (!_frames.TryGetValue(_selectedLayerId, out var view) || !IsWeatherIcon(view.Layer)) return;
+        var size = (int)Math.Clamp((double)Math.Min(_settings.W, _settings.H),
+            WeatherIconSizeSlider.Minimum, WeatherIconSizeSlider.Maximum);
+        var wasLoading = _loadingSettings;
+        _loadingSettings = true;
+        WeatherIconSizeSlider.Value = size;
+        _loadingSettings = wasLoading;
+        WeatherIconSizeValue.Text = $"{size} px";
     }
 
     /// <summary>Aktualne wartości X/Y wyświetlane obok suwaków.</summary>
@@ -1508,7 +1547,7 @@ public sealed partial class MainWindow : Window
         var overrides = WeatherOverridesJson(day, now);
         var raw = RustNative.FormatWeatherField(
             layer.Kind, overrides, EffectiveWatchfaceLanguage(),
-            layer.WeatherIconSet ?? "Classic", out var error);
+            layer.WeatherIconSet ?? "system-like", out var error);
         if (raw is null) return;
         using var document = JsonDocument.Parse(raw);
         var data = document.RootElement;
@@ -1519,7 +1558,13 @@ public sealed partial class MainWindow : Window
         if (layer.Kind != "weather-icon" || view.Picture is null
             || !data.TryGetProperty("iconPath", out var iconElement)) return;
         var iconPath = iconElement.GetString();
-        if (string.IsNullOrEmpty(iconPath) || !File.Exists(iconPath)) return;
+        if (string.IsNullOrEmpty(iconPath) || !File.Exists(iconPath))
+        {
+            // Brak pliku wybranej paczki nie może pokazać ikony z innej paczki.
+            view.Picture.Source = null;
+            view.Picture.Tag = null;
+            return;
+        }
         if (!Equals(view.Picture.Tag as string, iconPath))
         {
             view.Picture.Source = CachedBitmap(iconPath);
@@ -1545,7 +1590,12 @@ public sealed partial class MainWindow : Window
             using var document = JsonDocument.Parse(raw);
             if (!document.RootElement.TryGetProperty("iconPath", out var iconElement)) continue;
             var iconPath = iconElement.GetString();
-            if (string.IsNullOrEmpty(iconPath) || !File.Exists(iconPath)) continue;
+            if (string.IsNullOrEmpty(iconPath) || !File.Exists(iconPath))
+            {
+                view.Picture.Source = null;
+                view.Picture.Tag = null;
+                continue;
+            }
             if (Equals(view.Picture.Tag as string, iconPath)) continue;
             view.Picture.Source = CachedBitmap(iconPath);
             view.Picture.Tag = iconPath;
@@ -1846,7 +1896,7 @@ public sealed partial class MainWindow : Window
             ShowUnit = layer.ShowUnit,
             Alpha = layer.Alpha,
             ImageFit = string.IsNullOrEmpty(layer.ImageFit) ? "contain" : layer.ImageFit,
-            WeatherIconSet = layer.WeatherIconSet ?? "Classic",
+            WeatherIconSet = layer.WeatherIconSet ?? "system-like",
             WeatherDayOffset = layer.WeatherDayOffset,
             SleepStageMode = string.IsNullOrEmpty(layer.SleepStageMode)
                 ? "duration"
@@ -1978,6 +2028,10 @@ public sealed partial class MainWindow : Window
         // ValueChanged jest wyciszony przez `_loadingSettings`, więc etykietę
         // trzeba odświeżyć samemu — inaczej zostaje wartość poprzedniego widgetu.
         FontSizeValue.Text = _settings.TextSize.ToString();
+        var weatherSize = (int)Math.Clamp((double)Math.Min(_settings.W, _settings.H),
+            WeatherIconSizeSlider.Minimum, WeatherIconSizeSlider.Maximum);
+        WeatherIconSizeSlider.Value = weatherSize;
+        WeatherIconSizeValue.Text = $"{weatherSize} px";
         XSlider.Maximum = Math.Max(0, ScreenSize - _settings.W);
         XSlider.Value = _settings.X;
         YSlider.Maximum = Math.Max(0, ScreenSize - _settings.H);
@@ -2364,9 +2418,13 @@ public sealed partial class MainWindow : Window
             dx,
             dy,
             autoScale = _drag.AutoScale,
-            square = view.Layer.Kind is "analog-time" or "arc-progress",
+            square = view.Layer.Kind is "analog-time" or "arc-progress" or "weather-icon",
             // Pasek FILL_RECT może mieć 1 px — łuk wciąż potrzebuje promienia.
             minSize = view.Layer.Kind is "bar-progress" or "shortcut" ? 1 : 24,
+            // Ikona pogody ma to samo maksimum co suwak SIZE w inspektorze.
+            maxSize = view.Layer.Kind == "weather-icon"
+                ? (int)WeatherIconSizeSlider.Maximum
+                : ScreenSize,
             snap = PreviewGridToggle.IsChecked == true,
             alignX,
             alignY,
@@ -2396,6 +2454,7 @@ public sealed partial class MainWindow : Window
             _settings.H = h;
             _settings.TextSize = textSize;
         }
+        SyncWeatherIconSizeUI();
         e.Handled = true;
     }
 
@@ -2641,25 +2700,6 @@ public sealed partial class MainWindow : Window
         ApplyLayersPayload(document.RootElement.GetProperty("layers").GetRawText());
     }
 
-    /// <summary>
-    /// Starsze projekty i nowe widgety mają `font: null` — wtedy edytor używał
-    /// Segoe UI, a tarcza czcionki systemowej ZeppOS. Uzupełniamy dołączony TTF,
-    /// żeby podgląd i eksport miały identyczne metryki tekstu.
-    /// </summary>
-    private void ApplyDefaultFontToMissing()
-    {
-        if (_projectFile is null) return;
-        var raw = RustNative.ApplyDefaultFontToMissing(_projectFile, out var error);
-        if (raw is null)
-        {
-            ShowStatus(error is null ? L("ErrorSaveChanges") : LocalizationService.Error(error),
-                InfoBarSeverity.Error);
-            return;
-        }
-        using var document = JsonDocument.Parse(raw);
-        ApplyLayersPayload(document.RootElement.GetProperty("layers").GetRawText());
-    }
-
     private void MeasurementSystemCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_loadingUnits || !_initialized) return;
@@ -2791,21 +2831,34 @@ public sealed partial class MainWindow : Window
         fontItems.AddRange(fonts.Select(font => new ChoiceItem
         {
             Value = font.File,
-            Name = font.IsDefault ? $"{font.Family} ({L("AssetsDefaultBadge")})" : font.Family,
+            Name = font.Family,
         }));
         _loadingFontChoices = true;
         LoadChoices(FontComboBox, fontItems.ToArray());
         _loadingFontChoices = false;
 
-        var fontRows = fonts.Select(font => new FontItem
+        // Czcionka systemowa to wirtualny kafelek — informacyjny, bez możliwości usunięcia.
+        var fontRows = new List<FontItem>
+        {
+            new()
+            {
+                File = "",
+                Family = L("WidgetFontSystem"),
+                IsSystem = true,
+                CanRemove = false,
+            },
+        };
+        fontRows.AddRange(fonts.Select(font => new FontItem
         {
             File = font.File,
             Family = font.Family,
-            IsDefault = font.IsDefault,
-        }).ToList();
+            CanRemove = !font.IsDefault,
+        }));
         FontsList.ItemsSource = fontRows;
-        FontsList.SelectedItem = fontRows.FirstOrDefault(item => item.File == _selectedFontFile);
-        RemoveFontButton.IsEnabled = FontsList.SelectedItem is FontItem { IsDefault: false };
+        FontsList.SelectedItem = fontRows.FirstOrDefault(item => item.IsSystem
+            ? string.IsNullOrEmpty(_selectedFontFile)
+            : item.File == _selectedFontFile);
+        RemoveFontButton.IsEnabled = FontsList.SelectedItem is FontItem { CanRemove: true };
     }
 
     private void LoadImages()
@@ -2908,7 +2961,11 @@ public sealed partial class MainWindow : Window
         if (error is not null) WeatherStatusText.Text = LocalizationService.Error(error);
         _loadingWeatherPacks = true;
         WeatherPackComboBox.ItemsSource = _weatherPacks;
-        var current = _layers.FirstOrDefault(IsWeatherIcon)?.WeatherIconSet ?? "Classic";
+        var current = _layers.FirstOrDefault(IsWeatherIcon)?.WeatherIconSet;
+        // Starsze projekty mogą wskazywać na usuniętą paczkę — pokaż domyślną,
+        // ale nie zmieniaj zapisanego projektu bez świadomego wyboru użytkownika.
+        if (string.IsNullOrEmpty(current) || !_weatherPacks.Any(p => p.Id == current))
+            current = "system-like";
         WeatherPackComboBox.SelectedItem = _weatherPacks.FirstOrDefault(pack => pack.Id == current);
         _loadingWeatherPacks = false;
         ApplyWeatherPacks(_weatherPacks);
@@ -2931,15 +2988,15 @@ public sealed partial class MainWindow : Window
         var ids = packs.Select(p => p.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var stale in _weatherPackItems.Where(p => !ids.Contains(p.Id)).ToList())
             _weatherPackItems.Remove(stale);
-        WeatherPacksGrid.SelectedItem = _weatherPackItems.FirstOrDefault(p => p.Id == (_selectedWeatherPackId ?? "Classic"));
-        RemoveWeatherButton.IsEnabled = WeatherPacksGrid.SelectedItem is WeatherPackItem { IsDefault: false };
+        WeatherPacksGrid.SelectedItem = _weatherPackItems.FirstOrDefault(p => p.Id == (_selectedWeatherPackId ?? "system-like"));
+        RemoveWeatherButton.IsEnabled = WeatherPacksGrid.SelectedItem is WeatherPackItem { CanRemove: true };
     }
 
     private void WeatherPacksGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if ((WeatherPacksGrid.SelectedItem as WeatherPackItem) is not { } item) return;
         _selectedWeatherPackId = item.Id;
-        RemoveWeatherButton.IsEnabled = !item.IsDefault;
+        RemoveWeatherButton.IsEnabled = item.CanRemove;
     }
 
     private async void AddWeatherButton_Click(object sender, RoutedEventArgs e)
@@ -2965,7 +3022,7 @@ public sealed partial class MainWindow : Window
 
     private void RemoveWeatherButton_Click(object sender, RoutedEventArgs e)
     {
-        if ((WeatherPacksGrid.SelectedItem as WeatherPackItem) is not { } item || item.IsDefault) return;
+        if ((WeatherPacksGrid.SelectedItem as WeatherPackItem) is not { CanRemove: true } item) return;
         var raw = RustNative.WeatherPacksRemove(item.Id, out var error);
         if (raw is null)
         {
@@ -3453,6 +3510,34 @@ public sealed partial class MainWindow : Window
         PersistSettings();
     }
 
+    /// <summary>Suwak rozmiaru ikony pogody — kwadrat rośnie wokół środka.</summary>
+    private void WeatherIconSizeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_loadingSettings || _settings is null) return;
+        var size = (int)Math.Clamp(Math.Round(e.NewValue),
+            WeatherIconSizeSlider.Minimum, WeatherIconSizeSlider.Maximum);
+        WeatherIconSizeValue.Text = $"{size} px";
+        var cx = _settings.X + _settings.W / 2.0;
+        var cy = _settings.Y + _settings.H / 2.0;
+        var x = (int)Math.Clamp(Math.Round(cx - size / 2.0), 0, ScreenSize - size);
+        var y = (int)Math.Clamp(Math.Round(cy - size / 2.0), 0, ScreenSize - size);
+        if (x == _settings.X && y == _settings.Y && size == _settings.W && size == _settings.H) return;
+        _settings.X = x;
+        _settings.Y = y;
+        _settings.W = size;
+        _settings.H = size;
+        if (_frames.TryGetValue(_selectedLayerId ?? "", out var view))
+        {
+            view.Layer.X = x;
+            view.Layer.Y = y;
+            view.Layer.W = size;
+            view.Layer.H = size;
+        }
+        ApplyPreview();
+        // PersistSettings wysyła deferAssets:true — background przeskaluje 29 ikon.
+        PersistSettings();
+    }
+
     /// <summary>Wpisywanie wymiarów paska (szerokość i wysokość w px).</summary>
     private void ProgressSize_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
     {
@@ -3648,7 +3733,6 @@ public sealed partial class MainWindow : Window
         _selectedLayerId = document.RootElement.GetProperty("id").GetString();
         _selectionCleared = false;
         ApplyLayersPayload(document.RootElement.GetProperty("layers").GetRawText());
-        ApplyDefaultFontToMissing();
         LoadWidgetSettings();
         NavView.SelectedItem = EditorNavItem;
         ShowView(editor: true);
@@ -3787,6 +3871,12 @@ public sealed partial class MainWindow : Window
         // tworzyć nowe wiersze i kontrolki (to powodowało skakanie listy i mruganie podglądu).
         var rebuild = !SameLayerStructure(_layers, next);
         _layers = next;
+        // Szybkie przełączanie paczek: dane z projektu mogą być starsze niż wybór
+        // w inspektorze. Nie pozwalamy im cofnąć wybranej paczki w podglądzie.
+        var chosenPack = (WeatherPackComboBox.SelectedItem as WeatherPackDto)?.Id;
+        if (!string.IsNullOrEmpty(chosenPack))
+            foreach (var layer in next.Where(IsWeatherIcon))
+                layer.WeatherIconSet = chosenPack;
         if (rebuild)
         {
             RefreshLayersList();
@@ -4157,8 +4247,9 @@ public sealed partial class MainWindow : Window
     private void FontsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_initialized) return;
-        _selectedFontFile = (FontsList.SelectedItem as FontItem)?.File;
-        RemoveFontButton.IsEnabled = FontsList.SelectedItem is FontItem { IsDefault: false };
+        var item = FontsList.SelectedItem as FontItem;
+        _selectedFontFile = item is { IsSystem: true } ? null : item?.File;
+        RemoveFontButton.IsEnabled = item is { CanRemove: true };
     }
 
     private async void AddFontButton_Click(object sender, RoutedEventArgs e)
@@ -4185,7 +4276,7 @@ public sealed partial class MainWindow : Window
 
     private void RemoveFontButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedFontFile is null) return;
+        if (FontsList.SelectedItem is not FontItem { CanRemove: true } || _selectedFontFile is null) return;
         RustNative.FontsRemove(_selectedFontFile, out var error);
         if (error is not null)
         {
@@ -4438,6 +4529,8 @@ public sealed partial class MainWindow : Window
         if ((sender as ComboBox)?.SelectedItem is not WeatherPackDto pack) return;
         var layer = _layers.FirstOrDefault(IsWeatherIcon);
         if (layer is null) return;
+        _selectedWeatherPackId = pack.Id;
+        if (_settings is not null) _settings.WeatherIconSet = pack.Id;
 
         // 1) Natychmiast: tylko widoczna ikona z magazynu. Żadnego odczytu 29
         // plików ani zapisu projektu na wątku UI — ramka zmienia się w tej klatce.
@@ -4482,6 +4575,9 @@ public sealed partial class MainWindow : Window
                         }
                         using var document = JsonDocument.Parse(raw);
                         ApplyLayersPayload(document.RootElement.GetProperty("layers").GetRawText());
+                        // Nawet jeśli dane z projektu były starsze, ikona w ramce musi
+                        // odpowiadać temu, co aktualnie pokazuje ComboBox.
+                        RefreshWeatherIconPreview(pack.Id);
                     });
                 }
                 finally
@@ -5162,16 +5258,6 @@ public sealed partial class MainWindow : Window
         var file = root.GetProperty("file").GetString()!;
         var widgets = root.GetProperty("widgets").GetInt32();
 
-        // Nowa tarcza domyślnie używa dołączonej czcionki Inter (OFL) — plik trafia
-        // też do `assets/fonts` projektu, żeby eksport był samowystarczalny.
-        var applied = RustNative.ApplyDefaultFont(file, out var fontError);
-        if (applied is null)
-        {
-            ShowStatus(fontError is null ? L("AssetsFontAddFailed") : LocalizationService.Error(fontError),
-                InfoBarSeverity.Error);
-            return;
-        }
-
         if (OpenProjectFile(file))
             ShowStatus(LF("CreatedProject", name, new DirectoryInfo(projectsRoot).Name, widgets));
     }
@@ -5546,6 +5632,10 @@ public sealed partial class MainWindow : Window
                 // Active 2 (Round), więc w oknie nie widać kwadratowych rogów.
             }
 
+            ResetQrView();
+            // Świeży ZIP, serwer i kod QR są gotowe jeszcze przed otwarciem okna —
+            // kliknięcie przycisku QR tylko pokazuje przygotowany obrazek.
+            await PrepareQrAsync();
             LoadExportProjectInfo();
             await ExportDialog.ShowAsync();
         }
@@ -5752,12 +5842,205 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        StopQrServer();
         try { _emulatorProcess?.Kill(entireProcessTree: true); }
         catch { /* proces już zakończony */ }
     }
 
-    private void Sync_Click(object sender, RoutedEventArgs e)
+    // --- QR: lokalny serwer ZIP-u dla trybu deweloperskiego Zeppa ------------
+
+    /// <summary>Pierwszy adres IPv4 w sieci LAN (nie loopback).</summary>
+    private static string? LanIPv4()
     {
-        ShowStatus(L("SyncHint"), InfoBarSeverity.Informational);
+        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (nic.OperationalStatus != OperationalStatus.Up
+                || nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+            foreach (var addr in nic.GetIPProperties().UnicastAddresses)
+            {
+                if (addr.Address.AddressFamily == AddressFamily.InterNetwork
+                    && !IPAddress.IsLoopback(addr.Address))
+                    return addr.Address.ToString();
+            }
+        }
+        return null;
     }
+
+    /// <summary>Wolny port TCP — nie wymaga uprawnień administratorskich.</summary>
+    private static int FreeTcpPort()
+    {
+        var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        return port;
+    }
+
+    private void StopQrServer()
+    {
+        _qrCts?.Cancel();
+        _qrCts?.Dispose();
+        _qrCts = null;
+        _qrServer?.Stop();
+        _qrServer = null;
+    }
+
+    /// <summary>
+    /// Minimalny serwer HTTP: zwraca tylko żądany ZIP. TcpListener zamiast HttpListener,
+    /// żeby nie potrzebować rezerwacji URL (netsh urlacl) ani uprawnień admina.
+    /// </summary>
+    private void StartQrServer(int port, string fileName, byte[] zip)
+    {
+        StopQrServer();
+        var cts = new CancellationTokenSource();
+        var server = new TcpListener(IPAddress.Any, port);
+        server.Start();
+        _qrCts = cts;
+        _qrServer = server;
+        _ = Task.Run(async () =>
+        {
+            var headerBytes = Encoding.ASCII.GetBytes(
+                $"HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Length: {zip.Length}\r\nConnection: close\r\n\r\n");
+            var missingBytes = Encoding.ASCII.GetBytes(
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            while (!cts.IsCancellationRequested)
+            {
+                TcpClient client;
+                try { client = await server.AcceptTcpClientAsync(cts.Token); }
+                catch { break; }
+                _ = Task.Run(async () =>
+                {
+                    using (client)
+                    {
+                        try
+                        {
+                            using var stream = client.GetStream();
+                            var buffer = new byte[4096];
+                            var request = new StringBuilder();
+                            while (!cts.IsCancellationRequested)
+                            {
+                                var read = await stream.ReadAsync(buffer, cts.Token);
+                                if (read == 0) return;
+                                request.Append(Encoding.ASCII.GetString(buffer, 0, read));
+                                if (request.ToString().Contains("\r\n\r\n")) break;
+                            }
+                            // Zepp dopisuje czasem query i koduje nazwę pliku —
+                            // ścisłe porównanie dawało 404 mimo działającego serwera.
+                            var first = request.ToString().Split("\r\n")[0];
+                            var parts = first.Split(' ');
+                            var method = parts.ElementAtOrDefault(0) ?? "GET";
+                            var rawPath = parts.ElementAtOrDefault(1) ?? "";
+                            var path = Uri.UnescapeDataString(rawPath.Split('?')[0].Split('#')[0]);
+                            var body = path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+                                || path.EndsWith("/" + fileName, StringComparison.OrdinalIgnoreCase);
+                            var isHead = string.Equals(method, "HEAD", StringComparison.OrdinalIgnoreCase);
+                            await stream.WriteAsync(body ? headerBytes : missingBytes, cts.Token);
+                            if (body && !isHead) await stream.WriteAsync(zip, cts.Token);
+                        }
+                        catch { /* klient odłączył się w trakcie pobierania */ }
+                    }
+                }, cts.Token);
+            }
+        }, cts.Token);
+    }
+
+    /// <summary>Sprawdza, że świeżo wystartowany serwer rzeczywiście oddaje ZIP.</summary>
+    private static async Task<bool> QrServerRespondsAsync(int port, string path)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(IPAddress.Loopback, port, timeout.Token);
+            using var stream = client.GetStream();
+            var request = Encoding.ASCII.GetBytes(
+                $"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+            await stream.WriteAsync(request, timeout.Token);
+            var buffer = new byte[64];
+            var read = await stream.ReadAsync(buffer, timeout.Token);
+            return Encoding.ASCII.GetString(buffer, 0, read).StartsWith("HTTP/1.1 200", StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Przygotowuje świeży ZIP, serwer i kod QR w momencie kliknięcia Export —
+    /// przycisk QR w oknie tylko pokazuje gotowy obrazek.
+    /// </summary>
+    private async Task PrepareQrAsync()
+    {
+        if (_projectFile is null) return;
+        try
+        {
+            var zipPath = Path.Combine(Path.GetDirectoryName(_projectFile) ?? "",
+                ExportFileName(_projectName) + ".zip");
+            var exported = RustNative.ExportZip(_projectFile, zipPath, out var exportError);
+            if (exported is null) throw new Exception(exportError ?? L("ErrorExport"));
+
+            var ip = LanIPv4() ?? throw new Exception(L("QrError"));
+            var port = FreeTcpPort();
+            var fileName = Path.GetFileName(zipPath);
+            // Dokładnie ten schemat co `zeus preview --local` (zeus-cli 1.10.2).
+            var url = $"zpkd1://{ip}:{port}/{fileName}";
+            StartQrServer(port, fileName, File.ReadAllBytes(zipPath));
+            if (!await QrServerRespondsAsync(port, "/" + fileName))
+                throw new Exception(L("QrError"));
+
+            var qr = RustNative.GenerateQr(url, 512, out var error);
+            if (qr is null) throw new Exception(error ?? L("ErrorExport"));
+            using var document = JsonDocument.Parse(qr);
+            var png = document.RootElement.GetProperty("png").GetString() ?? "";
+            var bitmap = new BitmapImage();
+            using var stream = new MemoryStream(Convert.FromBase64String(png));
+            await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+            _qrBitmap = bitmap;
+            _qrUrl = url;
+        }
+        catch (Exception ex)
+        {
+            StopQrServer();
+            _qrError = ex.Message;
+        }
+    }
+
+    private async void DialogQr_Click(object sender, RoutedEventArgs e)
+    {
+        if (_qrBitmap is null && _qrError is null)
+        {
+            ExportQrStatus.Visibility = Visibility.Visible;
+            ExportQrStatus.Text = L("QrGenerating");
+            await PrepareQrAsync();
+        }
+        if (_qrBitmap is not null)
+        {
+            ExportQrImage.Source = _qrBitmap;
+            ExportQrImage.Visibility = Visibility.Visible;
+            ExportQrStatus.Text = LF("QrHint", _qrUrl ?? "");
+            ExportQrStatus.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            ExportQrStatus.Text = LF("QrError", _qrError ?? L("QrError"));
+            ExportQrStatus.Visibility = Visibility.Visible;
+        }
+    }
+
+    /// <summary>Kod QR jest widoczny dopiero po kliknięciu przycisku QR.</summary>
+    private void ResetQrView()
+    {
+        StopQrServer();
+        _qrBitmap = null;
+        _qrUrl = null;
+        _qrError = null;
+        ExportQrImage.Source = null;
+        ExportQrImage.Visibility = Visibility.Collapsed;
+        ExportQrStatus.Text = "";
+        ExportQrStatus.Visibility = Visibility.Collapsed;
+    }
+
+    private void ExportDialog_Closing(ContentDialog sender, ContentDialogClosingEventArgs args)
+        => StopQrServer();
 }

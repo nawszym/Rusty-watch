@@ -605,6 +605,21 @@
                                     <TextBlock Text="{Binding Strings[WeatherIconPackDesc]}" FontSize="10"
                                                TextWrapping="Wrap" Margin="0,4,0,0"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <Grid ColumnSpacing="8" Margin="0,8,0,0">
+                                       <Grid.ColumnDefinitions>
+                                          <ColumnDefinition Width="*" />
+                                          <ColumnDefinition Width="Auto" />
+                                       </Grid.ColumnDefinitions>
+                                       <TextBlock Text="{Binding Strings[WeatherIconSize]}" FontSize="11"
+                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                  VerticalAlignment="Center" />
+                                       <TextBlock x:Name="WeatherIconSizeValue" Grid.Column="1" Text="64 px" FontSize="11"
+                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                  HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <Slider x:Name="WeatherIconSizeSlider" Minimum="24" Maximum="256"
+                                            TickFrequency="1" StepFrequency="1" Value="64"
+                                            ValueChanged="WeatherIconSizeSlider_ValueChanged" />
                                     <Button x:Name="WeatherScaleModeButton" Click="ScaleModeButton_Click"
                                             HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                             Margin="0,8,0,0"
@@ -1380,7 +1395,7 @@
                             <TextBlock x:Name="StatusStatusText" FontSize="12" TextWrapping="Wrap"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
-                        <!-- Ikony pogody: wbudowany Classic i paczki dodane przez użytkownika. -->
+                        <!-- Ikony pogody: wbudowany system-like, Not Something i paczki użytkownika. -->
                         <StackPanel Spacing="10" Margin="0,16,0,0">
                             <TextBlock Text="{Binding Strings[AssetsWeatherTitle]}" FontSize="18"
                                        FontWeight="SemiBold" />
@@ -1617,7 +1632,11 @@
                             IsEnabled="False" />
                     <Button x:Name="SaveAsButton" Content="{Binding Strings[SaveAs]}" Click="SaveAs_Click"
                             IsEnabled="False" />
+                    <Button x:Name="TestEmulatorButton" Content="{Binding Strings[TestInEmulator]}"
+                            AutomationProperties.Name="{Binding Strings[TestInEmulator]}"
+                            Click="TestEmulator_Click" IsEnabled="False" />
                     <Button x:Name="ExportButton" Click="Export_Click" IsEnabled="False"
+                            Style="{ThemeResource AccentButtonStyle}"
                             MinWidth="104" Padding="12,6">
                         <Grid>
                             <TextBlock x:Name="ExportButtonLabel" Text="{Binding Strings[Export]}"
@@ -1627,11 +1646,6 @@
                                          Visibility="Collapsed" />
                         </Grid>
                     </Button>
-                    <Button x:Name="TestEmulatorButton" Content="{Binding Strings[TestInEmulator]}"
-                            AutomationProperties.Name="{Binding Strings[TestInEmulator]}"
-                            Click="TestEmulator_Click" IsEnabled="False" />
-                    <Button Content="{Binding Strings[SyncToWatch]}" Style="{ThemeResource AccentButtonStyle}"
-                            Click="Sync_Click" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -1673,8 +1687,12 @@
         <muxc:ContentDialog x:Name="ExportDialog"
                             Title="{Binding Strings[ExportDialogTitle]}"
                             CloseButtonText="{Binding Strings[Close]}"
+                            Closing="ExportDialog_Closing"
                             DefaultButton="Close">
-            <StackPanel Spacing="12" MinWidth="340" HorizontalAlignment="Center">
+            <!-- Okno musi być przewijane: GIF + dane + QR nie mieszczą się na niższym ekranie. -->
+            <ScrollViewer MaxHeight="520" HorizontalScrollMode="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="12" MinWidth="340" HorizontalAlignment="Center">
                 <!-- Gotowy animowany podgląd (8 klatek, ~1,7 s na klatkę) nad danymi eksportu. -->
                 <Border x:Name="ExportPreviewBorder" Width="240" Height="240"
                         CornerRadius="120" Background="Black" HorizontalAlignment="Center">
@@ -1710,9 +1728,19 @@
                     </Grid>
                 </StackPanel>
 
-                <Button x:Name="DialogExportZipButton" Content="{Binding Strings[ExportZip]}"
-                        Click="DialogExportZip_Click" HorizontalAlignment="Center" />
-            </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <Button x:Name="DialogExportZipButton" Content="{Binding Strings[ExportZip]}"
+                            Click="DialogExportZip_Click" />
+                    <Button x:Name="DialogQrButton" Content="{Binding Strings[QrCode]}"
+                            Click="DialogQr_Click" />
+                </StackPanel>
+                <Image x:Name="ExportQrImage" MaxWidth="256" MaxHeight="256"
+                       Stretch="Uniform" HorizontalAlignment="Center" Visibility="Collapsed" />
+                <TextBlock x:Name="ExportQrStatus" Text="" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           HorizontalAlignment="Center" Visibility="Collapsed" />
+                </StackPanel>
+            </ScrollViewer>
         </muxc:ContentDialog>
 
         <!-- Niestandardowe dane podglądu — tylko edytor, nigdy eksportowana tarcza. -->

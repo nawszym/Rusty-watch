@@ -64,7 +64,7 @@ Widget:
 | `measurementSystem` | tylko `distance_text`: `watch`, `metric`, `imperial` albo brak (`null`) = użyj `measurementSystem` z projektu |
 | `showUnit` | widgety zdrowotne i cele z jednostką: `true` (domyślnie) pokazuje `bpm`, `°C`, `kcal`, `%`, `kcal`, `h`, `min`; `false` zostawia samą liczbę. Starsze projekty bez pola zachowują jednostki |
 | `alpha` | krycie widgetu `0`–`255` (domyślnie `255`); wartość poniżej 255 trafia do pola `alpha:` w generowanym JS i do podglądu. Starsze projekty bez pola są w pełni nieprzezroczyste |
-| `weatherIconSet` | tylko `weather-icon`: nazwa paczki z `%APPDATA%\RustyWatch\Weather` (wbudowana `Classic` = białe ikony; można dodać własne paczki). Wszystkie 29 ikon fizycznie skalowanych do `w × h` przy zmianie ramki |
+| `weatherIconSet` | tylko `weather-icon`: nazwa paczki z `%APPDATA%\RustyWatch\Weather` (wbudowana domyślna `system-like` oraz `Not Something`; można dodać własne paczki). Wszystkie 29 ikon fizycznie skalowanych do `w × h` przy zmianie ramki |
 | `timeFormat` | wzorzec tekstu: dla `time_text` tokeny czasu `HH/H`, `hh/h`, `MM/M`, `SS/S`, `A/a`; dla `date_text` tokeny daty `D/d`, `DD/dd`, `M/m`, `MM/mm`, `MMM/mmm`, `MMMM/mmmm`, `DDD/ddd`, `DDDD/dddd`, `YY/YYYY`. Wielkość litery w tokenach nazw (`MMM`/`mmm`, `DDD`/`ddd`) steruje wielkością wyświetlanej nazwy; 5–6 liter daje WIELKIE LITERY. Parser wybierany jest na podstawie `kind`, więc schema projektu się nie zmienia. `\` wymusza literal. Domyślny wzorzec daty: `MMM D` |
 
 Wzorzec daty jest współdzielony przez podgląd (`rw_format_date`) i generator JS (`date_format::js_expression_localized`) — nazwy miesięcy i dni tygodnia pochodzą z obiektu `L` wybieranego w runtime przez `hmSetting.getLanguage()` (`L.months`, `L.monthsFull`, `L.days`, `L.daysFull`), więc ten sam ZIP działa po polsku i angielsku. Indeks dnia tygodnia jest liczony od niedzieli (0) — tak samo jak w generowanym JS (algorytm Sakamoto bez API `Date`).
@@ -112,6 +112,13 @@ Nie ma tu czujnika, timera ani nasłuchiwania JS. W edytorze strefa jest rysowan
 morskiej bryzy `#7DE2D1` z ikoną dotknięcia z `Assets/Icons/click-zone.png` (ten sam plik używa
 renderer PNG). Oprawiona pierwsza klatka GIF-u (`preview.png`) pozostaje bez narzutu; tę samą
 kreskowaną strefę z ikoną dostaje **druga** klatka GIF-u (pierwsza surowa).
+
+Okno eksportu ma obok **Export ZIP** przycisk **QR code**: generuje on lokalnie (czysty Rust,
+`qrcode` z `EcLevel::L`) obrazek z adresem `zpkd1://<ip>:<port>/<nazwa>.zip` — tym samym schematem,
+którego używa `zeus preview --local`. Aplikacja sama serwuje wyeksportowany ZIP przez `TcpListener`
+tylko dopóki okno eksportu jest otwarte. Nie są używane chmura Zeppa, konto/token ani zewnętrzne
+serwisy QR. Zeskanowanie odbywa się w aplikacji Zepp → Tryb deweloperski → Skanuj; telefon i PC muszą
+być w tej samej sieci.
 
 ## Mapowanie przy eksporcie
 
@@ -166,13 +173,20 @@ Stary klucz `customPreviewDataEnabled` nie jest już używany — nie migrujemy 
 
 ## Ikony pogody
 
-Wbudowana jest tylko paczka **Classic**. Mastery SVG (OFL 1.1) leżą w
-`native/RustyWatch/Assets/Weather/Source/w00.svg` … `w28.svg` jako dowód
-pochodzenia; gotowe PNG-i 512×512 z glifem zajmującym ~80% kwadratu i ~10%
-bezpiecznego marginesu są committowane w `Assets/Weather/Classic/` i kopiowane
-do outputu aplikacji — dzięki temu ikona nie jest przycinana przy żadnym
-rozmiarze ramki, a do buildu nie potrzeba żadnego generatora. `weather::resize_png`
-skaluje w przestrzeni premultiplied alpha (bez jasnych krawędzi). ZeppOS nie
-ładuje SVG w tarczy, więc na zegarek trafiają PNG. Ewentualny stary folder
-`Reversed` w `%APPDATA%\RustyWatch\Weather` pozostaje na dysku, ale nie jest
-już listowany ani wybieralny.
+Wbudowane są dwie paczki: **`system-like`** (domyślna, wektorowe rekonstrukcje
+ikon systemowych ZeppOS) i **`Not Something`** (ikony z kółek). Gotowe PNG-i
+512×512, wycentrowane w pliku i z przezroczystością o RGB=(0,0,0), leżą w
+`native/RustyWatch/Assets/Weather/system-like/` oraz `.../Not Something/` i są
+kopiowane do outputu aplikacji — dzięki temu ikona nie jest przycinana przy
+żadnym rozmiarze ramki, a do buildu nie potrzeba żadnego generatora. Źródła i
+skrypty rekonstrukcji pozostają poza repozytorium; pochodzenie opisuje
+`Assets/Weather/CREDITS.md`. `weather::resize_png` skaluje w przestrzeni premultiplied
+alpha (bez jasnych krawędzi). ZeppOS nie ładuje SVG w tarczy, więc na zegarek
+trafiają PNG. Każdy poprawny katalog w `%APPDATA%\RustyWatch\Weather` jest
+listowany i wybieralny; poprawność oznacza wszystkie 29 plików `w00.png`…`w28.png`
+o tym samym kwadratowym rozmiarze. Brakująca miniaturka `preview.png` jest
+generowana przy najbliższym odczycie listy paczek. Inspektor ikony ma suwak
+SIZE 24…256 px — ramka pozostaje kwadratowa i wyśrodkowana, a zmiana rozmiaru
+przeskalowuje wszystkie 29 ikon wybranej paczki z oryginałów w magazynie.
+Podgląd nigdy nie podmienia ikony na ikonę innej paczki: brak pliku daje pustą
+ramkę.

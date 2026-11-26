@@ -13,3 +13,4 @@ gif.workspace = true
 ab_glyph.workspace = true
 fastrand.workspace = true
 anyhow.workspace = true
+qrcode.workspace = true

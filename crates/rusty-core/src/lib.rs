@@ -12,6 +12,7 @@ pub mod model;
 pub mod package;
 pub mod preview;
 pub mod project;
+pub mod qr;
 pub mod recent;
 pub mod status_icons;
 pub mod time_format;
@@ -2023,6 +2024,7 @@ mod tests {
             align_y: vec![],
             square: false,
         min_size: crate::widgets::MIN_FRAME_SIZE,
+        max_size: 466,
         };
         let moved = frame_geometry(&move_input);
         assert_eq!((moved.x, moved.y), (0, 0));
@@ -2033,6 +2035,7 @@ mod tests {
             dx: -500,
             dy: -500,
             min_size: crate::widgets::MIN_FRAME_SIZE,
+            max_size: 466,
             ..move_input
         };
         let resized = frame_geometry(&resize);
@@ -2055,6 +2058,7 @@ mod tests {
             align_y: vec![],
             square: false,
         min_size: crate::widgets::MIN_FRAME_SIZE,
+        max_size: 466,
         };
         let tiny = frame_geometry(&tiny);
         assert_eq!((tiny.w, tiny.h), (widgets::MIN_FRAME_SIZE, widgets::MIN_FRAME_SIZE));
@@ -2080,6 +2084,7 @@ mod tests {
             align_y: vec![],
             square: false,
         min_size: crate::widgets::MIN_FRAME_SIZE,
+        max_size: 466,
         };
 
         // Przesunięcie: x=111 → 112 (7*16), y=139 → 144 (9*16).
@@ -2143,6 +2148,7 @@ mod tests {
             align_y: vec![64],  // góra innego widgetu
             square: false,
         min_size: crate::widgets::MIN_FRAME_SIZE,
+        max_size: 466,
         };
         let aligned = frame_geometry(&input);
         // Prawa krawędź 229 → 233 (środek), góra 62 → 64.
@@ -2188,6 +2194,7 @@ mod tests {
             align_y: vec![],
             square: false,
         min_size: crate::widgets::MIN_FRAME_SIZE,
+        max_size: 466,
         };
         let aligned = frame_geometry(&input);
         assert_eq!(aligned.x, 23);
@@ -2214,6 +2221,7 @@ mod tests {
             align_y: vec![],
             square: false,
         min_size: crate::widgets::MIN_FRAME_SIZE,
+        max_size: 466,
         };
         let aligned = frame_geometry(&input);
         assert_eq!(aligned.x, 100);
@@ -2354,6 +2362,26 @@ mod tests {
         let flat_font = export_paths::exported_asset_name("fonts/Inter-Regular.ttf");
         assert!(js.contains(&format!("font: \"{flat_font}\"")), "{js}");
 
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn new_project_and_new_widgets_use_watch_system_font() {
+        let root = std::env::temp_dir().join(format!("rw-sysfont-default-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (dir, _) = create_project_in(&root, &NewProject {
+            name: "SysFont".into(),
+            author: "Dev".into(),
+            app_id: 44,
+        }).unwrap();
+        let file = dir.join("project.json");
+        let mut project = load_project(&file).unwrap();
+        assert!(project.widgets.iter().all(|w| w.font.is_none()));
+        let added = widgets::add_widget(&mut project, "date").unwrap();
+        assert!(added.font.is_none());
+
+        let js = codegen::generate_index_js(&project);
+        assert!(!js.contains("font:"), "system font must not emit a font property");
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

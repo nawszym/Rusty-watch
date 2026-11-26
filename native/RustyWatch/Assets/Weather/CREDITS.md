@@ -1,15 +1,33 @@
-# Weather Icons (OFL 1.1)
+# Bundled weather icon packs
 
-- Source: https://github.com/erikflowers/weather-icons (v2.0.10)
-- Icon designs: Lukas Bischoff; icon art, HTML/CSS: Erik Flowers.
-- Licence: SIL OFL 1.1 (see `OFL-weather-icons.txt`).
-- `Source/w00.svg` … `w28.svg` are the upstream SVG masters, renamed after the
-  ZeppOS v1.0 weather codes 0..28. They keep the upstream `viewBox="0 0 30 30"`
-  and are the crisp, scalable source of truth.
-- `Classic/w00.png` … `w28.png` are rendered from those masters at 512×512 RGBA:
-  the glyph fills ~80% of the square with ~10% safe padding on every side, so
-  nothing is clipped at any widget size. ZeppOS cannot load SVG at runtime, so
-  these PNGs are what the editor preview and the exported watchface both use.
-  They are committed and bundled with the application; no regeneration tool is
-  shipped in the repository.
-- Transparent pixels have RGB=(0,0,0) to avoid white rectangles on real firmware.
+## system-like (default)
+
+- `system-like/w00.png` through `w28.png` are the default icon pack for new weather
+  widgets and projects.
+- They are 512x512 RGBA vector reconstructions of the 29 Zepp OS system weather
+  icons (indices 0..28 of the Huami/Zepp weather table). Every part is drawn from
+  simple geometry — circles, ellipses, rounded rectangles, round-capped lines and
+  polygons — with one static colour per part, so the set is an original
+  reconstruction rather than copied artwork.
+- The reconstruction scripts, SVG masters, reference images and comparison sheet
+  stay outside this repository; only the bundled PNGs are shipped.
+- Names were normalized to `wNN.png`, transparent pixels have RGB=(0,0,0) (the real
+  firmware paints white RGB as white rectangles when rotating/scaling an `IMG`),
+  and each icon's alpha bounding box is centred on the 512x512 canvas.
+- `system-like` is a built-in pack: it is seeded into
+  `%APPDATA%\RustyWatch\Weather` on first launch, shown with the built-in badge
+  and protected from removal.
+
+## Not Something (bundled)
+
+- `Not Something/w00.png` through `w28.png` are high-resolution (512x512 RGBA)
+  circle-based rebuilds of the 29 original ZeppOS weather icons, one vector circle
+  per dot, preserving the original dot count, placement and relative size.
+- The files were supplied by the project owner from a reconstruction made from the
+  original watchface artwork. The rebuild scripts, SVG masters and reference PDF
+  stay outside this repository; only the bundled PNGs are shipped.
+- Names were normalized to `wNN.png`; transparent pixels have RGB=(0,0,0), and
+  every icon's alpha bounding box is centred in the file itself, not by a
+  preview-only transform.
+- `Not Something` is a built-in, non-removable pack. New widgets use `system-like`;
+  users can switch to this pack in the inspector.

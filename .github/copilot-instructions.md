@@ -1,25 +1,26 @@
 # GitHub Copilot instructions — Rusty Watch
 
 Full instructions live in [`AGENTS.md`](../AGENTS.md) at the repository root. Read it before
-making changes. Key points:
+making changes; it is the only complete agent guide. This file lists the key points.
 
-- Native Windows 11 watchface editor for **Amazfit Active 2 (Round)** (466×466, ZeppOS 4.x,
-  `deviceSource: 8913153`). Export **`.zip` only**, never `.zpk`.
-- The only UI is **WinUI 3 / Windows App SDK 2.7.0** in `native/RustyWatch/` (C#/XAML).
-  The old Tauri prototype was removed — do not reintroduce a web-based frontend.
-- Rust workspace: `crates/rusty-core` (logic/codegen, no UI deps), `crates/rusty-cli`,
-  `crates/rusty-ffi` (C ABI `rw_*`, JSON UTF-8, free via `rw_free_string`).
-  C# bridge: `native/RustyWatch/RustNative.cs` — update both when adding an export.
-- Feature flow: core → ffi → native UI, then verify with
-  `cargo test --workspace` and `dotnet build .\native\RustyWatch\RustyWatch.csproj`
-  (prefix `$env:PATH = 'C:\Program Files\dotnet;' + $env:PATH`). Expected: 0 errors / 0 warnings.
-- All user-facing strings must come from bundled
-  `native/RustyWatch/Localization/en.json` + `pl.json` (keep keys in sync). These are first-launch
-  seeds; runtime catalogs are read from `%APPDATA%\RustyWatch\Localization`. Rust error patterns go
-  through `LocalizationService.Error`.
-- Generated JS uses the classic Watchface API (`hmUI`, `hmSensor`, `timer`, `WatchFace({...})`) —
-  NOT `@zos/ui` / `@zos/sensor` (Mini Programs). Export always emits `hmUI.show_level.ONLY_NORMAL`;
-  AOD is driven by `WIDGET_DELEGATE` + `hmSetting.getScreenType()`, not `ONAL_AOD`.
-- Licence GPL-3.0-or-later + Generation Exception; do not copy SashaCX75 code/assets.
-- Do not reintroduce temporary `RW_DEBUG_*` hooks, downgrade Windows App SDK, or change the
-  `CopyRustFfi` target without reading `AGENTS.md` section 6.
+- Native Windows 11 watchface editor for **Amazfit Active 2 (Round)** — 466 × 466, Zepp OS 4.x,
+  `deviceSource: 8913153`. Export **`.zip` only**, never `.zpk`.
+- The only frontend is **WinUI 3 / Windows App SDK 2.7.0** in `native/RustyWatch/` (C#/XAML).
+  The Tauri/React prototype was removed — do not reintroduce a web UI.
+- Rust workspace: `rusty-core` (pure logic/codegen, no UI dependencies), `rusty-cli`,
+  `rusty-ffi` (C ABI with 66 `rw_*` exports; JSON UTF-8, free results with `rw_free_string`).
+  The C# bridge is `native/RustyWatch/RustNative.cs`; update both sides when adding an export.
+- Feature flow: core → FFI → native UI. Verify with `cargo test --workspace` and
+  `dotnet build .\native\RustyWatch\RustyWatch.csproj`. Prefix .NET commands in PowerShell with
+  `$env:PATH = 'C:\Program Files\dotnet;' + $env:PATH`. Expect 0 errors / 0 warnings.
+- All user-facing strings come from bundled `native/RustyWatch/Localization/en.json` and
+  `pl.json` (keep keys in sync). They are first-launch seeds; runtime catalogs are loaded from
+  `%APPDATA%\RustyWatch\Localization`. Route Rust error patterns through `LocalizationService.Error`.
+- Generated JS uses the classic Watchface API (`hmUI`, `hmSensor`, `timer`, `WatchFace({...})`),
+  never `@zos/ui` / `@zos/sensor`. It emits `hmUI.show_level.ONLY_NORMAL` always; AOD comes from
+  `WIDGET_DELEGATE` + `hmSetting.getScreenType()`. No `Date` API anywhere in generated JS.
+- The editor preview and generated `preview.png` / `preview.gif` are rendered in Rust only, with
+  deterministic data. Custom editor data never changes generated previews or the export.
+- Licence: GPL-3.0-or-later + Generation Exception. Do not copy SashaCX75 code or assets.
+  Do not add `RW_DEBUG_*` hooks, downgrade Windows App SDK, or change the `CopyRustFfi` target
+  without reading `AGENTS.md` section 6.

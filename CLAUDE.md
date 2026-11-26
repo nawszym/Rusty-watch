@@ -1,22 +1,37 @@
 # CLAUDE.md
 
-@AGENTS.md
+**Read [`AGENTS.md`](AGENTS.md) first.** It is the single source of truth for architecture,
+build commands, invariants and WinUI 3 workarounds. Everything below is Claude Code specific.
 
-## Claude Code specifics
+## Environment
 
-- The workspace may not be initialized as a git repo yet. If `git status`/`git diff` are unavailable,
-  inspect files directly. Do not commit with this session; the owner handles git operations.
-- Use PowerShell on Windows. Prefix .NET commands with
-  `$env:PATH = 'C:\Program Files\dotnet;' + $env:PATH`.
-- Verify changes with both `cargo test --workspace` and `dotnet build .\native\RustyWatch\RustyWatch.csproj`
-  before reporting completion. The build runs `cargo build -p rusty-ffi` automatically.
-- Treat bundled `native/RustyWatch/Localization/en.json` and `pl.json` as a pair: any new key must
-  exist in both. They are only *seeds* — runtime catalogs are loaded from
-  `%APPDATA%\RustyWatch\Localization`, seeded on first launch and editable by the user. Rust error
-  patterns belong in `LocalizationService.Error`.
-- When adding a `rw_*` export, update `crates/rusty-ffi/src/lib.rs` **and**
+- Use PowerShell on Windows. In this shell, prefix .NET commands with:
+  `$env:PATH = 'C:\Program Files\dotnet;' + $env:PATH`
+- The workspace may not be initialized as a git repository. If `git status` / `git diff` are
+  unavailable, inspect files directly. **Do not commit** — the owner handles git operations.
+
+## Verification before reporting completion
+
+Run both toolchains, even for a small change:
+
+```powershell
+cargo test --workspace
+dotnet build .\native\RustyWatch\RustyWatch.csproj
+```
+
+`dotnet build` already runs `cargo build -p rusty-ffi`. Expected result: 0 errors and
+0 warnings on both. Current test count: 167 core + 38 FFI.
+
+## Repository-specific habits
+
+- Treat `native/RustyWatch/Localization/en.json` and `pl.json` as a pair: every new key must
+  exist in both. They are only first-launch seeds; runtime catalogs are loaded from
+  `%APPDATA%\RustyWatch\Localization`. Rust error patterns belong in `LocalizationService.Error`.
+- When adding a `rw_*` export, change `crates/rusty-ffi/src/lib.rs` **and**
   `native/RustyWatch/RustNative.cs` in the same change.
-- WinUI 3 is the only frontend; the old Tauri prototype was removed — do not reintroduce it.
-  Do not emit `.zpk`, and do not copy SashaCX75 source or assets.
-- Avoid temporary `RW_DEBUG_*` startup hooks in shipped code — use them only in throwaway
-  verification scripts outside the repo, then remove them.
+- WinUI 3 is the only frontend — the old Tauri/React prototype was removed, do not reintroduce
+  it. Export `.zip` only, never `.zpk`. Do not copy SashaCX75 source code or assets.
+- Do not leave `RW_DEBUG_*` startup switches in shipped code. Use throwaway scripts outside the
+  repository for visual verification, then remove them.
+- Documentation lives in `README.md` (English only), `docs/TECHNICAL.md`, `docs/FORMAT.md`,
+  `PLAN.md` and `AGENTS.md`. There is no Polish README and no `Readme.base` file.
