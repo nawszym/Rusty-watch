@@ -25,6 +25,9 @@ native/**/obj/
 *.cache
 project.lock.json
 
+# --- Artefakty release'u (ZIP-y generuje scripts/package-release.ps1) --------
+/artifacts/
+
 # --- Node / narzędzia front-endowe (na wypadek przyszłych eksperymentów) -----
 **/node_modules/
 **/.vite/

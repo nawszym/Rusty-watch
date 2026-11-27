@@ -10,6 +10,7 @@
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Version>1.0.0</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
@@ -56,13 +57,25 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <RustFfiConfig Condition="'$(Configuration)' == 'Release'">release</RustFfiConfig>
+    <RustFfiConfig Condition="'$(RustFfiConfig)' == ''">debug</RustFfiConfig>
+    <RustFfiBuildArgs Condition="'$(RustFfiConfig)' == 'release'">--release</RustFfiBuildArgs>
+  </PropertyGroup>
+
   <Target Name="BuildRustFfi" BeforeTargets="Build">
-    <Exec Command="cargo build -p rusty-ffi" WorkingDirectory="$(MSBuildThisFileDirectory)..\.." />
+    <Exec Command="cargo build -p rusty-ffi $(RustFfiBuildArgs)" WorkingDirectory="$(MSBuildThisFileDirectory)..\.." />
   </Target>
 
   <!-- Kopiujemy jawnie po kompilacji: PreserveNewest potrafi pominąć świeżo zbudowany DLL. -->
   <Target Name="CopyRustFfi" AfterTargets="Build">
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\..\target\debug\rusty_ffi.dll"
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\..\target\$(RustFfiConfig)\rusty_ffi.dll"
           DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" />
+  </Target>
+
+  <!-- Publish nie traktuje DLL-a jako content — kopiujemy go jawnie do PublishDir. -->
+  <Target Name="CopyRustFfiToPublish" AfterTargets="Publish">
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\..\target\$(RustFfiConfig)\rusty_ffi.dll"
+          DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" />
   </Target>
 </Project>

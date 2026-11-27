@@ -3,8 +3,10 @@
 //! więc nie ma offscreen-renderowania kontrolek ani artefaktów pod edytorem.
 //!
 //! Ostatnia klatka jest dokładną kopią 21:37:40 i to z niej powstaje oprawiony
-//! statyczny podgląd: przeskalowana tarcza, czarne strefy bezpieczne, brązowy
-//! pierścień logo z zębatką i cienki pomarańczowy obrys.
+//! statyczny podgląd: przeskalowana tarcza (ok. 79% promienia), cienka czarna
+//! strefa między tarczą a brązowym pierścieniem logo z zębatką, który sięga
+//! niemal krawędzi okręgu. Poza okręgiem piksele są przezroczyste; tarcza ma
+//! ciemny obrys `#404040`.
 //!
 //! Dane klatek mają dwie warstwy:
 //! * [`FRAME_PRESETS`] — zahardkodowany szkielet czasu i **prawdziwych dat**
@@ -1337,7 +1339,7 @@ pub fn write_gif(frames: &[RgbaImage], path: &Path) -> Result<(), String> {
 const GEAR_OUTLAYER_PNG: &[u8] = include_bytes!("../../../logo/gear-outlayer.png");
 /// Promienie łuku w źródłowym rysunku 1024 × 1024 wokół środka (512,512).
 const GEAR_OUTER_RADIUS: f64 = 333.6;
-const GEAR_INNER_RADIUS: f64 = 275.0;
+const GEAR_INNER_RADIUS: f64 = 278.0;
 const RING_BLACK: Rgba<u8> = Rgba([0, 0, 0, 255]);
 /// Ciemny obrys tarczy (#404040) — ma być ledwo widoczny na tle tarczy.
 const RING_OUTLINE: Rgba<u8> = Rgba([64, 64, 64, 255]);
@@ -1345,9 +1347,9 @@ const RING_OUTLINE: Rgba<u8> = Rgba([64, 64, 64, 255]);
 // Promienie kolejnych stref jako ułamek połowy boku kwadratu:
 // przezroczyste tło → czarna strefa bezpieczna → zewnętrzna warstwa logo
 // → wewnętrzna czarna strefa → przeskalowana tarcza z ciemnym obrysem.
-const R_EDGE: f64 = 0.98;
-const R_BROWN_OUT: f64 = 0.90;
-const R_FACE: f64 = 0.66;
+const R_EDGE: f64 = 0.99;
+const R_BROWN_OUT: f64 = 0.97;
+const R_FACE: f64 = 0.79;
 
 /// Wypełnienie koła o promieniu `radius` w odległości `distance` (1 px wygładzenie).
 fn disc_coverage(radius: f64, distance: f64) -> f64 {
@@ -2178,30 +2180,40 @@ mod tests {
     #[test]
     fn branded_preview_layers_match_the_mockup() {
         // Syntetyczna tarcza: środek ma być widoczny w blue area, a rogi mają
-        // być przezroczyste (na zrzucie pokazane na zielono).
+        // być przezroczyste. Promienie wyliczamy z tych samych stałych co
+        // kompozycja — dzięki temu test pilnuje kolejności warstw, nie konkretnych
+        // współrzędnych z podglądu sprzed zmiany proporcji.
         let face = RgbaImage::from_pixel(SCREEN_SIZE, SCREEN_SIZE, Rgba([30, 60, 90, 255]));
         let image = compose_branded_preview(&face, SCREEN_SIZE);
         assert_eq!(image.dimensions(), (466, 466));
         assert_eq!(image.get_pixel(0, 0).0[3], 0);
         assert_eq!(image.get_pixel(465, 465).0[3], 0);
 
-        // Zewnętrzna strefa bezpieczna (między brązem a krawędzią).
-        assert_eq!(image.get_pixel(233, 20).0, [0, 0, 0, 255]);
-        // Brązowy pierścień na górze.
-        let brown = image.get_pixel(233, 40).0;
-        assert!(brown[0] > brown[2], "oczekiwany brąz: {brown:?}");
-        // Zębatka po prawej stronie (na zewnątrz brązowego pierścienia).
-        let gear = image.get_pixel(448, 233).0;
-        assert!(gear[0] > 150 && gear[1] > 60, "oczekiwana zębatka: {gear:?}");
-        // Wewnętrzna czarna strefa bezpieczna (między pierścieniem a tarczą).
-        assert_eq!(image.get_pixel(233, 66).0, [0, 0, 0, 255]);
+        let half = SCREEN_SIZE as f64 / 2.0;
+        let center = (SCREEN_SIZE - 1) as u32 / 2;
+        let gear_scale = R_BROWN_OUT * half / GEAR_OUTER_RADIUS;
+        let inner_black = GEAR_INNER_RADIUS * gear_scale;
+        let face_radius = R_FACE * half;
+        let edge = R_EDGE * half;
+        let at = |radius: f64| {
+            let y = center - radius.round() as u32;
+            image.get_pixel(center, y).0
+        };
+
+        // Tuż za zewnętrznym okręgiem jest przezroczystość (tło nie jest malowane).
+        let outside = center + edge.ceil() as u32 + 2;
+        if outside < SCREEN_SIZE {
+            assert_eq!(image.get_pixel(outside, center).0[3], 0);
+        }
+        // Brązowy pierścień między wewnętrzną czernią a krawędzią.
+        let brown = at((inner_black + edge) / 2.0);
+        assert!(brown[0] > brown[2] + 40, "oczekiwany brąz: {brown:?}");
+        // Cienka czarna strefa między pierścieniem a tarczą.
+        assert_eq!(at((face_radius + inner_black) / 2.0), [0, 0, 0, 255]);
         // Przeskalowana tarcza w środku.
-        assert_eq!(image.get_pixel(233, 233).0, [30, 60, 90, 255]);
+        assert_eq!(image.get_pixel(center, center).0, [30, 60, 90, 255]);
         // Ciemny, ledwo widoczny obrys na granicy tarczy (#404040).
-        let outline = (70..85)
-            .map(|y| image.get_pixel(233, y).0)
-            .max_by_key(|pixel| pixel[0])
-            .unwrap();
+        let outline = at(face_radius - 1.0);
         assert!(
             (55..=70).contains(&outline[0]) && outline[0] == outline[1] && outline[1] == outline[2],
             "zły obrys: {outline:?}"

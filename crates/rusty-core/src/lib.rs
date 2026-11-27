@@ -925,7 +925,7 @@ mod tests {
         assert!(update_project_metadata(&file, "Jane", "").is_err());
         assert!(update_project_metadata(&file, "Jane", "1.0 beta").is_err());
         assert!(update_project_metadata(&file, "Jane", &"x".repeat(33)).is_err());
-        assert_eq!(load_project(&file).unwrap().metadata.version, "0.1.0");
+        assert_eq!(load_project(&file).unwrap().metadata.version, crate::model::VERSION);
         std::fs::remove_dir_all(&dir).ok();
     }
 

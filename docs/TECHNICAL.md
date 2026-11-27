@@ -173,7 +173,7 @@ they export as one continuous arc.
 
 ### 2.5 Starter template
 
-`Project::starter(name)` creates version `0.1.0`, an `icon.png` asset, and one time widget
+`Project::starter(name)` creates version `1.0.0` (`model::VERSION`), an `icon.png` asset, and one time widget
 `x=23, y=183, w=420, h=100`, text `00:00:00`, size `64`, pattern `HH:MM:SS`, white,
 `DataSource::Time`, centred, `ShowLevel::Normal`, `layer_order = ["time"]`.
 
@@ -641,8 +641,10 @@ arcs, and `arc_draw_margin()` widens the render window for thick arcs. Bars use 
 rectangle with a radius of at least 1 px when rounding is enabled.
 
 The static `preview.png` is a **composition**, not a raw frame: `compose_branded_preview()`
-places the 21:37 frame inside the `gear-outlayer.png` ring with black safe areas, a
-`#404040` outline and full transparency outside. `rw_encode_preview_gif` turns that image
+places the 21:37 frame inside the `gear-outlayer.png` ring — the brown ring and gear teeth now
+reach almost to the edge (`R_BROWN_OUT = 0.97`, `R_EDGE = 0.99`), the watchface fills about
+79% of the radius (`R_FACE = 0.79`) with only a thin black gap and a `#404040` outline, and
+everything outside the circle stays fully transparent. There is no thick outer black band. `rw_encode_preview_gif` turns that image
 into GIF frame 1, follows it with the seven raw frames, draws the sea-breeze shortcut hatch
 (`#7DE2D1`, icon `Assets/Icons/click-zone.png`) on frame 2, sets infinite repeat and deletes
 `preview-cache`.
@@ -860,7 +862,14 @@ These are the rules that were paid for with a broken watchface or a crashed UI. 
 - **WinUI 3:** no `ApplicationBackgroundThemeBrush`; `Window` has no XAML size/font members;
   `ContentDialog` must be a direct child of the root `Grid` and has no `Opening` event; guard
   handlers until `_initialized`; keep `CopyRustFfi` with `SkipUnchangedFiles="false"`; never
-  downgrade Windows App SDK below 2.7.0.
+  downgrade Windows App SDK below 2.7.0. A `ContentDialog` created in code has no `XamlRoot`
+  until the tree is loaded — `VcRedistWindow` therefore declares its dialog in XAML and shows it
+  from `RootGrid.Loaded`.
+- **Startup dependency check:** `App.OnLaunched` probes `<exe>/rusty_ffi.dll` with
+  `NativeLibrary.TryLoad` before constructing `MainWindow`. On failure it opens
+  `VcRedistWindow` with a localized message and a link to
+  `https://aka.ms/vs/17/release/vc_redist.x64.exe`, then exits on Close. WinUI itself only needs
+  the OS-provided `api-ms-win-crt-*`, so the dialog can be shown even without VC++ redist.
 - **Localization catalogs must stay valid JSON**, in both bundled seeds and appdata copies;
   keep `en.json` and `pl.json` keys in sync.
 - **No debug hooks** (`RW_DEBUG_*`) in shipped code.

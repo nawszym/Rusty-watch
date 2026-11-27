@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window x:Class="RustyWatch.VcRedistWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Rusty Watch">
+
+    <Grid x:Name="RootGrid" Background="#1C1C20">
+        <ContentDialog x:Name="MissingDialog"
+                       DefaultButton="Close">
+            <StackPanel Spacing="12" Margin="0,8,0,0">
+                <TextBlock x:Name="MessageText" TextWrapping="Wrap" />
+                <HyperlinkButton x:Name="DownloadLink" />
+            </StackPanel>
+        </ContentDialog>
+    </Grid>
+</Window>

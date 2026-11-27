@@ -112,6 +112,8 @@ Inter has no badge, though it remains a protected bundled font.
 - Rust (workspace in `Cargo.toml`)
 - .NET SDK 10 to build and .NET Runtime 8 to run
 - Windows App SDK 2.7.0 (restored by NuGet; the app is self-contained)
+- **Visual C++ Redistributable 2015–2022 (x64)** at runtime — `rusty_ffi.dll` needs
+  `VCRUNTIME140.dll`; without it the app shows an error dialog with a download link and exits
 - Optional: the official Zepp OS Simulator with the *Active 2 v1.1.0* device image and `zeus`
 
 ### Build and run

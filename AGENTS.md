@@ -114,9 +114,11 @@ both toolchains; treat new warnings as regressions. Current suite: **208 tests -
    `FRAME_PRESETS` carries a `status_mask` (ALARM=1, DND=2, BLUETOOTH=4, LOCK=8) with sequence
    `2,2,0,3,0,1,4,4`: frame 7 (21:37:40) shows all four and frame 8 is its exact copy.
    The static `preview.png` is **not a raw frame**: `compose_branded_preview()` draws the
-   branded frame around the 21:37 frame — transparent outside, outer black safe area,
-   `logo/gear-outlayer.png` outer layer, inner black safe area, full watchface scaled into the
-   centre with a `#404040` outline. `preview.gif` has 8 frames at ~1.7 s each, infinite loop;
+   branded frame around the 21:37 frame — transparent outside; the `logo/gear-outlayer.png`
+   brown ring with gear teeth reaches almost the edge (`R_BROWN_OUT = 0.97`, `R_EDGE = 0.99`);
+   the full watchface fills the centre (`R_FACE = 0.79`) with only a thin black gap to the ring
+   and a `#404040` outline. There is no thick outer black band. `preview.gif` has 8 frames at
+   ~1.7 s each, infinite loop;
    the **composed PNG is the first GIF frame**, followed by the 7 raw frames. Shortcut hatches
    are drawn only on the second (first raw) frame via `draw_shortcut_overlays()`. Neither file
    is zipped. Custom Data from the editor is deliberately ignored. Never render preview
@@ -355,6 +357,12 @@ Do not "fix" these by reverting to the obvious approach:
 
 ## 7. Current scope / placeholders
 
+- **Startup guard:** `App.OnLaunched` initializes paths/localization, then probes
+  `rusty_ffi.dll` with `NativeLibrary.TryLoad` **before** constructing `MainWindow` (the first
+  `rw_*` call is `EnsureDefaults` in its constructor). If the library cannot load — typically a
+  missing **VC++ Redistributable 2015–2022 (x64)** — `VcRedistWindow` shows a localized error with
+  a link to `https://aka.ms/vs/17/release/vc_redist.x64.exe` and exits on Close. `ContentDialog`
+  lives in that window's XAML Grid and is shown from `RootGrid.Loaded`, when `XamlRoot` exists.
 - Fresh app opens **HOME**: New project, Open project, recent list, target-device card.
   Left nav: Home, Editor + Project settings (after opening), **Widgets** (always visible,
   even without a project), Assets, App Settings. Footer items do **not** raise

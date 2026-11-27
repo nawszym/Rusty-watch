@@ -4,6 +4,8 @@ use crate::image_fit::FitMode;
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const SCREEN_SIZE: u32 = 466;
+/// Wersja aplikacji i domyślna wersja nowych projektów (zgodna z `CARGO_PKG_VERSION`).
+pub const VERSION: &str = "1.0.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1132,7 +1134,7 @@ impl Project {
                 name: name.clone(),
                 app_id,
                 author: author.into(),
-                version: "0.1.0".to_string(),
+                version: VERSION.to_string(),
                 description: format!("{} — created with Rusty Watch", name),
             },
             device: DeviceId::Active2Round,
