@@ -39,6 +39,7 @@ finally {
 # Weryfikacja kompletności paczki.
 $required = @(
     "RustyWatch.exe", "RustyWatch.dll", "rusty_ffi.dll",
+    "App.xbf", "MainWindow.xbf", "VcRedistWindow.xbf", "RustyWatch.pri",
     "Localization\en.json", "Localization\pl.json",
     "Assets\Fonts\NotoSans-Regular.ttf", "Assets\Icons\click-zone.png"
 )
