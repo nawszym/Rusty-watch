@@ -30,6 +30,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          gh release view $env:GITHUB_REF_NAME 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete $env:GITHUB_REF_NAME --yes
+          }
           gh release create $env:GITHUB_REF_NAME `
             "artifacts/RustyWatch-$version-win-x64.zip" `
             --title "Rusty Watch $version" --generate-notes
